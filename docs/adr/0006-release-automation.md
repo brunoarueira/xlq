@@ -69,6 +69,14 @@ archives + checksums, and creates the GitHub Release itself (changelog
 generated from commits since the last tag) - no separate
 `gh release create` step.
 
+The changelog uses `changelog.use: github` with a custom `format`
+crediting each commit's GitHub handle (`* <message> (thanks @user!)`),
+following the convention visible on
+[yq's releases](https://github.com/mikefarah/yq/releases) - GoReleaser's
+default format for that mode falls back to the raw git author name and
+email, which isn't something to publish in release notes when a GitHub
+login is available instead.
+
 ### No package-manager publishing (Homebrew tap, etc.) yet
 
 GoReleaser can push a Homebrew formula, a Scoop manifest, and more, but

@@ -35,6 +35,11 @@ checksum:
 
 changelog:
   use: github
+  # Default format falls back to the raw git author name/email; this
+  # credits the GitHub handle instead (yq-style), e.g.:
+  #   * Fix panic on empty sheet (thanks @someuser!)
+  format: >-
+    * {{ .Message }}{{ if .Logins }} (thanks {{ .Logins | englishJoin }}!){{ end }}
 
 release:
   github:
