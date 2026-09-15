@@ -38,8 +38,9 @@ changelog:
   # Default format falls back to the raw git author name/email; this
   # credits the GitHub handle instead (yq-style), e.g.:
   #   * Fix panic on empty sheet (thanks @someuser!)
+  # No leading "* " here - GoReleaser already bullets each entry itself.
   format: >-
-    * {{ .Message }}{{ if .Logins }} (thanks {{ .Logins | englishJoin }}!){{ end }}
+    {{ .Message }}{{ if .Logins }} (thanks {{ .Logins | englishJoin }}!){{ end }}
 
 release:
   github:
