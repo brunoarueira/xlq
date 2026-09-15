@@ -27,38 +27,47 @@ to do, rather than hand-rolling a matrix build and upload steps.
 
 Plain semver, no `v` prefix (e.g. `0.1.0`). Bumping it is a normal PR.
 
-### `release-tag.yml`: tag `v<version>` on push to `main`, if it doesn't already exist
+### One workflow, `release.yml`, tags *and* builds in the same job
 
-Same shape as thoth-mesh's release workflow:
+Triggered on push to `main` (scoped to `paths: VERSION`), idempotent by
+construction the same way thoth-mesh's is:
 
 1. Read `VERSION`.
-2. Check whether `refs/tags/v<version>` already exists on `origin`.
-3. If not, create and push an annotated tag `v<version>`.
+2. Check whether `refs/tags/v<version>` already exists on `origin`. If
+   it does, this push didn't bump the version (or already got
+   released) - stop, no-op.
+3. Otherwise: create and push the tag `v<version>`, then run
+   `goreleaser release` in that same job.
 
-This is idempotent by construction - reruns, pushes that don't touch
-`VERSION`, and `main` advancing without a bump are all no-ops - so it's
-safe to run unconditionally on every push to `main`, with no need to
-diff commit ranges or reason about squash-merges. Needs
-`permissions: contents: write` to push the tag; every other workflow in
-this repo stays read-only.
+Reruns, pushes that don't touch `VERSION`, and `main` advancing without
+a bump are all no-ops, so it's safe to run unconditionally. Needs
+`permissions: contents: write` to push the tag and create the release;
+`ci.yml` stays read-only.
 
-### `release-build.yml`: GoReleaser on tag push, builds the release
+Tagging and building are deliberately **one workflow run, not two**.
+The natural-looking split - a `release-tag.yml` that pushes the tag,
+and a separate `release-build.yml` triggered by `push: tags: ["v*"]` -
+doesn't work: GitHub does not fire new workflow runs for pushes made
+with the default `GITHUB_TOKEN` (an anti-recursion safeguard), so a tag
+pushed by a workflow using `GITHUB_TOKEN` never triggers a
+tag-triggered workflow. This was tried, shipped, and silently no-opped
+(the tag existed with no release attached) before being caught and
+merged into a single job. thoth-mesh's ADR-0032 already does tag +
+release in one job for the same reason, restated here because it's the
+part of that design most tempting to "clean up" into two workflows.
 
-Triggered on `push: tags: ["v*"]`, separate from `release-tag.yml`, so
-"decide a release is happening" and "build it" are two workflows with
-one job each:
+### GoReleaser builds `darwin`, `linux`, and `windows`, then creates the release itself
 
-1. Install Go, run `goreleaser release` via the official action.
-2. `.goreleaser.yaml` targets `darwin/amd64`, `darwin/arm64`,
-   `linux/amd64`, `linux/arm64`, and `windows/amd64` - darwin because
-   that's the author's daily driver and the explicit requirement,
-   linux/windows because they're free once the build matrix exists and
-   cost nothing to keep supporting.
-3. GoReleaser injects the version into the binary via
-   `-ldflags -X .../internal/version.Version={{.Version}}`, creates
-   archives + checksums, and creates the GitHub Release itself
-   (`--generate-notes`-equivalent changelog from commits since the
-   last tag) - no separate `gh release create` step.
+`.goreleaser.yaml` targets `darwin/amd64`, `darwin/arm64`,
+`linux/amd64`, `linux/arm64`, and `windows/amd64` - darwin because
+that's the author's daily driver and the explicit requirement,
+linux/windows because they're free once the build matrix exists (pure
+Go, `CGO_ENABLED=0`, no per-OS runner needed) and cost nothing to keep
+supporting. GoReleaser injects the version into the binary via
+`-ldflags -X .../internal/version.Version={{.Version}}`, creates
+archives + checksums, and creates the GitHub Release itself (changelog
+generated from commits since the last tag) - no separate
+`gh release create` step.
 
 ### No package-manager publishing (Homebrew tap, etc.) yet
 
@@ -71,8 +80,9 @@ this ADR.
 
 Merging a `VERSION` bump to `main` is the only manual step in cutting a
 release; everything after that - tagging, cross-compiling, archiving,
-publishing - is automatic. The two-workflow split means a GoReleaser
-config mistake only wastes a tag, not blocks the tagging logic, and
-vice versa. If `VERSION` and the tag ever drift (e.g. someone tags
-manually), `release-tag.yml`'s tag-existence check is what keeps it
-idempotent rather than double-releasing.
+publishing - is automatic. Doing it in one job means a GoReleaser
+failure leaves a pushed tag with no release attached - a rerun of the
+same workflow run (or a re-push) is safe, since the tag-existence check
+is what makes this idempotent, not a boundary between two workflows.
+If `VERSION` and the tag ever drift (e.g. someone tags manually), that
+same check is what keeps this a no-op rather than double-releasing.

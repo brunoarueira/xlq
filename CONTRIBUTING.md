@@ -34,9 +34,9 @@ request.
 ## Releasing
 
 Versioning is a single `VERSION` file at the repo root. Bump it in a
-PR to `main`; once merged, `.github/workflows/release-tag.yml` tags
-`v<version>` automatically and `.github/workflows/release-build.yml`
-cross-compiles binaries and publishes the GitHub Release. See
+PR to `main`; once merged, `.github/workflows/release.yml` tags
+`v<version>`, cross-compiles binaries, and publishes the GitHub
+Release automatically. See
 [ADR-0006](docs/adr/0006-release-automation.md).
 
 ## License

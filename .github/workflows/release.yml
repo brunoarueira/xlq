@@ -1,0 +1,88 @@
+name: Release
+
+# Runs on every push to main that touches VERSION, but only actually
+# cuts a release the one time in however many pushes that VERSION
+# bumped to a version that isn't tagged yet - see the "tag already
+# exists" check below, and ADR-0006.
+#
+# Tagging and building happen in the *same* job/run, not two workflows
+# chained by "push a tag, let that trigger a second workflow": GitHub
+# doesn't fire workflow runs for pushes made with the default
+# GITHUB_TOKEN (an anti-recursion safeguard), so a tag pushed by this
+# workflow would never trigger a separate tag-triggered workflow.
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "VERSION"
+
+# A second push landing while a tag/release from the first is still
+# being created should queue behind it, not race it.
+concurrency:
+  group: release-${{ github.workflow }}
+  cancel-in-progress: false
+
+# Needs to push a tag and create a GitHub Release - the only workflow
+# in this repo that isn't read-only. ci.yml never writes to the repo.
+permissions:
+  contents: write
+
+jobs:
+  tag-and-release:
+    name: tag + release on a VERSION bump
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true # needs to push a tag below
+          fetch-depth: 0 # goreleaser needs full history for release notes
+
+      - name: Read VERSION
+        id: version
+        run: |
+          version=$(tr -d '[:space:]' < VERSION)
+          if [ -z "$version" ]; then
+            echo "::error::VERSION is empty" >&2
+            exit 1
+          fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether the tag already exists
+        id: check
+        run: |
+          # Checked against origin directly, not the local clone - this
+          # doesn't depend on how much history actions/checkout fetched.
+          if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push the tag
+        if: steps.check.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "$TAG"
+
+      - name: Install Go
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: GoReleaser
+        if: steps.check.outputs.exists == 'false'
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
