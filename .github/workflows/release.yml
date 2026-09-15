@@ -15,6 +15,7 @@ on:
     branches: ["main"]
     paths:
       - "VERSION"
+  workflow_dispatch: {} # manual escape hatch, e.g. to retry after a failed run
 
 # A second push landing while a tag/release from the first is still
 # being created should queue behind it, not race it.
