@@ -1,0 +1,42 @@
+version: 2
+
+project_name: xlq
+
+builds:
+  - id: xlq
+    main: ./cmd/xlq
+    binary: xlq
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X github.com/brunoarueira/xlq/internal/version.Version={{.Version}}
+
+archives:
+  - id: xlq
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+
+release:
+  github:
+    owner: brunoarueira
+    name: xlq
