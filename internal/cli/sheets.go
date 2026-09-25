@@ -29,13 +29,5 @@ func newSheetsCommand() *cobra.Command {
 }
 
 func sheetNames(path string) ([]string, error) {
-	wb, err := xlsx.Read(path)
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, len(wb.Sheets))
-	for i, sheet := range wb.Sheets {
-		names[i] = sheet.Name
-	}
-	return names, nil
+	return xlsx.SheetNames(path)
 }

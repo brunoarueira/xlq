@@ -1,7 +1,12 @@
 package xlsx
 
 import (
+	"archive/zip"
+	"bytes"
+	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,6 +234,190 @@ func TestReadSparseSheet(t *testing.T) {
 		t.Errorf("Dimensions() = (%d, %d), want (3, 3)", rows, cols)
 	}
 }
+
+// patchXML replaces the first occurrence of want with replacement inside
+// the named entry of the zip (.xlsx) file at path, rewriting the file in
+// place. It's used to construct fixtures excelize's own write API can't
+// produce, such as a formula cell with a pre-existing cached result.
+func patchXML(t *testing.T, path, entry, want, replacement string) {
+	t.Helper()
+	r, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("zip.OpenReader: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	found := false
+	for _, zf := range r.File {
+		rc, err := zf.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", zf.Name, err)
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", zf.Name, err)
+		}
+		if zf.Name == entry {
+			if !strings.Contains(string(data), want) {
+				t.Fatalf("did not find %q in %s", want, entry)
+			}
+			data = []byte(strings.Replace(string(data), want, replacement, 1))
+			found = true
+		}
+		fw, err := w.Create(zf.Name)
+		if err != nil {
+			t.Fatalf("create %s: %v", zf.Name, err)
+		}
+		if _, err := fw.Write(data); err != nil {
+			t.Fatalf("write %s: %v", zf.Name, err)
+		}
+	}
+	if !found {
+		t.Fatalf("entry %q not found in %s", entry, path)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("zip writer Close: %v", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
+func TestReadFormattedNumberCell(t *testing.T) {
+	// A currency/thousands-separator style must not stop the value from
+	// being read as a Number: the display text "$1,234.50" isn't itself
+	// parseable, so the raw underlying value has to be used.
+	path := build(t, func(f *excelize.File) {
+		styleID, err := f.NewStyle(&excelize.Style{CustomNumFmt: strPtr(`"$"#,##0.00`)})
+		if err != nil {
+			t.Fatalf("NewStyle: %v", err)
+		}
+		must(t, f.SetCellValue("Sheet1", "A1", 1234.5))
+		must(t, f.SetCellStyle("Sheet1", "A1", "A1", styleID))
+	})
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	c, ok := cellAt(t, wb, "Sheet1", 0, 0)
+	if !ok {
+		t.Fatal("cell A1 not found")
+	}
+	if v, ok := c.NumberValue(); !ok || v != 1234.5 {
+		t.Errorf("NumberValue() = (%v, %v), want (1234.5, true) - Kind = %v", v, ok, c.Kind)
+	}
+}
+
+func TestReadHiddenFormatCell(t *testing.T) {
+	// The ";;;" custom format renders any value as blank text in every
+	// spreadsheet application; the cell must still be read as present,
+	// using its raw value. A cell in this state must be followed by
+	// another populated cell in its row: excelize's row iterator itself
+	// trims a *trailing* format-hidden cell before this package ever
+	// sees it (see the package doc's known limitation), so B1 here is
+	// what keeps A1 from being trimmed away.
+	path := build(t, func(f *excelize.File) {
+		styleID, err := f.NewStyle(&excelize.Style{CustomNumFmt: strPtr(";;;")})
+		if err != nil {
+			t.Fatalf("NewStyle: %v", err)
+		}
+		must(t, f.SetCellValue("Sheet1", "A1", 99.0))
+		must(t, f.SetCellStyle("Sheet1", "A1", "A1", styleID))
+		must(t, f.SetCellValue("Sheet1", "B1", "visible"))
+	})
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	c, ok := cellAt(t, wb, "Sheet1", 0, 0)
+	if !ok {
+		t.Fatal("cell A1 not found (format-hidden value was dropped)")
+	}
+	if v, ok := c.NumberValue(); !ok || v != 99 {
+		t.Errorf("NumberValue() = (%v, %v), want (99, true) - Kind = %v", v, ok, c.Kind)
+	}
+}
+
+func TestReadErrorProducingFormula(t *testing.T) {
+	path := build(t, func(f *excelize.File) {
+		must(t, f.SetCellFormula("Sheet1", "A1", "1/0"))
+	})
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	c, ok := cellAt(t, wb, "Sheet1", 0, 0)
+	if !ok {
+		t.Fatal("cell A1 not found")
+	}
+	if !c.IsFormula() {
+		t.Error("IsFormula() = false, want true")
+	}
+	if v, ok := c.StringValue(); !ok || v != "#DIV/0!" {
+		t.Errorf("StringValue() = (%q, %v), want (\"#DIV/0!\", true) - Kind = %v", v, ok, c.Kind)
+	}
+}
+
+func TestReadCachedFormulaStringResult(t *testing.T) {
+	// excelize's own write API can't attach a cached result to a formula
+	// (SetCellValue after SetCellFormula clears the formula instead), so
+	// this patches the saved XML directly to reproduce what a real
+	// spreadsheet application writes: <f> and a cached <v> together.
+	// This is the case that matters most, since it's what every
+	// Excel/LibreOffice/Google-Sheets-saved formula cell looks like.
+	path := build(t, func(f *excelize.File) {
+		must(t, f.SetCellFormula("Sheet1", "A1", `"123"`))
+	})
+	patchXML(t, path, "xl/worksheets/sheet1.xml",
+		`<c r="A1" t="str"><f>&#34;123&#34;</f></c>`,
+		`<c r="A1" t="str"><f>&#34;123&#34;</f><v>123</v></c>`,
+	)
+
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	c, ok := cellAt(t, wb, "Sheet1", 0, 0)
+	if !ok {
+		t.Fatal("cell A1 not found")
+	}
+	if !c.IsFormula() {
+		t.Error("IsFormula() = false, want true")
+	}
+	// The cached result is text ("123"), even though it looks numeric -
+	// with a real cache present, the cell's actual type must win over
+	// any text-based number guess.
+	if v, ok := c.StringValue(); !ok || v != "123" {
+		t.Errorf("StringValue() = (%q, %v), want (\"123\", true) - Kind = %v", v, ok, c.Kind)
+	}
+}
+
+func TestSheetNames(t *testing.T) {
+	path := build(t, func(f *excelize.File) {
+		if _, err := f.NewSheet("Data"); err != nil {
+			t.Fatalf("NewSheet: %v", err)
+		}
+	})
+	names, err := SheetNames(path)
+	if err != nil {
+		t.Fatalf("SheetNames: %v", err)
+	}
+	want := []string{"Sheet1", "Data"}
+	if len(names) != len(want) || names[0] != want[0] || names[1] != want[1] {
+		t.Errorf("SheetNames() = %v, want %v", names, want)
+	}
+}
+
+func TestSheetNamesMissingFile(t *testing.T) {
+	if _, err := SheetNames(filepath.Join(t.TempDir(), "missing.xlsx")); err == nil {
+		t.Fatal("SheetNames() with a missing file: want error, got nil")
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 func must(t *testing.T, err error) {
 	t.Helper()
