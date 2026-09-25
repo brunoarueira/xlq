@@ -4,7 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/xuri/excelize/v2"
+
+	"github.com/brunoarueira/xlq/internal/xlsx"
 )
 
 func newSheetsCommand() *cobra.Command {
@@ -28,10 +29,13 @@ func newSheetsCommand() *cobra.Command {
 }
 
 func sheetNames(path string) ([]string, error) {
-	f, err := excelize.OpenFile(path)
+	wb, err := xlsx.Read(path)
 	if err != nil {
-		return nil, fmt.Errorf("open %q: %w", path, err)
+		return nil, err
 	}
-	defer func() { _ = f.Close() }()
-	return f.GetSheetList(), nil
+	names := make([]string, len(wb.Sheets))
+	for i, sheet := range wb.Sheets {
+		names[i] = sheet.Name
+	}
+	return names, nil
 }
