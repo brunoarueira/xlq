@@ -161,6 +161,72 @@ func TestReadDateCell(t *testing.T) {
 	}
 }
 
+func TestReadISODateCell(t *testing.T) {
+	// The rare ISO-8601-native date cell type (OOXML t="d") isn't
+	// produced by excelize's write API at all (Excel itself essentially
+	// never writes it either - dates are normally a styled number), so
+	// this patches it directly into the saved XML.
+	path := build(t, func(f *excelize.File) {
+		must(t, f.SetCellValue("Sheet1", "A1", "placeholder"))
+	})
+	patchXML(t, path, "xl/worksheets/sheet1.xml",
+		`<c r="A1" t="s"><v>0</v></c>`,
+		`<c r="A1" t="d"><v>2026-09-25T00:00:00</v></c>`,
+	)
+
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	c, ok := cellAt(t, wb, "Sheet1", 0, 0)
+	if !ok {
+		t.Fatal("cell A1 not found")
+	}
+	want := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	v, ok := c.DateValue()
+	if !ok {
+		t.Fatalf("DateValue() ok = false, want true (Kind = %v)", c.Kind)
+	}
+	if !v.Equal(want) {
+		t.Errorf("DateValue() = %v, want %v", v, want)
+	}
+}
+
+func TestReadLiveFormulaDateResult(t *testing.T) {
+	// A date-styled formula with no cached result: CalcCellValue must be
+	// read with RawCellValue so the computed result is the serial number
+	// ("46290"), not display text ("09-25-26") that can't be parsed back
+	// into a date.
+	want := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	path := build(t, func(f *excelize.File) {
+		styleID, err := f.NewStyle(&excelize.Style{NumFmt: 14})
+		if err != nil {
+			t.Fatalf("NewStyle: %v", err)
+		}
+		must(t, f.SetCellValue("Sheet1", "A1", want))
+		must(t, f.SetCellFormula("Sheet1", "B1", "A1"))
+		must(t, f.SetCellStyle("Sheet1", "B1", "B1", styleID))
+	})
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	c, ok := cellAt(t, wb, "Sheet1", 0, 1)
+	if !ok {
+		t.Fatal("cell B1 not found")
+	}
+	if !c.IsFormula() {
+		t.Error("IsFormula() = false, want true")
+	}
+	v, ok := c.DateValue()
+	if !ok {
+		t.Fatalf("DateValue() ok = false, want true (Kind = %v)", c.Kind)
+	}
+	if !v.Equal(want) {
+		t.Errorf("DateValue() = %v, want %v", v, want)
+	}
+}
+
 func TestReadFormulaCell(t *testing.T) {
 	path := build(t, func(f *excelize.File) {
 		must(t, f.SetCellValue("Sheet1", "A1", 2.0))

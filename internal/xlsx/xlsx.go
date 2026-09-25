@@ -27,6 +27,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/xuri/excelize/v2"
 
@@ -165,7 +166,11 @@ func readCell(f *excelize.File, sheet string, colIndex, rowIndex int, display st
 	case formula != "":
 		// A formula with no cached result yet: compute it live. See the
 		// package doc's note on the resulting type-inference limitation.
-		computed, calcErr := f.CalcCellValue(sheet, cellRef)
+		// RawCellValue bypasses number formatting on the computed result
+		// too (e.g. a date-styled formula's result comes back as its
+		// numeric serial, "46290", not "09-25-26"), matching how a plain
+		// cell's raw value is used elsewhere in this file.
+		computed, calcErr := f.CalcCellValue(sheet, cellRef, excelize.Options{RawCellValue: true})
 		switch {
 		case calcErr != nil:
 			// A formula that evaluates to a spreadsheet error (#DIV/0!,
@@ -203,14 +208,38 @@ func cellFromTyped(f *excelize.File, sheet, cellRef string, cellType excelize.Ce
 		// This specifically means "a formula's cached result is text"
 		// (OOXML's t="str"), not merely "this cell has a formula".
 		return model.NewStringCell(display), nil
+	case excelize.CellTypeDate:
+		// The rare ISO-8601-native date type: unlike a plain date-styled
+		// number, its raw value is date text (e.g. "2026-09-25T00:00:00"),
+		// not a numeric serial.
+		if t, ok := parseISODate(raw); ok {
+			return model.NewDateCell(t), nil
+		}
+		return model.NewStringCell(display), nil
 	default:
-		// CellTypeUnset (a plain stored number, or a cached formula
-		// result that's a number) or CellTypeDate (the rare
-		// ISO-8601-native type): both are backed by a number, so a date
-		// is distinguished from a plain number by the cell's style, not
-		// by cellType.
+		// CellTypeUnset: a plain stored number, or a cached formula
+		// result that's a number. A date is distinguished from a plain
+		// number by the cell's style, not by cellType.
 		return numericOrDateCell(f, sheet, cellRef, raw, display, date1904, dateStyles)
 	}
+}
+
+// isoDateLayouts are the layouts excelize's own writer uses for the rare
+// ISO-8601-native date cell type (OOXML t="d"), tried in order.
+var isoDateLayouts = []string{
+	"2006-01-02T15:04:05.999",
+	time.RFC3339,
+	"2006-01-02T15:04:05",
+	"2006-01-02",
+}
+
+func parseISODate(text string) (time.Time, bool) {
+	for _, layout := range isoDateLayouts {
+		if t, err := time.Parse(layout, text); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // numericOrDateCell converts a cell already known to be backed by a raw
@@ -239,33 +268,22 @@ func numericOrDateCell(f *excelize.File, sheet, cellRef, raw, display string, da
 }
 
 // cellFromComputedText infers a Kind purely from a formula's freshly
-// computed text, for the case where the formula has no cached result and
-// so no reliable type information is available (see the package doc). A
-// date-styled result becomes a Date, a parseable number becomes a Number,
-// a literal "TRUE"/"FALSE" becomes a Bool, and anything else stays a
-// String.
+// computed text (already fetched with RawCellValue, so a numeric or date
+// result is its unformatted serial, not display text), for the case where
+// the formula has no cached result and so no reliable type information is
+// available (see the package doc). It's the same numeric/date logic as
+// numericOrDateCell, plus recognizing a literal "TRUE"/"FALSE" result as a
+// Bool - CellTypeBool can't be trusted here the way it can for a cell with
+// a real cached value.
 func cellFromComputedText(f *excelize.File, sheet, cellRef, text string, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
-	isDate, err := isDateStyled(f, sheet, cellRef, dateStyles)
+	cell, err := numericOrDateCell(f, sheet, cellRef, text, text, date1904, dateStyles)
 	if err != nil {
 		return model.Cell{}, err
 	}
-	if isDate {
-		if raw, err := f.GetCellValue(sheet, cellRef, excelize.Options{RawCellValue: true}); err == nil && raw != "" {
-			if serial, err := strconv.ParseFloat(raw, 64); err == nil {
-				if t, err := excelize.ExcelDateToTime(serial, date1904); err == nil {
-					return model.NewDateCell(t), nil
-				}
-			}
-		}
-		return model.NewStringCell(text), nil
-	}
-	if num, err := strconv.ParseFloat(text, 64); err == nil {
-		return model.NewNumberCell(num), nil
-	}
-	if text == "TRUE" || text == "FALSE" {
+	if cell.Kind == model.String && (text == "TRUE" || text == "FALSE") {
 		return model.NewBoolCell(text == "TRUE"), nil
 	}
-	return model.NewStringCell(text), nil
+	return cell, nil
 }
 
 // builtinDateNumFmtIDs are the built-in (ECMA-376) number format IDs that
