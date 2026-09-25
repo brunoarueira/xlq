@@ -85,13 +85,12 @@ func (c Cell) WithFormula(expr string) Cell {
 // IsFormula reports whether the cell's value came from a formula.
 func (c Cell) IsFormula() bool { return c.Formula != "" }
 
-// Value returns the cell's computed value: nil, string, float64,
-// bool, or time.Time, matching Kind.
-func (c Cell) Value() any { return c.value }
-
 // StringValue returns the cell's value as a string, and whether Kind
 // was actually String.
 func (c Cell) StringValue() (string, bool) {
+	if c.Kind != String {
+		return "", false
+	}
 	v, ok := c.value.(string)
 	return v, ok
 }
@@ -99,6 +98,9 @@ func (c Cell) StringValue() (string, bool) {
 // NumberValue returns the cell's value as a float64, and whether Kind
 // was actually Number.
 func (c Cell) NumberValue() (float64, bool) {
+	if c.Kind != Number {
+		return 0, false
+	}
 	v, ok := c.value.(float64)
 	return v, ok
 }
@@ -106,6 +108,9 @@ func (c Cell) NumberValue() (float64, bool) {
 // BoolValue returns the cell's value as a bool, and whether Kind was
 // actually Bool.
 func (c Cell) BoolValue() (bool, bool) {
+	if c.Kind != Bool {
+		return false, false
+	}
 	v, ok := c.value.(bool)
 	return v, ok
 }
@@ -113,6 +118,9 @@ func (c Cell) BoolValue() (bool, bool) {
 // DateValue returns the cell's value as a time.Time, and whether Kind
 // was actually Date.
 func (c Cell) DateValue() (time.Time, bool) {
+	if c.Kind != Date {
+		return time.Time{}, false
+	}
 	v, ok := c.value.(time.Time)
 	return v, ok
 }

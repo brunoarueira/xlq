@@ -35,8 +35,19 @@ func TestCellAccessors(t *testing.T) {
 	if v, ok := NewDateCell(date).DateValue(); !ok || !v.Equal(date) {
 		t.Errorf("DateValue() = (%v, %v), want (%v, true)", v, ok, date)
 	}
-	if v := NewEmptyCell().Value(); v != nil {
-		t.Errorf("Value() on empty cell = %v, want nil", v)
+
+	empty := NewEmptyCell()
+	if _, ok := empty.StringValue(); ok {
+		t.Error("StringValue() on an Empty cell returned ok=true, want false")
+	}
+	if _, ok := empty.NumberValue(); ok {
+		t.Error("NumberValue() on an Empty cell returned ok=true, want false")
+	}
+	if _, ok := empty.BoolValue(); ok {
+		t.Error("BoolValue() on an Empty cell returned ok=true, want false")
+	}
+	if _, ok := empty.DateValue(); ok {
+		t.Error("DateValue() on an Empty cell returned ok=true, want false")
 	}
 }
 
@@ -50,6 +61,18 @@ func TestCellAccessorKindMismatch(t *testing.T) {
 	}
 	if _, ok := c.DateValue(); ok {
 		t.Error("DateValue() on a String cell returned ok=true, want false")
+	}
+}
+
+// TestCellAccessorRequiresMatchingKind guards against an accessor
+// trusting the stored Go type alone: Kind is exported and mutable, so
+// an accessor must gate on it rather than just type-asserting the
+// private value.
+func TestCellAccessorRequiresMatchingKind(t *testing.T) {
+	c := NewStringCell("hi")
+	c.Kind = Number
+	if _, ok := c.StringValue(); ok {
+		t.Error("StringValue() with Kind reassigned to Number returned ok=true, want false")
 	}
 }
 
