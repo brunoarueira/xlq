@@ -215,7 +215,10 @@ func cellFromTyped(f *excelize.File, sheet, cellRef string, cellType excelize.Ce
 		if t, ok := parseISODate(raw); ok {
 			return model.NewDateCell(t), nil
 		}
-		return model.NewStringCell(display), nil
+		// raw (not display) is the only faithful representation of this
+		// cell type for an unrecognized ISO layout variant; display can
+		// be empty or reformatted by excelize.
+		return model.NewStringCell(raw), nil
 	default:
 		// CellTypeUnset: a plain stored number, or a cached formula
 		// result that's a number. A date is distinguished from a plain

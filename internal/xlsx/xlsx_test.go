@@ -227,6 +227,30 @@ func TestReadLiveFormulaDateResult(t *testing.T) {
 	}
 }
 
+func TestReadLiveFormulaBoolResult(t *testing.T) {
+	// A boolean formula with no cached result: CalcCellValue under
+	// RawCellValue still renders a bool as "TRUE"/"FALSE" text (not
+	// "1"/"0"), which is what cellFromComputedText's literal check
+	// expects - this locks that rendering in.
+	path := build(t, func(f *excelize.File) {
+		must(t, f.SetCellFormula("Sheet1", "A1", "1=1"))
+	})
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	c, ok := cellAt(t, wb, "Sheet1", 0, 0)
+	if !ok {
+		t.Fatal("cell A1 not found")
+	}
+	if !c.IsFormula() {
+		t.Error("IsFormula() = false, want true")
+	}
+	if v, ok := c.BoolValue(); !ok || !v {
+		t.Errorf("BoolValue() = (%v, %v), want (true, true) - Kind = %v", v, ok, c.Kind)
+	}
+}
+
 func TestReadFormulaCell(t *testing.T) {
 	path := build(t, func(f *excelize.File) {
 		must(t, f.SetCellValue("Sheet1", "A1", 2.0))
