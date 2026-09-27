@@ -2,6 +2,7 @@ package filter
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -32,6 +33,11 @@ func TestParseValid(t *testing.T) {
 			"bracket int row index",
 			".Sheet1[5]",
 			Index{Field{Identity{}, "Sheet1"}, 5},
+		},
+		{
+			"bracket int directly on identity",
+			".[5]",
+			Index{Identity{}, 5},
 		},
 		{
 			"negative bracket int parses (semantic validity is the evaluator's job)",
@@ -115,5 +121,19 @@ func TestParseInvalid(t *testing.T) {
 				t.Errorf("Parse(%q): want error, got nil", tc.input)
 			}
 		})
+	}
+}
+
+func TestParseIntegerOverflowReportsIntTokenPosition(t *testing.T) {
+	// "9223372036854775808" (one past math.MaxInt64) starts at byte 2,
+	// right after ".[". The error must point there, at the integer
+	// token itself, not at the "]" that follows it.
+	const input = ".[9223372036854775808]"
+	_, err := Parse(input)
+	if err == nil {
+		t.Fatalf("Parse(%q): want error, got nil", input)
+	}
+	if !strings.Contains(err.Error(), "position 2") {
+		t.Errorf("Parse(%q) error = %q, want it to reference position 2 (the integer token)", input, err.Error())
 	}
 }

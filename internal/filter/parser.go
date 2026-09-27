@@ -124,10 +124,10 @@ func (p *parser) parseBracketSuffix(base Expr) (Expr, error) {
 	case tokString:
 		result = Field{Base: base, Name: p.advance().text}
 	case tokInt:
-		text := p.advance().text
-		n, err := strconv.Atoi(text)
+		tok := p.advance()
+		n, err := strconv.Atoi(tok.text)
 		if err != nil {
-			return nil, fmt.Errorf("filter: invalid integer %q at position %d", text, p.peek().pos)
+			return nil, fmt.Errorf("filter: invalid integer %q at position %d", tok.text, tok.pos)
 		}
 		result = Index{Base: base, N: n}
 	default:
