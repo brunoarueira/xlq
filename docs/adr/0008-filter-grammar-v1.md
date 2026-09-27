@@ -80,14 +80,19 @@ different on an object than on an array:
 
 | Applied to | `Field{Name}` | `Index{N}` |
 | --- | --- | --- |
-| `Workbook` | look up a `Sheet` by exact name; `null` if none matches | error - a workbook isn't row-indexable, index a sheet instead |
+| `Workbook` | look up a `Sheet` by name, case-insensitively (see below); `null` if none matches | error - a workbook isn't row-indexable, index a sheet instead |
 | `Sheet` | `Name` matches `^[A-Za-z]+$` (a column letter or letters, case-insensitive): the whole column, as a dense array of scalars, one per row from row 1 through the sheet's last row (`Sheet.Dimensions()`), `null` for any cell not present. `Name` matches `^[A-Za-z]+[0-9]+$`: the single cell at that A1 address, as a scalar, `null` if absent. Anything else: error | `N >= 1` (spreadsheet row numbers, matching A1's own 1-based rows): the whole row, as a dense array of scalars, one per column from column 1 through the sheet's last column. `N <= 0`: error |
 | a row/column array, or a scalar | error - not indexable further in v1 | error - not indexable further in v1 |
 | `null` | `null` (propagates) | `null` (propagates) |
 
-Column letters and A1 references are case-insensitive (`.Sheet1.a1`
-and `.Sheet1.A1` are the same reference), matching spreadsheet
-convention.
+Sheet names, column letters, and A1 references are all case-insensitive
+(`.sheet1.a1` and `.Sheet1.A1` are the same reference), matching Excel:
+it doesn't allow two sheet names in the same workbook differing only by
+case, so this can't introduce genuine ambiguity against a well-formed
+file. A hand-crafted file that violates that (e.g. both `Sheet1` and
+`SHEET1` present) is out of scope for v1's semantics to define; an
+exact-case match, if one exists, wins, otherwise it's the first
+case-insensitive match in workbook order.
 
 A cell's scalar value is its *computed* value per ADR-0007 - a
 formula's raw expression isn't exposed by any v1 operator, since
