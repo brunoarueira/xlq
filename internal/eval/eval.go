@@ -31,7 +31,7 @@ func Eval(expr filter.Expr, wb model.Workbook) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return toJSON(v), nil
+	return toJSON(v)
 }
 
 // eval walks expr, threading a "current value" that may be a
@@ -89,7 +89,7 @@ func applyField(base any, name string) (any, error) {
 		case columnLetters.MatchString(name):
 			return wholeColumn(v, name), nil
 		case cellReference.MatchString(name):
-			return cellScalar(v, name), nil
+			return cellScalar(v, name)
 		default:
 			return nil, fmt.Errorf("eval: %q is not a valid column letter or cell reference on sheet %q", name, v.Name)
 		}
@@ -170,28 +170,41 @@ func wholeRow(sheet model.Sheet, n int) []any {
 
 // cellScalar returns the scalar value of the cell at the A1 reference
 // ref, or nil if the cell is absent.
-func cellScalar(sheet model.Sheet, ref string) any {
-	row, col := parseCellReference(ref)
+func cellScalar(sheet model.Sheet, ref string) (any, error) {
+	row, col, err := parseCellReference(ref)
+	if err != nil {
+		return nil, err
+	}
 	for _, r := range sheet.Rows {
 		if r.Index == row {
 			for _, c := range r.Cells {
 				if c.Column == col {
-					return cellValue(c)
+					return cellValue(c), nil
 				}
 			}
-			return nil
+			return nil, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // parseCellReference splits an A1 reference already matched by
-// cellReference into its 0-based (row, col).
-func parseCellReference(ref string) (row, col int) {
+// cellReference into its 0-based (row, col). A row of 0 or less (e.g.
+// "A0") is syntactically a valid cellReference match but not a real A1
+// address - spreadsheet rows are 1-based, matching applyIndex's own
+// n < 1 rejection - and an out-of-range row number (overflowing int)
+// is likewise rejected rather than silently discarded.
+func parseCellReference(ref string) (row, col int, err error) {
 	m := cellReference.FindStringSubmatch(ref)
 	col = columnIndex(m[1])
-	n, _ := strconv.Atoi(m[2]) // guaranteed valid by cellReference
-	return n - 1, col
+	n, convErr := strconv.Atoi(m[2])
+	if convErr != nil {
+		return 0, 0, fmt.Errorf("eval: row number in %q is out of range", ref)
+	}
+	if n < 1 {
+		return 0, 0, fmt.Errorf("eval: row number in %q must be >= 1 (spreadsheet rows are 1-based)", ref)
+	}
+	return n - 1, col, nil
 }
 
 // columnIndex converts case-insensitive spreadsheet column letters
@@ -234,25 +247,43 @@ func cellValue(c model.Cell) any {
 
 // toJSON converts a final Workbook or Sheet result to its JSON shape;
 // anything else (a row/column array, a scalar, nil) is already there.
-func toJSON(v any) any {
+func toJSON(v any) (any, error) {
 	switch val := v.(type) {
 	case model.Workbook:
 		obj := make(map[string]any, len(val.Sheets))
 		for _, s := range val.Sheets {
-			obj[s.Name] = sheetGrid(s)
+			grid, err := sheetGrid(s)
+			if err != nil {
+				return nil, err
+			}
+			obj[s.Name] = grid
 		}
-		return obj
+		return obj, nil
 	case model.Sheet:
 		return sheetGrid(val)
 	default:
-		return v
+		return v, nil
 	}
 }
 
+// maxDenseCells caps how many cells a single dense 2D grid
+// (Sheet.Dimensions() rows * cols) this package will materialize. A
+// sheet whose only cell sits at Excel's actual maximum address
+// (XFD1048576) has real dimensions of about 17 billion cells; without
+// this guard, evaluating that sheet - or the whole workbook, via "." -
+// would try to allocate on the order of hundreds of gigabytes. A whole
+// row or whole column alone is never this dangerous, since Excel's own
+// row/column limits (1,048,576 and 16,384) already bound either one to
+// a few tens of megabytes at most.
+const maxDenseCells = 10_000_000
+
 // sheetGrid returns sheet as a dense 2D array, [row][col], sized to
 // Sheet.Dimensions().
-func sheetGrid(sheet model.Sheet) [][]any {
+func sheetGrid(sheet model.Sheet) ([][]any, error) {
 	rows, cols := sheet.Dimensions()
+	if int64(rows)*int64(cols) > maxDenseCells {
+		return nil, fmt.Errorf("eval: sheet %q is %d x %d (%d cells), over the %d-cell limit for a dense result; index a specific cell, row, or column instead", sheet.Name, rows, cols, rows*cols, maxDenseCells)
+	}
 	grid := make([][]any, rows)
 	for i := range grid {
 		grid[i] = make([]any, cols)
@@ -262,7 +293,7 @@ func sheetGrid(sheet model.Sheet) [][]any {
 			grid[r.Index][c.Column] = cellValue(c)
 		}
 	}
-	return grid
+	return grid, nil
 }
 
 func describeType(v any) string {

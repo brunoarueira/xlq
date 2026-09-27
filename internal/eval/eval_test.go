@@ -12,10 +12,13 @@ import (
 // testWorkbook builds a small fixture workbook, independent of any file
 // format:
 //
-//	Sheet1:      A1="hello"  B1=42       (row 1)
-//	             A2=true     (B2 absent) (row 2)
-//	             C3=2026-09-25            (row 3)
+//	Sheet1:      A1="hello"  B1=42                (row 1)
+//	             A2=true     B2=Empty (explicit)   (row 2)
+//	             C3=2026-09-25                     (row 3)
 //	Data:        A1="from data sheet"
+//
+// C1 is never set at all (a genuinely absent cell, as opposed to B2's
+// explicit-but-empty Kind), to exercise both null-producing paths.
 var testDate = time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
 
 func testWorkbook() model.Workbook {
@@ -28,6 +31,7 @@ func testWorkbook() model.Workbook {
 			}},
 			{Index: 1, Cells: []model.Cell{
 				model.NewBoolCell(true).At(0),
+				model.NewEmptyCell().At(1),
 			}},
 			{Index: 2, Cells: []model.Cell{
 				model.NewDateCell(testDate).At(2),
@@ -66,7 +70,8 @@ func TestEvalValid(t *testing.T) {
 		{"cell date as RFC3339", ".Sheet1.C3", testDate.Format(time.RFC3339)},
 		{"case-insensitive sheet name", ".sheet1.A1", "hello"},
 		{"case-insensitive cell reference", ".Sheet1.a1", "hello"},
-		{"absent cell within dimensions is null", ".Sheet1.B2", nil},
+		{"explicit Empty cell is null", ".Sheet1.B2", nil},
+		{"genuinely absent cell within dimensions is null", ".Sheet1.C1", nil},
 		{"absent cell beyond dimensions is null", ".Sheet1.Z99", nil},
 		{"missing sheet is null", ".NoSuchSheet", nil},
 		{"field on null propagates null", ".NoSuchSheet.A1", nil},
@@ -123,18 +128,18 @@ func TestEvalIdentityReturnsWholeWorkbook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Eval(\".\") returned error: %v", err)
 	}
-	obj, ok := got.(map[string]any)
-	if !ok {
-		t.Fatalf("Eval(\".\") = %#v (%T), want map[string]any", got, got)
+	want := map[string]any{
+		"Sheet1": [][]any{
+			{"hello", 42.0, nil},
+			{true, nil, nil},
+			{nil, nil, testDate.Format(time.RFC3339)},
+		},
+		"Data": [][]any{
+			{"from data sheet"},
+		},
 	}
-	if len(obj) != 2 {
-		t.Fatalf("len(obj) = %d, want 2", len(obj))
-	}
-	if _, ok := obj["Sheet1"].([][]any); !ok {
-		t.Errorf("obj[\"Sheet1\"] = %#v, want a [][]any", obj["Sheet1"])
-	}
-	if _, ok := obj["Data"].([][]any); !ok {
-		t.Errorf("obj[\"Data\"] = %#v, want a [][]any", obj["Data"])
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Eval(\".\") = %#v, want %#v", got, want)
 	}
 }
 
@@ -145,6 +150,7 @@ func TestEvalInvalid(t *testing.T) {
 	}{
 		{"row 0 is invalid", ".Sheet1[0]"},
 		{"negative row is invalid", ".Sheet1[-1]"},
+		{"cell reference with row 0 is invalid", ".Sheet1.A0"},
 		{"indexing a workbook by row number", ".[1]"},
 		{"name that isn't a column letter or cell reference", ".Sheet1.Sheet_1"},
 		{"field on a scalar", ".Sheet1.A1.foo"},
@@ -158,6 +164,41 @@ func TestEvalInvalid(t *testing.T) {
 			_, err := evalString(t, tc.input)
 			if err == nil {
 				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
+// TestEvalHugeDimensionsRejected guards against materializing a dense
+// grid sized by a sheet's Dimensions() when that would require an
+// unreasonable amount of memory: a single cell at Excel's actual maximum
+// address (XFD1048576) gives a sheet real dimensions of about 17 billion
+// cells. Building the fixture itself only ever allocates one Row/Cell,
+// so this test can't OOM even if the guard it's checking for were
+// missing - Eval must reject it with an error, not attempt the
+// allocation.
+func TestEvalHugeDimensionsRejected(t *testing.T) {
+	huge := model.Workbook{
+		Sheets: []model.Sheet{
+			{
+				Name: "Sheet1",
+				Rows: []model.Row{
+					{Index: 1048575, Cells: []model.Cell{
+						model.NewNumberCell(1).At(16383),
+					}},
+				},
+			},
+		},
+	}
+
+	for _, input := range []string{".Sheet1", "."} {
+		t.Run(input, func(t *testing.T) {
+			expr, err := filter.Parse(input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", input, err)
+			}
+			if _, err := Eval(expr, huge); err == nil {
+				t.Errorf("Eval(%q) on a sheet with real dimensions ~17 billion cells: want error, got nil", input)
 			}
 		})
 	}
