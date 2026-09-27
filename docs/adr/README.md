@@ -13,6 +13,7 @@ xlq, using the format described in
 | [0005](0005-ci-gate-on-every-pr.md) | CI gate on every push and pull request |
 | [0006](0006-release-automation.md) | Release automation: `VERSION` file, auto-tag on `main`, GoReleaser |
 | [0007](0007-spreadsheet-data-model.md) | Spreadsheet data model: Workbook, Sheet, Row, Cell |
+| [0008](0008-filter-grammar-v1.md) | Filter language grammar v1: identity, A1 addressing, pipe |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
