@@ -15,6 +15,7 @@ xlq, using the format described in
 | [0007](0007-spreadsheet-data-model.md) | Spreadsheet data model: Workbook, Sheet, Row, Cell |
 | [0008](0008-filter-grammar-v1.md) | Filter language grammar v1: identity, A1 addressing, pipe |
 | [0009](0009-correct-filter-grammar-ebnf.md) | Correct ADR-0008's path grammar |
+| [0010](0010-ods-reader-no-dependency.md) | ODS reader: no third-party library, standard library only |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
