@@ -476,6 +476,13 @@ func TestReadTableRowsWrapperIsFlattened(t *testing.T) {
 	if len(wb.Sheets[0].Rows) != 1 {
 		t.Fatalf("len(Rows) = %d, want 1", len(wb.Sheets[0].Rows))
 	}
+	c, ok := cellAt(t, wb, 0, 0, 0)
+	if !ok {
+		t.Fatal("cell (0,0) not found")
+	}
+	if v, _ := c.StringValue(); v != "grouped" {
+		t.Errorf("StringValue() = %q, want \"grouped\"", v)
+	}
 }
 
 func TestReadNestedRowGroupIsFlattened(t *testing.T) {

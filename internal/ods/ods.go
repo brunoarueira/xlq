@@ -16,15 +16,25 @@ import (
 	"github.com/brunoarueira/xlq/internal/model"
 )
 
-// maxMaterializedCells bounds how many cells this reader will actually
-// expand from ODF's own repeat-compression
-// (table:number-rows-repeated/table:number-columns-repeated), matching
-// the budget internal/eval enforces for dense results (see its
-// maxDenseCells constant). A repeat count on genuinely blank content
-// costs nothing regardless of size - it's skipped entirely, per
-// model.Sheet's sparse design - so this only guards against a
-// malformed or adversarial file claiming an enormous repeat count on
-// real content.
+// maxMaterializedCells serves two distinct guards that happen to share
+// the same threshold:
+//
+//   - budget.spend bounds how many cells this reader will actually
+//     expand from ODF's own repeat-compression
+//     (table:number-rows-repeated/table:number-columns-repeated) into
+//     real model.Cell/model.Row values, matching the budget
+//     internal/eval enforces for dense results (see its maxDenseCells
+//     constant). A repeat count on genuinely blank content is skipped
+//     entirely rather than counted here, per model.Sheet's sparse
+//     design - this only guards a malformed or adversarial file
+//     claiming an enormous repeat count on real content.
+//   - repeatCount rejects any repeat count over this same threshold
+//     outright, blank or not: even a skipped blank repeat still
+//     advances a row/column index by that count, and an unbounded
+//     value read straight from the file could overflow that
+//     arithmetic. A blank run past this limit is thus reported as an
+//     error rather than silently skipped - the one case where "skipped
+//     regardless of size" doesn't hold.
 const maxMaterializedCells = 10_000_000
 
 // maxContentXMLSize bounds how large a decompressed content.xml this
@@ -459,10 +469,12 @@ func parseODFDate(raw string) (time.Time, error) {
 }
 
 // repeatCount parses a table:number-*-repeated attribute, defaulting to
-// 1 when absent. The result is capped at maxMaterializedCells: even a
-// blank run that costs nothing to skip still advances a row/column
-// index by its repeat count, and an uncapped value read straight from
-// the file could overflow that arithmetic.
+// 1 when absent. The result is capped at maxMaterializedCells - even a
+// repeat on blank content, which is otherwise skipped at no cost, still
+// advances a row/column index by that count, and an uncapped value read
+// straight from the file could overflow that arithmetic. A blank run
+// past this cap is therefore reported as an error here rather than
+// silently skipped further up the call chain.
 func repeatCount(raw string) (int, error) {
 	if raw == "" {
 		return 1, nil

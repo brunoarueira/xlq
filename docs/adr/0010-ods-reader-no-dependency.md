@@ -86,17 +86,23 @@ collapses a run of identical cells/rows (almost always blank filler
 padding a sheet out to a spreadsheet application's default extent,
 e.g. over a million rows) into one XML element with a repeat count -
 is *never* expanded into that many `model.Cell`/`model.Row` values. A
-cell/row with no real value or formula is skipped regardless of its
-repeat count, matching `model.Sheet`'s own "only present cells/rows"
-sparse design and costing O(1) per XML element regardless of how large
-the count is. Only a repeat count on a cell/row that *does* have real
-content is expanded (rare, and in practice always small); as a safety
-net against a malformed or adversarial file claiming an enormous
-repeat count on real content, expansion is capped at the same
-10,000,000-cell budget as `internal/eval`'s `maxDenseCells` constant
-enforces for dense results - past that, `Read` returns an error rather
-than attempting the allocation. A row's own repeat count multiplies
-every one of its cells, so the true cost charged against that budget is
+cell/row with no real value or formula is skipped at no cost, matching
+`model.Sheet`'s own "only present cells/rows" sparse design, regardless
+of its repeat count - up to a point: the repeat count itself is still
+capped, at the same 10,000,000 threshold used below, since even a
+skipped blank repeat advances a row/column index by that count, and an
+unbounded value read straight from the file could overflow that
+arithmetic. A repeat past that cap is reported as an error, blank or
+not - the one case where "skipped regardless of size" doesn't hold.
+
+Only a repeat count on a cell/row that *does* have real content is
+expanded (rare, and in practice always small); as a safety net against
+a malformed or adversarial file claiming an enormous repeat count on
+real content, expansion is capped at the same 10,000,000-cell budget as
+`internal/eval`'s `maxDenseCells` constant enforces for dense results -
+past that, `Read` returns an error rather than attempting the
+allocation. A row's own repeat count multiplies every one of its cells,
+so the true cost charged against that budget is
 `rows_repeated * cells_in_row`, not the row's repeat count alone.
 
 ## Consequences
