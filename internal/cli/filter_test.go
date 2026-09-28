@@ -123,7 +123,7 @@ func TestRootWrongArgCount(t *testing.T) {
 	// With SilenceUsage set, a plain cobra.ExactArgs error would leave a
 	// bare `xlq` (or any wrong arg count) with no hint on how to get
 	// help at all; the Args validator wraps it with a usage pointer.
-	for _, args := range [][]string{nil, {".Sheet1"}} {
+	for _, args := range [][]string{{}, {".Sheet1"}} {
 		_, err := run(t, args...)
 		if err == nil {
 			t.Fatalf("Execute(%v): want error, got nil", args)
