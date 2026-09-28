@@ -93,9 +93,11 @@ the count is. Only a repeat count on a cell/row that *does* have real
 content is expanded (rare, and in practice always small); as a safety
 net against a malformed or adversarial file claiming an enormous
 repeat count on real content, expansion is capped at the same
-10,000,000-cell budget `internal/eval` already enforces for dense
-results (see PR #24) - past that, `Read` returns an error rather than
-attempting the allocation.
+10,000,000-cell budget as `internal/eval`'s `maxDenseCells` constant
+enforces for dense results - past that, `Read` returns an error rather
+than attempting the allocation. A row's own repeat count multiplies
+every one of its cells, so the true cost charged against that budget is
+`rows_repeated * cells_in_row`, not the row's repeat count alone.
 
 ## Consequences
 

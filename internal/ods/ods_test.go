@@ -2,6 +2,7 @@ package ods
 
 import (
 	"archive/zip"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -176,11 +177,17 @@ func TestReadPercentageAndCurrencyAreNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	c, _ := cellAt(t, wb, 0, 0, 0)
+	c, ok := cellAt(t, wb, 0, 0, 0)
+	if !ok {
+		t.Fatal("cell (0,0) not found")
+	}
 	if v, ok := c.NumberValue(); !ok || v != 0.5 {
 		t.Errorf("percentage NumberValue() = (%v, %v), want (0.5, true)", v, ok)
 	}
-	c, _ = cellAt(t, wb, 0, 0, 1)
+	c, ok = cellAt(t, wb, 0, 0, 1)
+	if !ok {
+		t.Fatal("cell (0,1) not found")
+	}
 	if v, ok := c.NumberValue(); !ok || v != 19.99 {
 		t.Errorf("currency NumberValue() = (%v, %v), want (19.99, true)", v, ok)
 	}
@@ -410,5 +417,249 @@ func TestReadInvalidNumericValue(t *testing.T) {
 
 	if _, err := Read(path); err == nil {
 		t.Fatal("Read() with an unparseable numeric value: want error, got nil")
+	}
+}
+
+func TestReadHeaderRowsWrapperIsFlattened(t *testing.T) {
+	// A real ODF feature (LibreOffice's frozen/repeated print header
+	// rows): rows can be nested inside <table:table-header-rows>
+	// instead of being direct children of <table:table>.
+	path := buildODS(t, wrapSpreadsheet(`
+      <table:table table:name="Sheet1">
+        <table:table-header-rows>
+          <table:table-row>
+            <table:table-cell office:value-type="string"><text:p>header</text:p></table:table-cell>
+          </table:table-row>
+        </table:table-header-rows>
+        <table:table-row>
+          <table:table-cell office:value-type="string"><text:p>body</text:p></table:table-cell>
+        </table:table-row>
+      </table:table>`))
+
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(wb.Sheets[0].Rows) != 2 {
+		t.Fatalf("len(Rows) = %d, want 2 (the header row must not be dropped)", len(wb.Sheets[0].Rows))
+	}
+	c, ok := cellAt(t, wb, 0, 0, 0)
+	if !ok {
+		t.Fatal("row 0 not found")
+	}
+	if v, _ := c.StringValue(); v != "header" {
+		t.Errorf("row 0 value = %q, want \"header\"", v)
+	}
+	c, ok = cellAt(t, wb, 0, 1, 0)
+	if !ok {
+		t.Fatal("row 1 not found")
+	}
+	if v, _ := c.StringValue(); v != "body" {
+		t.Errorf("row 1 value = %q, want \"body\"", v)
+	}
+}
+
+func TestReadTableRowsWrapperIsFlattened(t *testing.T) {
+	path := buildODS(t, wrapSpreadsheet(`
+      <table:table table:name="Sheet1">
+        <table:table-rows>
+          <table:table-row>
+            <table:table-cell office:value-type="string"><text:p>grouped</text:p></table:table-cell>
+          </table:table-row>
+        </table:table-rows>
+      </table:table>`))
+
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(wb.Sheets[0].Rows) != 1 {
+		t.Fatalf("len(Rows) = %d, want 1", len(wb.Sheets[0].Rows))
+	}
+}
+
+func TestReadNestedRowGroupIsFlattened(t *testing.T) {
+	// table:table-row-group can nest recursively per the ODF schema.
+	path := buildODS(t, wrapSpreadsheet(`
+      <table:table table:name="Sheet1">
+        <table:table-row-group>
+          <table:table-row-group>
+            <table:table-row>
+              <table:table-cell office:value-type="string"><text:p>deep</text:p></table:table-cell>
+            </table:table-row>
+          </table:table-row-group>
+        </table:table-row-group>
+      </table:table>`))
+
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(wb.Sheets[0].Rows) != 1 {
+		t.Fatalf("len(Rows) = %d, want 1 (nested row-group must be flattened)", len(wb.Sheets[0].Rows))
+	}
+	c, ok := cellAt(t, wb, 0, 0, 0)
+	if !ok {
+		t.Fatal("cell (0,0) not found")
+	}
+	if v, _ := c.StringValue(); v != "deep" {
+		t.Errorf("StringValue() = %q, want \"deep\"", v)
+	}
+}
+
+func TestReadCoveredCellAdvancesColumn(t *testing.T) {
+	// A1 is a real cell spanning 2 columns (merged with B1); B1 is
+	// represented as a covered-table-cell (no value of its own); C1 is
+	// the next real cell and must land at column 2, not 1.
+	path := buildODS(t, wrapSpreadsheet(`
+      <table:table table:name="Sheet1">
+        <table:table-row>
+          <table:table-cell office:value-type="string" table:number-columns-spanned="2"><text:p>merged</text:p></table:table-cell>
+          <table:covered-table-cell/>
+          <table:table-cell office:value-type="string"><text:p>next</text:p></table:table-cell>
+        </table:table-row>
+      </table:table>`))
+
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	c, ok := cellAt(t, wb, 0, 0, 0)
+	if !ok {
+		t.Fatal("cell (0,0) not found")
+	}
+	if v, _ := c.StringValue(); v != "merged" {
+		t.Errorf("cell (0,0) = %q, want \"merged\"", v)
+	}
+	if _, ok := cellAt(t, wb, 0, 0, 1); ok {
+		t.Error("cell (0,1) found, want none - it's covered by the merge")
+	}
+	c, ok = cellAt(t, wb, 0, 0, 2)
+	if !ok {
+		t.Fatal("cell (0,2) not found - the covered cell did not correctly advance the column")
+	}
+	if v, _ := c.StringValue(); v != "next" {
+		t.Errorf("cell (0,2) = %q, want \"next\"", v)
+	}
+}
+
+func TestReadInlineFormattedTextIsConcatenated(t *testing.T) {
+	// A plain string field would only capture text directly inside
+	// <text:p>, silently dropping "World" here.
+	path := buildODS(t, wrapSpreadsheet(`
+      <table:table table:name="Sheet1">
+        <table:table-row>
+          <table:table-cell office:value-type="string"><text:p>Hello <text:span text:style-name="Bold">World</text:span>!</text:p></table:table-cell>
+        </table:table-row>
+      </table:table>`))
+
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	c, ok := cellAt(t, wb, 0, 0, 0)
+	if !ok {
+		t.Fatal("cell (0,0) not found")
+	}
+	if v, ok := c.StringValue(); !ok || v != "Hello World!" {
+		t.Errorf("StringValue() = (%q, %v), want (\"Hello World!\", true)", v, ok)
+	}
+}
+
+func TestReadFormulaStripsOpenFormulaMarker(t *testing.T) {
+	path := buildODS(t, wrapSpreadsheet(`
+      <table:table table:name="Sheet1">
+        <table:table-row>
+          <table:table-cell table:formula="of:=[.A1]+[.B1]" office:value-type="float" office:value="3"/>
+        </table:table-row>
+      </table:table>`))
+
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	c, ok := cellAt(t, wb, 0, 0, 0)
+	if !ok {
+		t.Fatal("cell (0,0) not found")
+	}
+	want := "=[.A1]+[.B1]"
+	if c.Formula != want {
+		t.Errorf("Formula = %q, want %q (the of: marker stripped, matching xlsx's leading-= convention; refs stay in ODF bracket notation)", c.Formula, want)
+	}
+}
+
+func TestReadRowRepeatChargesFullCellCount(t *testing.T) {
+	// 3 real cells per row, repeated 4,000,000 times: repeat alone
+	// (4,000,000) is under the 10M-cell budget, but repeat*cells
+	// (12,000,000) is not - the true materialized cost. Must be
+	// rejected before attempting to build 4 million rows.
+	path := buildODS(t, wrapSpreadsheet(`
+      <table:table table:name="Sheet1">
+        <table:table-row table:number-rows-repeated="4000000">
+          <table:table-cell office:value-type="float" office:value="1"/>
+          <table:table-cell office:value-type="float" office:value="2"/>
+          <table:table-cell office:value-type="float" office:value="3"/>
+        </table:table-row>
+      </table:table>`))
+
+	if _, err := Read(path); err == nil {
+		t.Fatal("Read() with row-repeat x cells over budget: want error, got nil")
+	}
+}
+
+func TestReadRepeatCountOverCapIsRejected(t *testing.T) {
+	path := buildODS(t, wrapSpreadsheet(`
+      <table:table table:name="Sheet1">
+        <table:table-row>
+          <table:table-cell table:number-columns-repeated="99999999"/>
+        </table:table-row>
+      </table:table>`))
+
+	if _, err := Read(path); err == nil {
+		t.Fatal("Read() with a repeat count over the cap: want error, got nil")
+	}
+}
+
+func TestBudgetSpendIsOverflowSafe(t *testing.T) {
+	b := &budget{used: 5}
+	if err := b.spend(math.MaxInt64 - 1); err == nil {
+		t.Fatal("spend() with a value that would overflow the running total: want error, got nil")
+	}
+	if b.used != 5 {
+		t.Errorf("used = %d, want unchanged at 5 after a rejected spend", b.used)
+	}
+}
+
+func TestDecodeEntrySizeLimit(t *testing.T) {
+	xmlContent := wrapSpreadsheet(`
+      <table:table table:name="Sheet1">
+        <table:table-row><table:table-cell office:value-type="string"><text:p>x</text:p></table:table-cell></table:table-row>
+      </table:table>`)
+	path := buildODS(t, xmlContent)
+
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("OpenReader: %v", err)
+	}
+	defer func() { _ = zr.Close() }()
+
+	var f *zip.File
+	for _, entry := range zr.File {
+		if entry.Name == "content.xml" {
+			f = entry
+		}
+	}
+	if f == nil {
+		t.Fatal("content.xml entry not found in fixture")
+	}
+
+	var tooSmall contentXML
+	if err := decodeEntryWithLimit(f, &tooSmall, 10); err == nil {
+		t.Error("decodeEntryWithLimit() with a limit smaller than the file: want error, got nil")
+	}
+
+	var ok contentXML
+	if err := decodeEntryWithLimit(f, &ok, int64(len(xmlContent))+1000); err != nil {
+		t.Errorf("decodeEntryWithLimit() with a generous limit: want no error, got %v", err)
 	}
 }
