@@ -203,3 +203,40 @@ func TestEvalHugeDimensionsRejected(t *testing.T) {
 		})
 	}
 }
+
+// TestEvalCumulativeWorkbookBudgetRejected guards against the
+// whole-workbook path materializing every sheet's grid independently: no
+// single sheet here is anywhere near maxDenseCells on its own (each is
+// 2,000 x 2,000 = 4,000,000 cells), but three of them together (12M)
+// exceed the 10M budget. Only ".", which builds every sheet's grid at
+// once, can see this - a single sheet alone is always fine.
+func TestEvalCumulativeWorkbookBudgetRejected(t *testing.T) {
+	sheet := func(name string) model.Sheet {
+		return model.Sheet{
+			Name: name,
+			Rows: []model.Row{
+				{Index: 1999, Cells: []model.Cell{
+					model.NewNumberCell(1).At(1999),
+				}},
+			},
+		}
+	}
+	wb := model.Workbook{Sheets: []model.Sheet{
+		sheet("Sheet1"), sheet("Sheet2"), sheet("Sheet3"),
+	}}
+
+	if _, err := Eval(filter.Identity{}, wb); err == nil {
+		t.Error("Eval(\".\") on three sheets whose grids sum to 12M cells: want error, got nil")
+	}
+
+	// Each sheet alone is still well within budget.
+	for _, name := range []string{"Sheet1", "Sheet2", "Sheet3"} {
+		expr, err := filter.Parse("." + name)
+		if err != nil {
+			t.Fatalf("filter.Parse: %v", err)
+		}
+		if _, err := Eval(expr, wb); err != nil {
+			t.Errorf("Eval(%q) on a single 4M-cell sheet: want no error, got %v", "."+name, err)
+		}
+	}
+}

@@ -251,7 +251,13 @@ func toJSON(v any) (any, error) {
 	switch val := v.(type) {
 	case model.Workbook:
 		obj := make(map[string]any, len(val.Sheets))
+		var total int64
 		for _, s := range val.Sheets {
+			rows, cols := s.Dimensions()
+			total += int64(rows) * int64(cols)
+			if total > maxDenseCells {
+				return nil, fmt.Errorf("eval: the workbook's sheets together would need over %d cells for a dense whole-workbook result (%q alone is %d x %d); index a specific sheet, cell, row, or column instead", maxDenseCells, s.Name, rows, cols)
+			}
 			grid, err := sheetGrid(s)
 			if err != nil {
 				return nil, err
@@ -266,23 +272,27 @@ func toJSON(v any) (any, error) {
 	}
 }
 
-// maxDenseCells caps how many cells a single dense 2D grid
-// (Sheet.Dimensions() rows * cols) this package will materialize. A
-// sheet whose only cell sits at Excel's actual maximum address
-// (XFD1048576) has real dimensions of about 17 billion cells; without
-// this guard, evaluating that sheet - or the whole workbook, via "." -
-// would try to allocate on the order of hundreds of gigabytes. A whole
-// row or whole column alone is never this dangerous, since Excel's own
-// row/column limits (1,048,576 and 16,384) already bound either one to
-// a few tens of megabytes at most.
+// maxDenseCells caps how many cells the dense 2D grids
+// (Sheet.Dimensions() rows * cols) this package will materialize add up
+// to across a single result - one sheet's grid, or every sheet's grid
+// combined for the whole workbook. A sheet whose only cell sits at
+// Excel's actual maximum address (XFD1048576) has real dimensions of
+// about 17 billion cells; without this guard, evaluating that sheet -
+// or the whole workbook, via "." - would try to allocate on the order
+// of hundreds of gigabytes, and a workbook of many smaller sheets could
+// exhaust the same budget cumulatively even if no single sheet does. A
+// whole row or whole column alone is never this dangerous, since
+// Excel's own row/column limits (1,048,576 and 16,384) already bound
+// either one to a few tens of megabytes at most.
 const maxDenseCells = 10_000_000
 
 // sheetGrid returns sheet as a dense 2D array, [row][col], sized to
 // Sheet.Dimensions().
 func sheetGrid(sheet model.Sheet) ([][]any, error) {
 	rows, cols := sheet.Dimensions()
-	if int64(rows)*int64(cols) > maxDenseCells {
-		return nil, fmt.Errorf("eval: sheet %q is %d x %d (%d cells), over the %d-cell limit for a dense result; index a specific cell, row, or column instead", sheet.Name, rows, cols, rows*cols, maxDenseCells)
+	cells := int64(rows) * int64(cols)
+	if cells > maxDenseCells {
+		return nil, fmt.Errorf("eval: sheet %q is %d x %d (%d cells), over the %d-cell limit for a dense result; index a specific cell, row, or column instead", sheet.Name, rows, cols, cells, maxDenseCells)
 	}
 	grid := make([][]any, rows)
 	for i := range grid {
