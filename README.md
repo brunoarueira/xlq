@@ -23,10 +23,10 @@ xlq '.Sheet1 | .B2' path/to/book.xlsx  # same cell, piped
 xlq --version
 ```
 
-Filters can address a sheet by name (`.Sheet1`, case-insensitive), a
-cell by its A1 reference (`.A1`), a whole column (`.B`), or a whole row
-(`[5]`, 1-based); arithmetic, `map`/`select`, and formula introspection
-aren't implemented yet.
+Filters can address a sheet by name (`.Sheet1`, case-insensitive), and
+from there a cell by its A1 reference (`.Sheet1.A1`), a whole column
+(`.Sheet1.B`), or a whole row (`.Sheet1[5]`, 1-based); arithmetic,
+`map`/`select`, and formula introspection aren't implemented yet.
 
 ## Install
 

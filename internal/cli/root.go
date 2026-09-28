@@ -2,6 +2,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/brunoarueira/xlq/internal/version"
@@ -14,12 +16,18 @@ func NewRootCommand() *cobra.Command {
 		Short: "xlq is a command-line spreadsheet processor",
 		Long: "xlq is a jq/yq-style command-line processor for spreadsheet files.\n\n" +
 			"<filter> is evaluated against <file> - see\n" +
-			"docs/adr/0008-filter-grammar-v1.md for the v1 grammar - and the\n" +
-			"result is printed as JSON.",
+			"docs/adr/0008-filter-grammar-v1.md (and the grammar correction in\n" +
+			"docs/adr/0009-correct-filter-grammar-ebnf.md) for the v1 grammar -\n" +
+			"and the result is printed as JSON.",
 		Example: "  xlq '.Sheet1.A1' report.xlsx\n" +
 			"  xlq '.Sheet1' report.xlsx",
-		Version:       version.Version,
-		Args:          cobra.ExactArgs(2),
+		Version: version.Version,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+				return fmt.Errorf("%w\n\nRun 'xlq --help' for usage", err)
+			}
+			return nil
+		},
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

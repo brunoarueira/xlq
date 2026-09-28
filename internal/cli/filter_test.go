@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
@@ -119,8 +120,17 @@ func TestRootFilterEvalError(t *testing.T) {
 }
 
 func TestRootWrongArgCount(t *testing.T) {
-	if _, err := run(t, ".Sheet1"); err == nil {
-		t.Error("Execute with only one arg: want error, got nil")
+	// With SilenceUsage set, a plain cobra.ExactArgs error would leave a
+	// bare `xlq` (or any wrong arg count) with no hint on how to get
+	// help at all; the Args validator wraps it with a usage pointer.
+	for _, args := range [][]string{nil, {".Sheet1"}} {
+		_, err := run(t, args...)
+		if err == nil {
+			t.Fatalf("Execute(%v): want error, got nil", args)
+		}
+		if want := "Run 'xlq --help' for usage"; !strings.Contains(err.Error(), want) {
+			t.Errorf("Execute(%v) error = %q, want it to contain %q", args, err.Error(), want)
+		}
 	}
 }
 
