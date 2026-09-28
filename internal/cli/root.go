@@ -2,6 +2,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/brunoarueira/xlq/internal/version"
@@ -10,15 +12,27 @@ import (
 // NewRootCommand builds the xlq root command and its subcommands.
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "xlq",
+		Use:   "xlq <filter> <file>",
 		Short: "xlq is a command-line spreadsheet processor",
 		Long: "xlq is a jq/yq-style command-line processor for spreadsheet files.\n\n" +
-			"The filter/query language isn't implemented yet - see\n" +
-			"docs/adr/0004-cli-shape-and-initial-dependencies.md. Today, xlq only\n" +
-			"exposes the \"sheets\" subcommand.",
-		Version:       version.Version,
+			"<filter> is evaluated against <file> - see\n" +
+			"docs/adr/0008-filter-grammar-v1.md (and the grammar correction in\n" +
+			"docs/adr/0009-correct-filter-grammar-ebnf.md) for the v1 grammar -\n" +
+			"and the result is printed as JSON.",
+		Example: "  xlq '.Sheet1.A1' report.xlsx\n" +
+			"  xlq '.Sheet1' report.xlsx",
+		Version: version.Version,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+				return fmt.Errorf("%w\n\nRun 'xlq --help' for usage", err)
+			}
+			return nil
+		},
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runFilter(cmd, args[0], args[1])
+		},
 	}
 	root.SetVersionTemplate("xlq {{.Version}}\n")
 	root.AddCommand(newSheetsCommand())

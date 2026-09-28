@@ -5,18 +5,28 @@
 a single static binary for slicing, filtering, and transforming
 spreadsheet data (`.xlsx` to start) from the shell.
 
-The filter/query language isn't implemented yet. See
-[`docs/adr/`](docs/adr/) for the design decisions made so far, and
+See [`docs/adr/`](docs/adr/) for the design decisions made so far, and
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for how the project is run.
 
 ## Status
 
-Early scaffolding. Today, `xlq` only exposes:
+Early, but the core loop works. `xlq '<filter>' file.xlsx` parses
+`<filter>` (see [ADR-0008](docs/adr/0008-filter-grammar-v1.md) for the
+v1 grammar), evaluates it against the file, and prints the result as
+JSON:
 
 ```sh
 xlq sheets path/to/book.xlsx   # list sheet names
+xlq '.Sheet1.B2' path/to/book.xlsx     # a single cell
+xlq '.Sheet1' path/to/book.xlsx        # a whole sheet, as a 2D array
+xlq '.Sheet1 | .B2' path/to/book.xlsx  # same cell, piped
 xlq --version
 ```
+
+Filters can address a sheet by name (`.Sheet1`, case-insensitive), and
+from there a cell by its A1 reference (`.Sheet1.A1`), a whole column
+(`.Sheet1.B`), or a whole row (`.Sheet1[5]`, 1-based); arithmetic,
+`map`/`select`, and formula introspection aren't implemented yet.
 
 ## Install
 
