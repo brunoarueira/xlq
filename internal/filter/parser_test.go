@@ -137,3 +137,14 @@ func TestParseIntegerOverflowReportsIntTokenPosition(t *testing.T) {
 		t.Errorf("Parse(%q) error = %q, want it to reference position 2 (the integer token)", input, err.Error())
 	}
 }
+
+func TestParseUnquotedNameWithSpaceSuggestsBrackets(t *testing.T) {
+	_, err := Parse(".TOP POSTS")
+	if err == nil {
+		t.Fatal("Parse(\".TOP POSTS\"): want error, got nil")
+	}
+	want := `.["TOP POSTS"]`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to suggest %q", err.Error(), want)
+	}
+}

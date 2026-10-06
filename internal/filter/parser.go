@@ -26,6 +26,9 @@ func Parse(input string) (Expr, error) {
 		return nil, err
 	}
 	if p.peek().kind != tokEOF {
+		if p.peek().kind == tokIdent {
+			return nil, fmt.Errorf("filter: unexpected %s at position %d (a name with spaces needs brackets, e.g. .[\"TOP POSTS\"])", p.peek().describe(), p.peek().pos)
+		}
 		return nil, fmt.Errorf("filter: unexpected %s at position %d", p.peek().describe(), p.peek().pos)
 	}
 	return expr, nil
