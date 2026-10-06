@@ -26,6 +26,9 @@ func Parse(input string) (Expr, error) {
 		return nil, err
 	}
 	if p.peek().kind != tokEOF {
+		if p.peek().kind == tokIdent && spacedAfterIdent(input, p.tokens, p.pos) {
+			return nil, fmt.Errorf("filter: unexpected %s at position %d (a name with spaces needs brackets, e.g. .[\"TOP POSTS\"])", p.peek().describe(), p.peek().pos)
+		}
 		return nil, fmt.Errorf("filter: unexpected %s at position %d", p.peek().describe(), p.peek().pos)
 	}
 	return expr, nil
@@ -138,4 +141,16 @@ func (p *parser) parseBracketSuffix(base Expr) (Expr, error) {
 	}
 	p.advance()
 	return result, nil
+}
+
+// spacedAfterIdent reports whether the token at pos is an identifier
+// separated by whitespace from the identifier just before it - the shape
+// of an unquoted name with spaces, as opposed to an identifier glued to
+// a bracket suffix like .foo[1]bar.
+func spacedAfterIdent(input string, toks []token, pos int) bool {
+	if pos == 0 || toks[pos-1].kind != tokIdent {
+		return false
+	}
+	start := toks[pos].pos
+	return start > 0 && (input[start-1] == ' ' || input[start-1] == '\t')
 }
