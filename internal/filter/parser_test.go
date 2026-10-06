@@ -148,3 +148,15 @@ func TestParseUnquotedNameWithSpaceSuggestsBrackets(t *testing.T) {
 		t.Errorf("error = %q, want it to suggest %q", err.Error(), want)
 	}
 }
+
+func TestParseAdjacentIdentAfterBracketHasNoSpaceHint(t *testing.T) {
+	for _, input := range []string{`.foo[1]bar`, `.["x"]bar`} {
+		_, err := Parse(input)
+		if err == nil {
+			t.Fatalf("Parse(%q): want error, got nil", input)
+		}
+		if strings.Contains(err.Error(), "spaces") {
+			t.Errorf("Parse(%q) error = %q, want no spaces hint (no whitespace involved)", input, err.Error())
+		}
+	}
+}
