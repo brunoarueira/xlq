@@ -20,7 +20,8 @@ func NewRootCommand() *cobra.Command {
 			"docs/adr/0009-correct-filter-grammar-ebnf.md) for the v1 grammar -\n" +
 			"and the result is printed as JSON.",
 		Example: "  xlq '.Sheet1.A1' report.xlsx\n" +
-			"  xlq '.Sheet1' report.xlsx",
+			"  xlq '.Sheet1' report.xlsx\n" +
+			"  xlq --compact '.Sheet1' report.xlsx",
 		Version: version.Version,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
@@ -31,9 +32,11 @@ func NewRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runFilter(cmd, args[0], args[1])
+			compact, _ := cmd.Flags().GetBool("compact")
+			return runFilter(cmd, args[0], args[1], compact)
 		},
 	}
+	root.Flags().Bool("compact", false, "drop rows and columns with no values from the result")
 	root.SetVersionTemplate("xlq {{.Version}}\n")
 	root.AddCommand(newSheetsCommand())
 	return root

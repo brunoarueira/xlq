@@ -144,3 +144,24 @@ func TestRootSheetsSubcommandStillWorks(t *testing.T) {
 		t.Errorf("output = %q, want %q", out, want)
 	}
 }
+
+func TestRootFilterCompactDropsEmptyColumn(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", 1.0); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		// B1 is left absent, so the sheet grid has a null column there.
+		if err := f.SetCellValue("Sheet1", "C1", 3.0); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "--compact", ".Sheet1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := "[\n  [\n    1,\n    3\n  ]\n]\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
