@@ -16,6 +16,7 @@ xlq, using the format described in
 | [0008](0008-filter-grammar-v1.md) | Filter language grammar v1: identity, A1 addressing, pipe |
 | [0009](0009-correct-filter-grammar-ebnf.md) | Correct ADR-0008's path grammar |
 | [0010](0010-ods-reader-no-dependency.md) | ODS reader: no third-party library, standard library only |
+| [0011](0011-header-aware-record-output.md) | Header-aware record output: the `records` filter |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
