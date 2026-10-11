@@ -129,8 +129,15 @@ func applyIndex(base any, n int) (any, error) {
 		// Indexing into an array produced by filter.Records (ADR-0011):
 		// 0-based, jq-style, per ADR-0008's own deferred note that
 		// indexing an already-produced array - as opposed to a
-		// spreadsheet row number - should be. Out of range is null,
-		// not an error, matching jq's own array-indexing behavior.
+		// spreadsheet row number - should be. A negative index counts
+		// from the end (jq's own convention: .[-1] is the last
+		// element), not merely "no further than -1" - matching jq
+		// fully, not just its 0-based-from-the-front half. Still out
+		// of range (too high, or too negative even after counting
+		// back from the end) is null, not an error.
+		if n < 0 {
+			n += len(v)
+		}
 		if n < 0 || n >= len(v) {
 			return nil, nil
 		}
@@ -156,7 +163,11 @@ func applyRecords(cur any) (any, error) {
 // sheetRecords converts sheet into an array of record objects, one per
 // data row (every row after row 1), keyed by header name, per
 // ADR-0011. A row entirely absent from sheet.Rows (every cell blank)
-// contributes no record at all - there's no Row to iterate for it.
+// contributes no record at all - there's no Row to iterate for it -
+// and neither does a row that is present but whose every cell is
+// still blank (e.g. a formula that evaluated to blank, model.Empty):
+// both produce an all-null record, which is exactly the noise a
+// sheet's sparse representation already omits everywhere else.
 func sheetRecords(sheet model.Sheet) ([]map[string]any, error) {
 	rows, cols := sheet.Dimensions()
 	cells := int64(rows) * int64(cols)
@@ -178,8 +189,16 @@ func sheetRecords(sheet model.Sheet) ([]map[string]any, error) {
 		for _, h := range headers {
 			record[h] = nil
 		}
+		hasValue := false
 		for _, c := range r.Cells {
-			record[headers[c.Column]] = cellValue(c)
+			v := cellValue(c)
+			record[headers[c.Column]] = v
+			if v != nil {
+				hasValue = true
+			}
+		}
+		if !hasValue {
+			continue
 		}
 		records = append(records, record)
 	}

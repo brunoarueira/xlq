@@ -266,11 +266,15 @@ func TestEvalRecordsIndexAndFieldAccess(t *testing.T) {
 		want  any
 	}{
 		{"field by header name", `.Sheet1 | records | .[0].hello`, true},
-		{"field by numeric-stringified header name", `.Sheet1 | records | .[0]["42"]`, nil},
 		{"field by fallback column-letter header", `.Sheet1 | records | .[1].C`, testDate.Format(time.RFC3339)},
 		{"missing field on a record is null, not an error", `.Sheet1 | records | .[0].NoSuchHeader`, nil},
 		{"out-of-range index is null, not an error", `.Sheet1 | records | .[99]`, nil},
-		{"negative index is null", `.Sheet1 | records | .[-1]`, nil},
+		{
+			"negative index counts from the end, jq-style",
+			`.Sheet1 | records | .[-1]`,
+			map[string]any{"hello": nil, "42": nil, "C": testDate.Format(time.RFC3339)},
+		},
+		{"negative index too far back is null, not an error", `.Sheet1 | records | .[-99]`, nil},
 		{"records on a missing sheet propagates null", `.NoSuchSheet | records`, nil},
 	}
 	for _, tc := range cases {
@@ -332,6 +336,61 @@ func TestEvalRecordsSkipsEntirelyBlankDataRows(t *testing.T) {
 	want := []map[string]any{{"Name": "Alice"}, {"Name": "Bob"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Eval(%q) = %#v, want %#v", ".Sheet1 | records", got, want)
+	}
+}
+
+// TestEvalRecordsSkipsRowPresentButAllCellsEmpty confirms the same
+// skip applies to a row that *does* have a model.Row (so it isn't
+// caught by the "absent from Sheet.Rows" case above) but whose only
+// cell is explicitly model.Empty, e.g. a formula that evaluated to
+// blank - still just noise, not a record worth emitting.
+func TestEvalRecordsSkipsRowPresentButAllCellsEmpty(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{{
+		Name: "Sheet1",
+		Rows: []model.Row{
+			{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0)}},
+			{Index: 1, Cells: []model.Cell{model.NewEmptyCell().At(0)}},
+			{Index: 2, Cells: []model.Cell{model.NewStringCell("Alice").At(0)}},
+		},
+	}}}
+	expr, err := filter.Parse(".Sheet1 | records")
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	got, err := Eval(expr, wb)
+	if err != nil {
+		t.Fatalf("Eval returned error: %v", err)
+	}
+	want := []map[string]any{{"Name": "Alice"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Eval(%q) = %#v, want %#v", ".Sheet1 | records", got, want)
+	}
+}
+
+// TestEvalRecordsNumericHeaderLookup confirms a numeric header cell's
+// stringified name can actually be looked up, with a genuinely
+// non-null value - unlike testWorkbook()'s own fixture, where the
+// column under the numeric "42" header happens to be empty in every
+// data row, which can't distinguish a correct lookup from a missing
+// key defaulting to null.
+func TestEvalRecordsNumericHeaderLookup(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{{
+		Name: "Sheet1",
+		Rows: []model.Row{
+			{Index: 0, Cells: []model.Cell{model.NewNumberCell(42).At(0)}},
+			{Index: 1, Cells: []model.Cell{model.NewStringCell("value under 42").At(0)}},
+		},
+	}}}
+	expr, err := filter.Parse(`.Sheet1 | records | .[0]["42"]`)
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	got, err := Eval(expr, wb)
+	if err != nil {
+		t.Fatalf("Eval returned error: %v", err)
+	}
+	if want := "value under 42"; got != want {
+		t.Errorf(`Eval(".Sheet1 | records | .[0][\"42\"]") = %#v, want %#v`, got, want)
 	}
 }
 

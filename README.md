@@ -35,9 +35,14 @@ from there a cell by its A1 reference (`.Sheet1.A1`), a whole column
 `records` (see [ADR-0011](docs/adr/0011-header-aware-record-output.md))
 turns a sheet into an array of row objects keyed by its row-1 header,
 so a column can be addressed by name instead of position - useful for
-the common case of a sheet shaped like a CSV table. It assumes row 1
-actually is a header row; piping a sheet without one into `records`
-will treat its first data row as headers instead.
+the common case of a sheet shaped like a CSV table. Two things worth
+knowing before relying on it: the records array is 0-indexed, jq-style
+(`.[0]` is the first record), unlike a sheet's own 1-based row numbers
+above; and a record's JSON keys print alphabetically, not in the
+sheet's original column order, since that's how Go's JSON encoder
+orders any object's keys. It also assumes row 1 actually is a header
+row; piping a sheet without one into `records` will treat its first
+data row as headers instead.
 
 ## Install
 
