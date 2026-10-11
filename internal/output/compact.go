@@ -7,7 +7,7 @@ package output
 // a whole-workbook result (map[string]any of per-sheet grids). v's
 // shape otherwise matches what eval.Eval returns:
 //
-//   - map[string]any (a workbook): each value is compacted in place.
+//   - map[string]any (a workbook): each value is compacted recursively.
 //   - [][]any (a sheet grid): a row is dropped if every cell in it is
 //     nil; a column is dropped if every cell in every row is nil.
 //     Both checks run against the original grid, so which columns
