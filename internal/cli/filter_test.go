@@ -165,3 +165,70 @@ func TestRootFilterCompactDropsEmptyColumn(t *testing.T) {
 		t.Errorf("output = %q, want %q", out, want)
 	}
 }
+
+func TestRootFilterCompactOutputPrintsOneLine(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", 1.0); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "B1", 2.0); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "-c", ".Sheet1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "[[1,2]]\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterRawOutputStripsQuotesFromString(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "hello"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "-r", ".Sheet1.A1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "hello\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterRawOutputLeavesNonStringAsJSON(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", 42.0); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "-r", ".Sheet1.A1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "42\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterCompactOutputAndRawOutputTogether(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "hi"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "-c", "-r", ".Sheet1.A1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "hi\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
