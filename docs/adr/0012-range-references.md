@@ -60,7 +60,22 @@ Go type. Concretely: every cell within the range's row/column bounds
 is copied into a new `model.Sheet` with its `Row.Index`/`Cell.Column`
 each reduced by the range's starting row/column; a row or column that
 has nothing real to re-index simply isn't added (sparse, the same way
-a whole sheet already is).
+a whole sheet already is) - **except** the range's own declared
+bottom-right corner, which is always present, even if nothing real
+occupies it: an explicit `model.Empty` cell is inserted there if the
+slicing above didn't already produce something at that exact position.
+
+Without that one guaranteed cell, `Dimensions()` - which measures the
+highest row/column actually present, exactly as it already does for a
+whole sheet - would silently shrink a sparse range to whatever's
+populated. `.Sheet1["A1:C10"]` with real content only at `A1` would
+report as a 1x1 sheet, not the declared 10x3: a bare dense-grid result
+would drop every blank trailing row and column the range explicitly
+asked for, and worse, `records` would only generate a header for
+column A, silently losing columns B and C from every record rather
+than including them with null values. The anchor cell is what makes a
+range's declared shape - not just its populated content - the thing
+`Dimensions()`, and everything built on it, actually sees.
 
 The new sheet's `Name` is `"<original>!<range>"` (`TOP POSTS!A3:C9`,
 following Excel's own qualified-reference convention), purely for
@@ -91,11 +106,14 @@ free**, with no new code anywhere else in `internal/eval`:
   other table's columns were never part of the slice to begin with.
 - The existing `maxDenseCells` budget (`internal/eval`, 10,000,000
   cells) already applies to a range with no new guard needed:
-  `Dimensions()` on the re-indexed sheet reflects the real cells
-  present within the range, the same way it already does for a whole
-  sheet, so `sheetGrid`/`sheetRecords`'s existing checks see it
-  exactly like any other `model.Sheet` and reject an oversized one the
-  same way.
+  `Dimensions()` on the re-indexed sheet reflects the range's declared
+  size (via the anchor cell above), so `sheetGrid`/`sheetRecords`'s
+  existing checks see it exactly like any other `model.Sheet` and
+  reject an oversized one the same way - including a range whose
+  *declared* bounds are huge even if what it actually contains isn't,
+  e.g. `.Sheet1["A1:XFD1048576"]` on a sheet with a single real cell
+  still reports (and gets rejected for) the full declared size, not
+  the one real cell's.
 
 ### Explicitly deferred
 
