@@ -23,6 +23,7 @@ xlq '.Sheet1 | .B2' path/to/book.xlsx  # same cell, piped
 xlq --compact '.Sheet1' path/to/book.xlsx  # drop empty rows/columns
 xlq -c '.Sheet1' path/to/book.xlsx         # compact JSON, one line
 xlq -r '.Sheet1.A1' path/to/book.xlsx      # a string result, unquoted
+xlq '.Sheet1 | records | .[0].SomeHeader' path/to/book.xlsx  # by header name
 xlq --version
 ```
 
@@ -30,6 +31,13 @@ Filters can address a sheet by name (`.Sheet1`, case-insensitive), and
 from there a cell by its A1 reference (`.Sheet1.A1`), a whole column
 (`.Sheet1.B`), or a whole row (`.Sheet1[5]`, 1-based); arithmetic,
 `map`/`select`, and formula introspection aren't implemented yet.
+
+`records` (see [ADR-0011](docs/adr/0011-header-aware-record-output.md))
+turns a sheet into an array of row objects keyed by its row-1 header,
+so a column can be addressed by name instead of position - useful for
+the common case of a sheet shaped like a CSV table. It assumes row 1
+actually is a header row; piping a sheet without one into `records`
+will treat its first data row as headers instead.
 
 ## Install
 

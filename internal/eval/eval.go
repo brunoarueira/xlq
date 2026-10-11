@@ -12,9 +12,15 @@
 // whole column" already being dense 1D arrays, and it's what gives the
 // whole-workbook object (keyed by sheet name) a well-defined value to
 // put under each key.
+//
+// filter.Records (the "records" builtin, ADR-0011) adds two more
+// result shapes: a []map[string]any (the records array itself) and a
+// map[string]any (one record, once indexed into). Both are already
+// JSON-marshalable as-is, so toJSON doesn't need a case for either.
 package eval
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -62,6 +68,8 @@ func eval(expr filter.Expr, cur any) (any, error) {
 			return nil, err
 		}
 		return eval(e.Right, left)
+	case filter.Records:
+		return applyRecords(cur)
 	default:
 		return nil, fmt.Errorf("eval: unknown expression type %T", expr)
 	}
@@ -93,6 +101,12 @@ func applyField(base any, name string) (any, error) {
 		default:
 			return nil, fmt.Errorf("eval: %q is not a valid column letter or cell reference on sheet %q", name, v.Name)
 		}
+	case map[string]any:
+		// A single record, produced by filter.Records (ADR-0011): a
+		// missing key is null, jq's own convention for a missing
+		// object key - not an error, unlike every other "not
+		// indexable further" case below.
+		return v[name], nil
 	default:
 		return nil, fmt.Errorf("eval: cannot access field %q on %s - not indexable further in v1", name, describeType(base))
 	}
@@ -111,9 +125,130 @@ func applyIndex(base any, n int) (any, error) {
 			return nil, fmt.Errorf("eval: row number must be >= 1 (spreadsheet rows are 1-based), got %d", n)
 		}
 		return wholeRow(v, n), nil
+	case []map[string]any:
+		// Indexing into an array produced by filter.Records (ADR-0011):
+		// 0-based, jq-style, per ADR-0008's own deferred note that
+		// indexing an already-produced array - as opposed to a
+		// spreadsheet row number - should be. Out of range is null,
+		// not an error, matching jq's own array-indexing behavior.
+		if n < 0 || n >= len(v) {
+			return nil, nil
+		}
+		return v[n], nil
 	default:
 		return nil, fmt.Errorf("eval: cannot index %s with [%d] - not indexable further in v1", describeType(base), n)
 	}
+}
+
+// applyRecords implements the "records" builtin (ADR-0011): an array of
+// record objects, one per data row, keyed by header name.
+func applyRecords(cur any) (any, error) {
+	switch v := cur.(type) {
+	case nil:
+		return nil, nil
+	case model.Sheet:
+		return sheetRecords(v)
+	default:
+		return nil, fmt.Errorf("eval: records: cannot apply to %s - records only applies to a sheet", describeType(cur))
+	}
+}
+
+// sheetRecords converts sheet into an array of record objects, one per
+// data row (every row after row 1), keyed by header name, per
+// ADR-0011. A row entirely absent from sheet.Rows (every cell blank)
+// contributes no record at all - there's no Row to iterate for it.
+func sheetRecords(sheet model.Sheet) ([]map[string]any, error) {
+	rows, cols := sheet.Dimensions()
+	cells := int64(rows) * int64(cols)
+	if cells > maxDenseCells {
+		return nil, fmt.Errorf("eval: sheet %q is %d x %d (%d cells), over the %d-cell limit for records; index a specific cell, row, or column instead", sheet.Name, rows, cols, cells, maxDenseCells)
+	}
+
+	headers, err := sheetHeaders(sheet, cols)
+	if err != nil {
+		return nil, err
+	}
+
+	records := make([]map[string]any, 0, len(sheet.Rows))
+	for _, r := range sheet.Rows {
+		if r.Index == 0 {
+			continue // the header row itself, not a data row
+		}
+		record := make(map[string]any, cols)
+		for _, h := range headers {
+			record[h] = nil
+		}
+		for _, c := range r.Cells {
+			record[headers[c.Column]] = cellValue(c)
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+// sheetHeaders returns one header name per column (0..cols-1), per
+// ADR-0011: a non-blank header cell's own cellValue(), stringified -
+// or that column's own A1 letter if the header cell is blank or
+// absent, including when the header row itself doesn't exist at all
+// (sheet.Rows has no Row with Index 0). Two columns resolving to the
+// same rendered name is an error, naming both.
+func sheetHeaders(sheet model.Sheet, cols int) ([]string, error) {
+	headers := make([]string, cols)
+	for j := range headers {
+		headers[j] = columnLetter(j)
+	}
+	// sheet.Rows is ordered ascending by Index, so the header row, if
+	// present, is always sheet.Rows[0].
+	if len(sheet.Rows) > 0 && sheet.Rows[0].Index == 0 {
+		for _, c := range sheet.Rows[0].Cells {
+			if name, ok := headerString(cellValue(c)); ok {
+				headers[c.Column] = name
+			}
+		}
+	}
+
+	seen := make(map[string]int, cols) // rendered name -> first column index
+	for j, name := range headers {
+		if first, ok := seen[name]; ok {
+			return nil, fmt.Errorf("eval: records: duplicate header %q at columns %s and %s", name, columnLetter(first), columnLetter(j))
+		}
+		seen[name] = j
+	}
+	return headers, nil
+}
+
+// headerString renders a cellValue() result as a record's map key: a
+// string as-is, anything else (a number, a bool) via its own JSON
+// text - the same text that value would already render as in JSON
+// output, so a numeric 42 and a literal "42" are one rendered name,
+// not two. Reports false for a blank header (a nil cellValue(), i.e.
+// an absent or Empty cell).
+func headerString(v any) (string, bool) {
+	if v == nil {
+		return "", false
+	}
+	if s, ok := v.(string); ok {
+		return s, true
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
+// columnLetter converts a 0-based column index to spreadsheet column
+// letters (0 -> "A", 25 -> "Z", 26 -> "AA", ...), the reverse of
+// columnIndex.
+func columnLetter(col int) string {
+	col++
+	var letters []byte
+	for col > 0 {
+		col--
+		letters = append([]byte{byte('A' + col%26)}, letters...)
+		col /= 26
+	}
+	return string(letters)
 }
 
 // findSheet looks up a sheet by name, case-insensitively: an exact-case
@@ -316,6 +451,12 @@ func describeType(v any) string {
 		return "a number"
 	case bool:
 		return "a boolean"
+	case model.Workbook:
+		return "a workbook"
+	case []map[string]any:
+		return "a records array"
+	case map[string]any:
+		return "a record"
 	default:
 		return fmt.Sprintf("a %T", v)
 	}

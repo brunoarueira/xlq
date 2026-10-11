@@ -6,11 +6,14 @@ import (
 )
 
 // Parse parses a filter string into an Expr, per
-// docs/adr/0008-filter-grammar-v1.md and the grammar correction in
-// docs/adr/0009-correct-filter-grammar-ebnf.md:
+// docs/adr/0008-filter-grammar-v1.md, the grammar correction in
+// docs/adr/0009-correct-filter-grammar-ebnf.md, and the builtin-step
+// addition in docs/adr/0011-header-aware-record-output.md:
 //
 //	filter   = pipeline
-//	pipeline = path ( "|" path )*
+//	pipeline = path ( "|" step )*
+//	step     = path | builtin
+//	builtin  = "records"
 //	path     = "." ( head tail* )?
 //	head     = IDENT | "[" STRING "]" | "[" INT "]"
 //	tail     = "." IDENT | "[" STRING "]" | "[" INT "]"
@@ -60,13 +63,26 @@ func (p *parser) parsePipeline() (Expr, error) {
 	}
 	for p.peek().kind == tokPipe {
 		p.advance()
-		right, err := p.parsePath()
+		right, err := p.parseStep()
 		if err != nil {
 			return nil, err
 		}
 		left = Pipe{Left: left, Right: right}
 	}
 	return left, nil
+}
+
+// parseStep parses one pipeline step after a "|": either a path, or a
+// bare builtin keyword (currently just "records", ADR-0011). A builtin
+// is only valid here - parsePipeline always parses a filter's first
+// segment via parsePath, never parseStep, so "records" alone (with no
+// preceding "|") isn't a valid filter on its own.
+func (p *parser) parseStep() (Expr, error) {
+	if p.peek().kind == tokIdent && p.peek().text == "records" {
+		p.advance()
+		return Records{}, nil
+	}
+	return p.parsePath()
 }
 
 func (p *parser) parsePath() (Expr, error) {

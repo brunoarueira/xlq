@@ -63,6 +63,27 @@ func TestParseValid(t *testing.T) {
 			},
 		},
 		{
+			"records builtin after a pipe",
+			".Sheet1 | records",
+			Pipe{Field{Identity{}, "Sheet1"}, Records{}},
+		},
+		{
+			"records followed by further steps",
+			".Sheet1 | records | .[0].Impressions",
+			Pipe{
+				Pipe{Field{Identity{}, "Sheet1"}, Records{}},
+				Field{Index{Identity{}, 0}, "Impressions"},
+			},
+		},
+		{
+			"records chained with itself parses fine (an eval-time error, not a syntax one)",
+			".Sheet1 | records | records",
+			Pipe{
+				Pipe{Field{Identity{}, "Sheet1"}, Records{}},
+				Records{},
+			},
+		},
+		{
 			"whitespace between tokens is insignificant",
 			" .  Sheet1 . A1 ",
 			Field{Field{Identity{}, "Sheet1"}, "A1"},
@@ -113,6 +134,8 @@ func TestParseInvalid(t *testing.T) {
 		{"unexpected character", ".Sheet1.A1 & .B2"},
 		{"mismatched bracket for row index", ".Sheet1[1.5]"},
 		{"trailing garbage after valid filter", ".Sheet1 extra"},
+		{"records can't be a filter's first segment", "records"},
+		{"records can't be chained directly without a pipe", ".Sheet1 | records.Impressions"},
 	}
 
 	for _, tc := range cases {

@@ -240,3 +240,202 @@ func TestEvalCumulativeWorkbookBudgetRejected(t *testing.T) {
 		}
 	}
 }
+
+// TestEvalRecords exercises the "records" builtin (ADR-0011) against
+// testWorkbook()'s Sheet1: row 1 (A1="hello", B1=42) is the header row,
+// row 2 (A2=true, B2=Empty) and row 3 (C3=date) are data rows. Column C
+// has no header cell at all, so it falls back to its own letter, "C".
+func TestEvalRecords(t *testing.T) {
+	want := []map[string]any{
+		{"hello": true, "42": nil, "C": nil},
+		{"hello": nil, "42": nil, "C": testDate.Format(time.RFC3339)},
+	}
+	got, err := evalString(t, ".Sheet1 | records")
+	if err != nil {
+		t.Fatalf("Eval(%q) returned error: %v", ".Sheet1 | records", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Eval(%q) = %#v, want %#v", ".Sheet1 | records", got, want)
+	}
+}
+
+func TestEvalRecordsIndexAndFieldAccess(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"field by header name", `.Sheet1 | records | .[0].hello`, true},
+		{"field by numeric-stringified header name", `.Sheet1 | records | .[0]["42"]`, nil},
+		{"field by fallback column-letter header", `.Sheet1 | records | .[1].C`, testDate.Format(time.RFC3339)},
+		{"missing field on a record is null, not an error", `.Sheet1 | records | .[0].NoSuchHeader`, nil},
+		{"out-of-range index is null, not an error", `.Sheet1 | records | .[99]`, nil},
+		{"negative index is null", `.Sheet1 | records | .[-1]`, nil},
+		{"records on a missing sheet propagates null", `.NoSuchSheet | records`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := evalString(t, tc.input)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalRecordsInvalid(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"records on the whole workbook", ". | records"},
+		{"records on an already-produced row array", ".Sheet1[1] | records"},
+		{"records on an already-produced column array", ".Sheet1.A | records"},
+		{"records on a scalar", ".Sheet1.A1 | records"},
+		{"index on a single record", `.Sheet1 | records | .[0][0]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := evalString(t, tc.input); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
+// TestEvalRecordsSkipsEntirelyBlankDataRows confirms a data row with no
+// cells at all contributes no record (model.Sheet's sparse
+// representation never materializes it), rather than an all-null one -
+// there are 2 data rows in the fixture (indexes 1 and 3), with index 2
+// entirely absent.
+func TestEvalRecordsSkipsEntirelyBlankDataRows(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{{
+		Name: "Sheet1",
+		Rows: []model.Row{
+			{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0)}},
+			{Index: 1, Cells: []model.Cell{model.NewStringCell("Alice").At(0)}},
+			// Index 2 deliberately absent: an entirely blank row.
+			{Index: 3, Cells: []model.Cell{model.NewStringCell("Bob").At(0)}},
+		},
+	}}}
+	expr, err := filter.Parse(".Sheet1 | records")
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	got, err := Eval(expr, wb)
+	if err != nil {
+		t.Fatalf("Eval returned error: %v", err)
+	}
+	want := []map[string]any{{"Name": "Alice"}, {"Name": "Bob"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Eval(%q) = %#v, want %#v", ".Sheet1 | records", got, want)
+	}
+}
+
+// TestEvalRecordsMissingHeaderRowFallsBackToLetters confirms a sheet
+// whose row 1 doesn't exist at all (not just blank-but-present) still
+// produces records, keyed by column letter for every column.
+func TestEvalRecordsMissingHeaderRowFallsBackToLetters(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{{
+		Name: "Sheet1",
+		Rows: []model.Row{
+			{Index: 1, Cells: []model.Cell{
+				model.NewStringCell("x").At(0),
+				model.NewStringCell("y").At(1),
+			}},
+		},
+	}}}
+	expr, err := filter.Parse(".Sheet1 | records")
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	got, err := Eval(expr, wb)
+	if err != nil {
+		t.Fatalf("Eval returned error: %v", err)
+	}
+	want := []map[string]any{{"A": "x", "B": "y"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Eval(%q) = %#v, want %#v", ".Sheet1 | records", got, want)
+	}
+}
+
+// TestEvalRecordsDuplicateHeaderRejected guards against the exact
+// failure mode ADR-0011 calls out: two columns sharing header text -
+// as a real export's two side-by-side tables can - would silently
+// collide in a plain Go map, keeping only the last-written value.
+func TestEvalRecordsDuplicateHeaderRejected(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{{
+		Name: "Sheet1",
+		Rows: []model.Row{
+			{Index: 0, Cells: []model.Cell{
+				model.NewStringCell("Post URL").At(0),
+				model.NewStringCell("Engagements").At(1),
+				model.NewStringCell("Post URL").At(2),
+			}},
+			{Index: 1, Cells: []model.Cell{
+				model.NewStringCell("a").At(0),
+				model.NewNumberCell(1).At(1),
+				model.NewStringCell("b").At(2),
+			}},
+		},
+	}}}
+	expr, err := filter.Parse(".Sheet1 | records")
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	if _, err := Eval(expr, wb); err == nil {
+		t.Error("Eval on a sheet with duplicate headers: want error, got nil")
+	}
+}
+
+// TestEvalRecordsNumericAndTextHeaderCollide confirms a numeric header
+// cell and a literal-text header cell that render the same way are
+// treated as one collision, not two distinct headers - the duplicate
+// check runs on the final rendered key, not the pre-render cellValue().
+func TestEvalRecordsNumericAndTextHeaderCollide(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{{
+		Name: "Sheet1",
+		Rows: []model.Row{
+			{Index: 0, Cells: []model.Cell{
+				model.NewNumberCell(42).At(0),
+				model.NewStringCell("42").At(1),
+			}},
+		},
+	}}}
+	expr, err := filter.Parse(".Sheet1 | records")
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	if _, err := Eval(expr, wb); err == nil {
+		t.Error("Eval with a numeric 42 header and a literal \"42\" header: want error, got nil")
+	}
+}
+
+// TestEvalRecordsHugeDimensionsRejected mirrors
+// TestEvalHugeDimensionsRejected: records operates on model.Sheet
+// directly, bypassing sheetGrid's own maxDenseCells check entirely, so
+// it needs its own guard against the same unreasonable allocation.
+func TestEvalRecordsHugeDimensionsRejected(t *testing.T) {
+	huge := model.Workbook{
+		Sheets: []model.Sheet{
+			{
+				Name: "Sheet1",
+				Rows: []model.Row{
+					{Index: 1048575, Cells: []model.Cell{
+						model.NewNumberCell(1).At(16383),
+					}},
+				},
+			},
+		},
+	}
+	expr, err := filter.Parse(".Sheet1 | records")
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	if _, err := Eval(expr, huge); err == nil {
+		t.Error("Eval(\".Sheet1 | records\") on a sheet with real dimensions ~17 billion cells: want error, got nil")
+	}
+}
