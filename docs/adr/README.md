@@ -17,6 +17,7 @@ xlq, using the format described in
 | [0009](0009-correct-filter-grammar-ebnf.md) | Correct ADR-0008's path grammar |
 | [0010](0010-ods-reader-no-dependency.md) | ODS reader: no third-party library, standard library only |
 | [0011](0011-header-aware-record-output.md) | Header-aware record output: the `records` filter |
+| [0012](0012-range-references.md) | Range references: `A1:C10`, and composing with `records` |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
