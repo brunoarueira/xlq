@@ -84,6 +84,16 @@ matching the issue's own framing ("objects keyed by header"), and
 deliberately not a columnar (object-of-arrays) shape - see Explicitly
 deferred.
 
+A `map[string]any`'s keys, once JSON-encoded, come out sorted
+alphabetically, not in the sheet's original column order - the same
+tradeoff ADR-0008 already accepts for the whole-workbook object (keyed
+by sheet name), for the same reason: Go's JSON encoder doesn't
+preserve map insertion order, and introducing an ordered-object type
+here to recover it would be more machinery than the problem has
+earned given that ADR-0008 precedent. Column order isn't recoverable
+from a single record's JSON shape; it still is from `records`' own
+array order (one element per data row, in sheet order).
+
 ### Header row
 
 Always row 1 (`Row.Index == 0`) of whatever value `records` is applied
@@ -100,9 +110,13 @@ already used.
 
 ### Header names
 
-- A non-blank header cell's name is its own `cellValue()` rendering -
-  the exact text/number/bool/date-string `.Sheet1.A1` addressing would
-  already produce for that cell. No new parsing or type inference.
+- A non-blank header cell's name is its own `cellValue()` rendering,
+  **stringified into a map key**: a `string` cell's value as-is, a
+  `float64` cell via its JSON-number text (`42` becomes `"42"`), a
+  `bool` via `"true"`/`"false"`, a `Date` via the same RFC3339 text
+  `.Sheet1.A1` addressing would already produce. No new parsing or
+  type inference - only turning an already-computed value into a
+  string key.
 - A blank header cell (or a header row shorter than
   `Sheet.Dimensions().cols`) uses that column's own A1 letter as its
   key instead (column C's blank header becomes key `"C"`) - reusing an
@@ -111,16 +125,21 @@ already used.
 - A header row that's entirely absent from `Sheet.Rows` degrades to
   every column using its letter - the same fallback as a single blank
   cell, just for the whole row at once.
-- Two columns resolving to the same header name - duplicate header
-  text, or a blank-placeholder letter colliding with a real header
-  elsewhere - is an **error**, naming both column letters and the
-  repeated name. A plain Go map would silently keep only the
-  last-written value, quietly dropping a column's data - and this is
-  exactly the shape `TOP POSTS`'s two side-by-side tables produce
-  today (both share "Post URL" and "Post Publish Date" as literal
-  header text). Silently losing data on a header collision isn't
-  consistent with the project's existing refusal to guess or discard
-  silently.
+- Two columns resolving to the same *rendered key* - duplicate header
+  text, a numeric header colliding with literal text that renders the
+  same way (a `42` cell and a `"42"` cell are one collision, not two
+  distinct headers), or a blank-placeholder letter colliding with a
+  real header elsewhere - is an **error**, naming both column letters
+  and the repeated key. The duplicate check always runs on the final
+  rendered string, never on the pre-render `cellValue()`, so a
+  cross-kind collision is caught the same way a same-kind one is. A
+  plain Go map would otherwise silently keep only the last-written
+  value, quietly dropping a column's data - precisely the risk a
+  sheet like `TOP POSTS` carries once its own header row is isolated
+  (see Consequences): it repeats "Post URL" and "Post Publish Date"
+  across its two side-by-side tables. Silently losing data on a
+  header collision isn't consistent with the project's existing
+  refusal to guess or discard silently.
 
 ### Resource bound
 
@@ -168,11 +187,18 @@ opt-in, applied by explicit choice, the same way `pandas.read_csv`'s
 own `header=0` default is also wrong for a headerless file unless the
 caller says otherwise.
 
-`records` on a multi-table sheet (`TOP POSTS`) errors today with a
-clear, actionable message naming the duplicate header and both
-columns, rather than silently dropping one table's data. The fix is
-#36 (ranges) plus re-querying with a narrowed range - not something
-this ADR can resolve alone, as scoped above.
+`records` on the full `TOP POSTS` sheet doesn't reach the duplicate-
+header case at all: its row 1 is a single-cell title row, not the
+real header row (row 3), so `records` would use that title as the
+lone header and fall back to column letters everywhere else - a
+useless result, but not an error, and not the sheet's two tables
+merged together either. Reaching row 3's genuine duplicate headers
+("Post URL" and "Post Publish Date", repeated across its two
+side-by-side tables) needs #36 (ranges) to isolate one table's rows
+first; only then would `records` see a single header row and -
+without also narrowing to that table's own columns - raise the
+duplicate-header error this ADR defines. Resolving that fully (one
+table's data, not an error) is #36 plus #41's job, not this ADR's.
 
 The grammar gains exactly one new production (a pipe step may be a
 bare builtin keyword, not only a path) and one new keyword
