@@ -21,7 +21,9 @@ func NewRootCommand() *cobra.Command {
 			"and the result is printed as JSON.",
 		Example: "  xlq '.Sheet1.A1' report.xlsx\n" +
 			"  xlq '.Sheet1' report.xlsx\n" +
-			"  xlq --compact '.Sheet1' report.xlsx",
+			"  xlq --compact '.Sheet1' report.xlsx\n" +
+			"  xlq -c '.Sheet1' report.xlsx\n" +
+			"  xlq -r '.Sheet1.A1' report.xlsx",
 		Version: version.Version,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
@@ -32,11 +34,19 @@ func NewRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			compact, _ := cmd.Flags().GetBool("compact")
-			return runFilter(cmd, args[0], args[1], compact)
+			compactData, _ := cmd.Flags().GetBool("compact")
+			compactJSON, _ := cmd.Flags().GetBool("compact-output")
+			rawOutput, _ := cmd.Flags().GetBool("raw-output")
+			return runFilter(cmd, args[0], args[1], outputOptions{
+				compactData: compactData,
+				compactJSON: compactJSON,
+				rawOutput:   rawOutput,
+			})
 		},
 	}
 	root.Flags().Bool("compact", false, "drop rows and columns with no values from the result")
+	root.Flags().BoolP("compact-output", "c", false, "print JSON on one line, without indentation")
+	root.Flags().BoolP("raw-output", "r", false, "print a string result without JSON quotes")
 	root.SetVersionTemplate("xlq {{.Version}}\n")
 	root.AddCommand(newSheetsCommand())
 	return root

@@ -21,6 +21,8 @@ xlq '.Sheet1.B2' path/to/book.xlsx     # a single cell
 xlq '.Sheet1' path/to/book.xlsx        # a whole sheet, as a 2D array
 xlq '.Sheet1 | .B2' path/to/book.xlsx  # same cell, piped
 xlq --compact '.Sheet1' path/to/book.xlsx  # drop empty rows/columns
+xlq -c '.Sheet1' path/to/book.xlsx         # compact JSON, one line
+xlq -r '.Sheet1.A1' path/to/book.xlsx      # a string result, unquoted
 xlq --version
 ```
 
