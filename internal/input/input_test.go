@@ -221,6 +221,22 @@ func TestSheetNamesCSVStillChecksFileExists(t *testing.T) {
 	}
 }
 
+// TestSheetNamesCSVRejectsDirectory guards against a gap a cubic-
+// dev-ai review caught: os.Stat alone can't tell a directory from a
+// regular file - a directory exists and stats successfully, so a
+// directory misleadingly named "dir.csv" would otherwise report
+// "Sheet1" instead of erroring the way actually reading it (or the
+// xlsx/ods branches, which do open/parse) already would.
+func TestSheetNamesCSVRejectsDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dir.csv")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	if _, err := SheetNames(path, ""); err == nil {
+		t.Error("SheetNames on a directory named *.csv: want error, got nil")
+	}
+}
+
 func TestSheetNamesUnknownExtensionErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "book.bin")
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {

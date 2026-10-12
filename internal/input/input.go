@@ -99,8 +99,8 @@ func SheetNames(path string, format Format) ([]string, error) {
 	case XLSX:
 		return xlsx.SheetNames(path)
 	case CSV, TSV:
-		if _, err := os.Stat(path); err != nil {
-			return nil, fmt.Errorf("input: %w", err)
+		if err := checkReadableFile(path); err != nil {
+			return nil, err
 		}
 		return []string{csv.SheetName}, nil
 	case ODS:
@@ -116,4 +116,30 @@ func SheetNames(path string, format Format) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("input: %q is not a supported input format (xlsx, csv, tsv, ods)", format)
 	}
+}
+
+// checkReadableFile confirms path exists, is actually openable, and is
+// a regular file - not a directory, which os.Stat alone wouldn't catch
+// (a directory exists and stats successfully, but csv.Read would fail
+// trying to read from one), and not a permission-denied file (stat
+// typically only needs search permission on the parent directory, not
+// read permission on the file itself; opening it does). Used by
+// SheetNames' csv/tsv fast path, which otherwise never opens the file
+// at all, so it would fail consistently with the xlsx/ods branches
+// (which do open/parse) and with actually reading the same file.
+func checkReadableFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("input: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("input: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("input: %q is not a regular file", path)
+	}
+	return nil
 }
