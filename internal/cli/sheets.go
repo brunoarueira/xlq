@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/brunoarueira/xlq/internal/xlsx"
+	"github.com/brunoarueira/xlq/internal/input"
 )
 
 func newSheetsCommand() *cobra.Command {
@@ -14,7 +14,11 @@ func newSheetsCommand() *cobra.Command {
 		Short: "List the sheet names in a spreadsheet file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			names, err := sheetNames(args[0])
+			format, err := inputFormat(cmd)
+			if err != nil {
+				return err
+			}
+			names, err := input.SheetNames(args[0], format)
 			if err != nil {
 				return err
 			}
@@ -26,8 +30,4 @@ func newSheetsCommand() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-func sheetNames(path string) ([]string, error) {
-	return xlsx.SheetNames(path)
 }

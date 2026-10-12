@@ -25,8 +25,8 @@ import (
 	"github.com/brunoarueira/xlq/internal/model"
 )
 
-// sheetName is the fixed name given to a CSV/TSV file's single sheet.
-const sheetName = "Sheet1"
+// SheetName is the fixed name given to a CSV/TSV file's single sheet.
+const SheetName = "Sheet1"
 
 // Read opens the CSV file at path (comma-delimited) and converts it into
 // a single-sheet model.Workbook.
@@ -50,7 +50,7 @@ func read(path string, delim rune) (model.Workbook, error) {
 	r := stdcsv.NewReader(stripBOM(f))
 	r.Comma = delim
 
-	sheet := model.Sheet{Name: sheetName}
+	sheet := model.Sheet{Name: SheetName}
 	for rowIndex := 0; ; rowIndex++ {
 		record, err := r.Read()
 		if err == io.EOF {

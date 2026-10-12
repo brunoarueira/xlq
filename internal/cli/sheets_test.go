@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/xuri/excelize/v2"
+
+	"github.com/brunoarueira/xlq/internal/input"
 )
 
 func TestSheetNames(t *testing.T) {
@@ -20,19 +22,19 @@ func TestSheetNames(t *testing.T) {
 		t.Fatalf("SaveAs: %v", err)
 	}
 
-	got, err := sheetNames(path)
+	got, err := input.SheetNames(path, "")
 	if err != nil {
-		t.Fatalf("sheetNames: %v", err)
+		t.Fatalf("input.SheetNames: %v", err)
 	}
 
 	want := []string{"Sheet1", "Data"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("sheetNames() = %v, want %v", got, want)
+		t.Fatalf("input.SheetNames() = %v, want %v", got, want)
 	}
 }
 
 func TestSheetNamesMissingFile(t *testing.T) {
-	if _, err := sheetNames(filepath.Join(t.TempDir(), "missing.xlsx")); err == nil {
-		t.Fatal("sheetNames() with a missing file: want error, got nil")
+	if _, err := input.SheetNames(filepath.Join(t.TempDir(), "missing.xlsx"), ""); err == nil {
+		t.Fatal("input.SheetNames() with a missing file: want error, got nil")
 	}
 }

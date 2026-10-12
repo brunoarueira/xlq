@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/brunoarueira/xlq/internal/input"
 	"github.com/brunoarueira/xlq/internal/version"
 )
 
@@ -18,12 +19,15 @@ func NewRootCommand() *cobra.Command {
 			"<filter> is evaluated against <file> - see\n" +
 			"docs/adr/0008-filter-grammar-v1.md (and the grammar correction in\n" +
 			"docs/adr/0009-correct-filter-grammar-ebnf.md) for the v1 grammar -\n" +
-			"and the result is printed as JSON.",
+			"and the result is printed as JSON.\n\n" +
+			"<file>'s format (xlsx, csv, tsv, ods) is picked from its extension;\n" +
+			"use --input-format to override that for a misnamed file.",
 		Example: "  xlq '.Sheet1.A1' report.xlsx\n" +
 			"  xlq '.Sheet1' report.xlsx\n" +
 			"  xlq --compact '.Sheet1' report.xlsx\n" +
 			"  xlq -c '.Sheet1' report.xlsx\n" +
-			"  xlq -r '.Sheet1.A1' report.xlsx",
+			"  xlq -r '.Sheet1.A1' report.xlsx\n" +
+			"  xlq --input-format csv '.Sheet1' report.txt",
 		Version: version.Version,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
@@ -37,7 +41,11 @@ func NewRootCommand() *cobra.Command {
 			compactData, _ := cmd.Flags().GetBool("compact")
 			compactJSON, _ := cmd.Flags().GetBool("compact-output")
 			rawOutput, _ := cmd.Flags().GetBool("raw-output")
-			return runFilter(cmd, args[0], args[1], outputOptions{
+			format, err := inputFormat(cmd)
+			if err != nil {
+				return err
+			}
+			return runFilter(cmd, args[0], args[1], format, outputOptions{
 				compactData: compactData,
 				compactJSON: compactJSON,
 				rawOutput:   rawOutput,
@@ -47,6 +55,7 @@ func NewRootCommand() *cobra.Command {
 	root.Flags().Bool("compact", false, "drop rows and columns with no values from the result")
 	root.Flags().BoolP("compact-output", "c", false, "print JSON on one line, without indentation")
 	root.Flags().BoolP("raw-output", "r", false, "print a string result without JSON quotes")
+	root.PersistentFlags().String("input-format", "", "input format: xlsx, csv, tsv, or ods (default: detected from the file extension)")
 	root.SetVersionTemplate("xlq {{.Version}}\n")
 	root.AddCommand(newSheetsCommand())
 	return root
@@ -55,4 +64,17 @@ func NewRootCommand() *cobra.Command {
 // Execute runs the root command against os.Args.
 func Execute() error {
 	return NewRootCommand().Execute()
+}
+
+// inputFormat reads cmd's --input-format flag (inherited from the
+// root command's PersistentFlags by every subcommand) and validates
+// it, if set. An unset flag resolves to input.Format("") - input.Read
+// and input.SheetNames both treat that as "detect from the file
+// extension instead."
+func inputFormat(cmd *cobra.Command) (input.Format, error) {
+	s, _ := cmd.Flags().GetString("input-format")
+	if s == "" {
+		return "", nil
+	}
+	return input.ParseFormat(s)
 }
