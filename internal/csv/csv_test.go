@@ -179,3 +179,24 @@ func TestReadTSVMissingFile(t *testing.T) {
 		t.Fatal("ReadTSV() with a missing file: want error, got nil")
 	}
 }
+
+func TestReadWithDelimiterSemicolon(t *testing.T) {
+	path := writeFixture(t, "book.csv", "name;age\nAda;36\n")
+	wb, err := ReadWithDelimiter(path, ';')
+	if err != nil {
+		t.Fatalf("ReadWithDelimiter: %v", err)
+	}
+	c, ok := cellAt(t, wb, 1, 1)
+	if !ok {
+		t.Fatal("cell (row 1, col 1) not found")
+	}
+	if v, ok := c.StringValue(); !ok || v != "36" {
+		t.Errorf("StringValue() = (%q, %v), want (\"36\", true)", v, ok)
+	}
+}
+
+func TestReadWithDelimiterMissingFile(t *testing.T) {
+	if _, err := ReadWithDelimiter(filepath.Join(t.TempDir(), "missing.csv"), ';'); err == nil {
+		t.Fatal("ReadWithDelimiter() with a missing file: want error, got nil")
+	}
+}

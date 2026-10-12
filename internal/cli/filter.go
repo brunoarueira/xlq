@@ -30,15 +30,16 @@ type outputOptions struct {
 // runFilter parses filterSrc, evaluates it against the workbook at path
 // (per docs/adr/0008-filter-grammar-v1.md), and prints the result as
 // JSON (or, for a string result under opts.rawOutput, bare text).
-// format picks path's reader (internal/input); an empty format detects
-// one from path's extension.
-func runFilter(cmd *cobra.Command, filterSrc, path string, format input.Format, opts outputOptions) error {
+// format and delim pick and configure path's reader (internal/input);
+// an empty format detects one from path's extension, and delim(0)
+// keeps that format's own default field delimiter.
+func runFilter(cmd *cobra.Command, filterSrc, path string, format input.Format, delim rune, opts outputOptions) error {
 	expr, err := filter.Parse(filterSrc)
 	if err != nil {
 		return err
 	}
 
-	wb, err := input.Read(path, format)
+	wb, err := input.Read(path, format, delim)
 	if err != nil {
 		return err
 	}

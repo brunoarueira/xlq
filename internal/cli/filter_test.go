@@ -287,3 +287,49 @@ func TestSheetsSubcommandInputFormatOverride(t *testing.T) {
 		t.Errorf("output = %q, want %q", out, want)
 	}
 }
+
+func TestRootFilterDelimiterOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.csv")
+	if err := os.WriteFile(path, []byte("A;B\n1;2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	out, err := run(t, "--delimiter", ";", "-c", ".Sheet1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := `[["A","B"],["1","2"]]` + "\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterDelimiterMustBeOneCharacter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.csv")
+	if err := os.WriteFile(path, []byte("A,B\n1,2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := run(t, "--delimiter", ";;", ".Sheet1", path); err == nil {
+		t.Error("Execute with --delimiter ';;': want error, got nil")
+	}
+}
+
+func TestRootFilterDelimiterRejectedForXLSX(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--delimiter", ";", ".Sheet1", path); err == nil {
+		t.Error("Execute with --delimiter on an .xlsx file: want error, got nil")
+	}
+}
+
+func TestSheetsSubcommandDelimiterOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.csv")
+	if err := os.WriteFile(path, []byte("A;B\n1;2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	out, err := run(t, "--delimiter", ";", "sheets", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "Sheet1\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
