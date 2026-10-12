@@ -118,28 +118,31 @@ func SheetNames(path string, format Format) ([]string, error) {
 	}
 }
 
-// checkReadableFile confirms path exists, is actually openable, and is
-// a regular file - not a directory, which os.Stat alone wouldn't catch
-// (a directory exists and stats successfully, but csv.Read would fail
-// trying to read from one), and not a permission-denied file (stat
-// typically only needs search permission on the parent directory, not
-// read permission on the file itself; opening it does). Used by
-// SheetNames' csv/tsv fast path, which otherwise never opens the file
-// at all, so it would fail consistently with the xlsx/ods branches
-// (which do open/parse) and with actually reading the same file.
+// checkReadableFile confirms path exists, is a regular file, and is
+// actually openable. Used by SheetNames' csv/tsv fast path, which
+// otherwise never opens the file at all, so it would fail consistently
+// with the xlsx/ods branches (which do open/parse) and with actually
+// reading the same file - a directory, for instance, exists and stats
+// successfully, but csv.Read would fail trying to read from one.
+//
+// The regular-file check must come from os.Stat, before anything ever
+// opens path - os.Open on a FIFO blocks until a writer connects on the
+// other end, so checking regularity only *after* opening (via the
+// returned file's own Stat) would hang on a FIFO instead of rejecting
+// it. os.Stat itself never blocks like this; it only reads directory
+// metadata.
 func checkReadableFile(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("input: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	info, err := f.Stat()
+	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("input: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("input: %q is not a regular file", path)
 	}
-	return nil
+
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("input: %w", err)
+	}
+	return f.Close()
 }
