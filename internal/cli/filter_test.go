@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -229,6 +230,60 @@ func TestRootFilterCompactOutputAndRawOutputTogether(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	if want := "hi\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterInputFormatOverridesExtension(t *testing.T) {
+	// A CSV file saved with a misleading .xlsx extension, read correctly
+	// only because --input-format overrides what the extension implies.
+	path := filepath.Join(t.TempDir(), "misnamed.xlsx")
+	if err := os.WriteFile(path, []byte("A,B\n1,2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	out, err := run(t, "--input-format", "csv", ".Sheet1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := "[\n  [\n    \"A\",\n    \"B\"\n  ],\n  [\n    \"1\",\n    \"2\"\n  ]\n]\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterInputFormatInvalidValue(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--input-format", "yaml", ".Sheet1", path); err == nil {
+		t.Error("Execute with --input-format yaml: want error, got nil")
+	}
+}
+
+func TestRootFilterUnrecognizedExtensionSuggestsInputFormat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.bin")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	_, err := run(t, ".Sheet1", path)
+	if err == nil {
+		t.Fatal("Execute on an unrecognized extension: want error, got nil")
+	}
+	if want := "--input-format"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), want)
+	}
+}
+
+func TestSheetsSubcommandInputFormatOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "misnamed.xlsx")
+	if err := os.WriteFile(path, []byte("A,B\n1,2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	out, err := run(t, "--input-format", "csv", "sheets", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "Sheet1\n"; out != want {
 		t.Errorf("output = %q, want %q", out, want)
 	}
 }

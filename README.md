@@ -3,7 +3,7 @@
 `xlq` is a command-line spreadsheet processor in the spirit of
 [`jq`](https://jqlang.org/) and [`yq`](https://mikefarah.gitbook.io/yq/):
 a single static binary for slicing, filtering, and transforming
-spreadsheet data (`.xlsx` to start) from the shell.
+spreadsheet data (`.xlsx`, `.csv`, `.tsv`, `.ods`) from the shell.
 
 See [`docs/adr/`](docs/adr/) for the design decisions made so far, and
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for how the project is run.
@@ -25,8 +25,14 @@ xlq -c '.Sheet1' path/to/book.xlsx         # compact JSON, one line
 xlq -r '.Sheet1.A1' path/to/book.xlsx      # a string result, unquoted
 xlq '.Sheet1 | records | .[0].SomeHeader' path/to/book.xlsx  # by header name
 xlq '.Sheet1["A3:C9"]' path/to/book.xlsx  # a rectangular range
+xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
+xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
 xlq --version
 ```
+
+The input format (`xlsx`, `csv`, `tsv`, or `ods`) is picked from the
+file's extension; `--input-format` overrides that for a misnamed file
+or one with no recognizable extension.
 
 Filters can address a sheet by name (`.Sheet1`, case-insensitive), and
 from there a cell by its A1 reference (`.Sheet1.A1`), a whole column

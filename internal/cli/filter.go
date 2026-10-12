@@ -8,8 +8,8 @@ import (
 
 	"github.com/brunoarueira/xlq/internal/eval"
 	"github.com/brunoarueira/xlq/internal/filter"
+	"github.com/brunoarueira/xlq/internal/input"
 	"github.com/brunoarueira/xlq/internal/output"
-	"github.com/brunoarueira/xlq/internal/xlsx"
 )
 
 // outputOptions controls how runFilter prints a result, independent of
@@ -30,13 +30,15 @@ type outputOptions struct {
 // runFilter parses filterSrc, evaluates it against the workbook at path
 // (per docs/adr/0008-filter-grammar-v1.md), and prints the result as
 // JSON (or, for a string result under opts.rawOutput, bare text).
-func runFilter(cmd *cobra.Command, filterSrc, path string, opts outputOptions) error {
+// format picks path's reader (internal/input); an empty format detects
+// one from path's extension.
+func runFilter(cmd *cobra.Command, filterSrc, path string, format input.Format, opts outputOptions) error {
 	expr, err := filter.Parse(filterSrc)
 	if err != nil {
 		return err
 	}
 
-	wb, err := xlsx.Read(path)
+	wb, err := input.Read(path, format)
 	if err != nil {
 		return err
 	}
