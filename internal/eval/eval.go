@@ -17,6 +17,14 @@
 // result shapes: a []map[string]any (the records array itself) and a
 // map[string]any (one record, once indexed into). Both are already
 // JSON-marshalable as-is, so toJSON doesn't need a case for either.
+//
+// A range reference (ADR-0012, e.g. ".Sheet1[\"A3:C9\"]") adds no new
+// shape at all: it's a third pattern applyField recognizes on a Sheet,
+// alongside a column letter and a cell reference, and it evaluates to
+// another model.Sheet (re-indexed to the range's own top-left corner).
+// Every function in this package that already handles a Sheet - dense-
+// grid conversion, cell/row/column access, records - handles a range
+// result identically, with no awareness that a range exists at all.
 package eval
 
 import (
@@ -78,6 +86,9 @@ func eval(expr filter.Expr, cur any) (any, error) {
 var (
 	columnLetters = regexp.MustCompile(`^[A-Za-z]+$`)
 	cellReference = regexp.MustCompile(`^([A-Za-z]+)([0-9]+)$`)
+	// rangeReference matches two cell references joined by a colon,
+	// e.g. "A3:C9" (ADR-0012). Each half is itself a cellReference.
+	rangeReference = regexp.MustCompile(`^([A-Za-z]+[0-9]+):([A-Za-z]+[0-9]+)$`)
 )
 
 // applyField implements the Field{Name} column of ADR-0008's evaluation
@@ -98,8 +109,10 @@ func applyField(base any, name string) (any, error) {
 			return wholeColumn(v, name), nil
 		case cellReference.MatchString(name):
 			return cellScalar(v, name)
+		case rangeReference.MatchString(name):
+			return sheetRange(v, name)
 		default:
-			return nil, fmt.Errorf("eval: %q is not a valid column letter or cell reference on sheet %q", name, v.Name)
+			return nil, fmt.Errorf("eval: %q is not a valid column letter, cell reference, or range on sheet %q", name, v.Name)
 		}
 	case map[string]any:
 		// A single record, produced by filter.Records (ADR-0011): a
@@ -320,6 +333,73 @@ func wholeRow(sheet model.Sheet, n int) []any {
 		}
 	}
 	return result
+}
+
+// sheetRange implements the range pattern of applyField's Sheet
+// dispatch (ADR-0012): two cell references joined by a colon, e.g.
+// "A3:C9". The two corners don't need to be given top-left-to-
+// bottom-right - whichever has the smaller row/column anchors the
+// top-left, matching Excel's own order-independent range notation.
+//
+// The result is a new model.Sheet, re-indexed so the range's own
+// top-left corner becomes row 0, column 0: every other operator
+// (dense-grid conversion, further cell/row/column access, records)
+// already works on a model.Sheet, so none of them need any new code
+// to handle a range.
+//
+// The range's own declared bottom-right corner is always given a
+// presence in the result, even if nothing real occupies it, via an
+// explicit model.Empty cell if the slicing below didn't already
+// produce one there. Without it, Dimensions() - which measures the
+// highest row/column actually present - would silently shrink a
+// sparse range to whatever's populated, dropping blank trailing rows
+// and columns the range explicitly asked for (and, downstream, the
+// header count records derives from them).
+func sheetRange(sheet model.Sheet, ref string) (model.Sheet, error) {
+	m := rangeReference.FindStringSubmatch(ref)
+	r1, c1, err := parseCellReference(m[1])
+	if err != nil {
+		return model.Sheet{}, err
+	}
+	r2, c2, err := parseCellReference(m[2])
+	if err != nil {
+		return model.Sheet{}, err
+	}
+	if r1 > r2 {
+		r1, r2 = r2, r1
+	}
+	if c1 > c2 {
+		c1, c2 = c2, c1
+	}
+
+	out := model.Sheet{Name: fmt.Sprintf("%s!%s", sheet.Name, ref)}
+	for _, row := range sheet.Rows {
+		if row.Index < r1 || row.Index > r2 {
+			continue
+		}
+		var cells []model.Cell
+		for _, c := range row.Cells {
+			if c.Column < c1 || c.Column > c2 {
+				continue
+			}
+			cells = append(cells, c.At(c.Column-c1))
+		}
+		if len(cells) > 0 {
+			out.Rows = append(out.Rows, model.Row{Index: row.Index - r1, Cells: cells})
+		}
+	}
+
+	// Rows (and each row's Cells) were only ever appended in the
+	// ascending order sheet.Rows/row.Cells already guarantee, and the
+	// anchor position is this range's maximum possible row/column, so
+	// it can only ever need appending at the very end to stay sorted.
+	anchorRow, anchorCol := r2-r1, c2-c1
+	if n := len(out.Rows); n == 0 || out.Rows[n-1].Index != anchorRow {
+		out.Rows = append(out.Rows, model.Row{Index: anchorRow, Cells: []model.Cell{model.NewEmptyCell().At(anchorCol)}})
+	} else if last := &out.Rows[n-1]; len(last.Cells) == 0 || last.Cells[len(last.Cells)-1].Column != anchorCol {
+		last.Cells = append(last.Cells, model.NewEmptyCell().At(anchorCol))
+	}
+	return out, nil
 }
 
 // cellScalar returns the scalar value of the cell at the A1 reference

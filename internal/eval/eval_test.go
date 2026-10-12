@@ -498,3 +498,228 @@ func TestEvalRecordsHugeDimensionsRejected(t *testing.T) {
 		t.Error("Eval(\".Sheet1 | records\") on a sheet with real dimensions ~17 billion cells: want error, got nil")
 	}
 }
+
+// TestEvalRange exercises the range-reference pattern (ADR-0012)
+// against testWorkbook()'s Sheet1, confirming a bare range converts to
+// a dense grid re-indexed to the range's own top-left corner.
+func TestEvalRange(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{
+			"bare range is a dense grid relative to the range",
+			".Sheet1[\"A1:B2\"]",
+			[][]any{
+				{"hello", 42.0},
+				{true, nil},
+			},
+		},
+		{
+			"reversed corners give the same range",
+			".Sheet1[\"B2:A1\"]",
+			[][]any{
+				{"hello", 42.0},
+				{true, nil},
+			},
+		},
+		{
+			"case-insensitive range reference",
+			".Sheet1[\"a1:b2\"]",
+			[][]any{
+				{"hello", 42.0},
+				{true, nil},
+			},
+		},
+		{
+			"cell access relative to the range, not the sheet",
+			`.Sheet1["B1:C3"].A1`,
+			42.0,
+		},
+		{
+			"row access relative to the range",
+			`.Sheet1["B1:C3"][1]`,
+			[]any{42.0, nil},
+		},
+		{
+			"single-cell range is still a 1x1 grid, not a bare scalar",
+			`.Sheet1["A1:A1"]`,
+			[][]any{{"hello"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := evalString(t, tc.input)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalRangeInvalid(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"row 0 in the start corner", `.Sheet1["A0:C9"]`},
+		{"row 0 in the end corner", `.Sheet1["A1:C0"]`},
+		{"not a valid range, column, or cell reference", `.Sheet1["A1:C9:E1"]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := evalString(t, tc.input); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
+// TestEvalRangePreservesDeclaredShapeOverSparseContent guards against
+// the exact gap a cubic-dev-ai review caught in ADR-0012 itself: a
+// range's declared bottom-right corner must be present in the result
+// even when nothing real occupies it, or a sparse range silently
+// shrinks to whatever's populated - here, a single real cell at the
+// range's top-left, with real content well outside the range's bottom-
+// right corner so nothing else keeps that corner alive by accident.
+func TestEvalRangePreservesDeclaredShapeOverSparseContent(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{{
+		Name: "Sheet1",
+		Rows: []model.Row{
+			{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0)}},
+			// Real content far outside the "A1:C3" range below, so it
+			// can't accidentally anchor that range's own bottom-right
+			// corner - only the anchor-cell logic can.
+			{Index: 50, Cells: []model.Cell{model.NewStringCell("elsewhere").At(50)}},
+		},
+	}}}
+
+	expr, err := filter.Parse(`.Sheet1["A1:C3"]`)
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	grid, err := Eval(expr, wb)
+	if err != nil {
+		t.Fatalf("Eval returned error: %v", err)
+	}
+	wantGrid := [][]any{
+		{"Name", nil, nil},
+		{nil, nil, nil},
+		{nil, nil, nil},
+	}
+	if !reflect.DeepEqual(grid, wantGrid) {
+		t.Errorf(`Eval(".Sheet1[\"A1:C3\"]") = %#v, want %#v`, grid, wantGrid)
+	}
+
+	recExpr, err := filter.Parse(`.Sheet1["A1:C3"] | records`)
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	records, err := Eval(recExpr, wb)
+	if err != nil {
+		t.Fatalf("Eval returned error: %v", err)
+	}
+	// Both data rows (relative indexes 1 and 2) are entirely blank, so
+	// records contributes none - but the fact no error occurred, and
+	// no duplicate-header collision happened, confirms all 3 declared
+	// columns (A, B, C) got distinct fallback-letter headers rather
+	// than collapsing to just column A.
+	if want := []map[string]any{}; !reflect.DeepEqual(records, want) {
+		t.Errorf(`Eval(".Sheet1[\"A1:C3\"] | records") = %#v, want %#v`, records, want)
+	}
+}
+
+// TestEvalRangeComposesWithRecordsForMultiTableSheet is the direct
+// motivating case from ADR-0012 and ADR-0011 alike: a sheet shaped
+// like the real LinkedIn "TOP POSTS" export, two tables side by side
+// sharing header text, with a title row (not the real header) at row
+// 1. records on the whole sheet can't be isolated to one table and
+// collides on the duplicate headers; a range that isolates one
+// table's rows and columns first resolves it.
+func TestEvalRangeComposesWithRecordsForMultiTableSheet(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{{
+		Name: "TOP POSTS",
+		Rows: []model.Row{
+			{Index: 0, Cells: []model.Cell{model.NewStringCell("Maximum of 50 posts").At(0)}},
+			// Index 1 deliberately absent: a blank separator row.
+			{Index: 2, Cells: []model.Cell{
+				model.NewStringCell("Post URL").At(0),
+				model.NewStringCell("Date").At(1),
+				model.NewStringCell("Engagements").At(2),
+				model.NewStringCell("Post URL").At(4),
+				model.NewStringCell("Date").At(5),
+				model.NewStringCell("Impressions").At(6),
+			}},
+			{Index: 3, Cells: []model.Cell{
+				model.NewStringCell("url1").At(0),
+				model.NewStringCell("d1").At(1),
+				model.NewNumberCell(10).At(2),
+				model.NewStringCell("url2").At(4),
+				model.NewStringCell("d2").At(5),
+				model.NewNumberCell(20).At(6),
+			}},
+		},
+	}}}
+
+	// records on the whole sheet uses row 0 (the title), not row 2 -
+	// no error, but useless: every column but A falls back to a
+	// letter, matching ADR-0011's own corrected Consequences example.
+	wholeExpr, err := filter.Parse(".[\"TOP POSTS\"] | records")
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	if _, err := Eval(wholeExpr, wb); err != nil {
+		t.Errorf(`Eval(".[\"TOP POSTS\"] | records") on the whole sheet: want no error (row 0 is the title, not a duplicate header), got %v`, err)
+	}
+
+	// A range spanning BOTH tables' columns still collides once row 2
+	// becomes its own row 0 - narrowing rows alone isn't enough.
+	bothTablesExpr, err := filter.Parse(`.["TOP POSTS"]["A3:G10"] | records`)
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	if _, err := Eval(bothTablesExpr, wb); err == nil {
+		t.Error(`Eval('.["TOP POSTS"]["A3:G10"] | records') spanning both tables' columns: want a duplicate-header error, got nil`)
+	}
+
+	// Narrowing to just the first table's rows AND columns resolves
+	// it cleanly.
+	oneTableExpr, err := filter.Parse(`.["TOP POSTS"]["A3:C10"] | records`)
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	got, err := Eval(oneTableExpr, wb)
+	if err != nil {
+		t.Fatalf(`Eval('.["TOP POSTS"]["A3:C10"] | records') returned error: %v`, err)
+	}
+	want := []map[string]any{
+		{"Post URL": "url1", "Date": "d1", "Engagements": 10.0},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf(`Eval('.["TOP POSTS"]["A3:C10"] | records') = %#v, want %#v`, got, want)
+	}
+}
+
+// TestEvalRangeHugeDeclaredSizeRejected confirms a range's declared
+// bounds, not just its real content, are what maxDenseCells checks -
+// a single real cell at the range's top-left with a declared bottom-
+// right corner at Excel's actual maximum address is still rejected.
+func TestEvalRangeHugeDeclaredSizeRejected(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{{
+		Name: "Sheet1",
+		Rows: []model.Row{
+			{Index: 0, Cells: []model.Cell{model.NewStringCell("x").At(0)}},
+		},
+	}}}
+	expr, err := filter.Parse(`.Sheet1["A1:XFD1048576"]`)
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	if _, err := Eval(expr, wb); err == nil {
+		t.Error("Eval on a range declared ~17 billion cells wide with one real cell: want error, got nil")
+	}
+}
