@@ -422,21 +422,51 @@ func cellScalar(sheet model.Sheet, ref string) (any, error) {
 	return nil, nil
 }
 
+// maxExcelRow and maxExcelCol are Excel's own real limits (the
+// maximum valid cell address is XFD1048576). A real file can never
+// declare a cell beyond them, which is what ADR-0008 relies on when
+// it calls wholeColumn/wholeRow - each allocates a slice sized from
+// model.Sheet.Dimensions(), with no maxDenseCells check of their own -
+// "never this dangerous": Excel's own limits already bound a full row
+// or column to a few tens of megabytes at most. A range reference
+// (ADR-0012) can state a row or column number straight from filter
+// text, with nothing tying it to any real file's content, so without
+// this check here a range like ".Sheet1[\"A1:A1000000000\"]" could
+// make Dimensions() report a billion rows, and ".A" on it would then
+// try to allocate a slice that size with nothing to stop it.
+const (
+	maxExcelRow = 1_048_576
+	maxExcelCol = 16_384 // column XFD
+)
+
 // parseCellReference splits an A1 reference already matched by
 // cellReference into its 0-based (row, col). A row of 0 or less (e.g.
 // "A0") is syntactically a valid cellReference match but not a real A1
 // address - spreadsheet rows are 1-based, matching applyIndex's own
 // n < 1 rejection - and an out-of-range row number (overflowing int)
-// is likewise rejected rather than silently discarded.
+// is likewise rejected rather than silently discarded. A column
+// longer than 3 letters is rejected before columnIndex ever computes
+// it - not just because it's beyond maxExcelCol either way, but
+// because columnIndex's running total can silently overflow an int
+// well before that point for an unbounded letter sequence.
 func parseCellReference(ref string) (row, col int, err error) {
 	m := cellReference.FindStringSubmatch(ref)
+	if len(m[1]) > 3 {
+		return 0, 0, fmt.Errorf("eval: column in %q exceeds Excel's maximum column, XFD", ref)
+	}
 	col = columnIndex(m[1])
+	if col >= maxExcelCol {
+		return 0, 0, fmt.Errorf("eval: column in %q exceeds Excel's maximum column, XFD", ref)
+	}
 	n, convErr := strconv.Atoi(m[2])
 	if convErr != nil {
 		return 0, 0, fmt.Errorf("eval: row number in %q is out of range", ref)
 	}
 	if n < 1 {
 		return 0, 0, fmt.Errorf("eval: row number in %q must be >= 1 (spreadsheet rows are 1-based)", ref)
+	}
+	if n > maxExcelRow {
+		return 0, 0, fmt.Errorf("eval: row number in %q exceeds Excel's maximum row, %d", ref, maxExcelRow)
 	}
 	return n - 1, col, nil
 }

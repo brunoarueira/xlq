@@ -569,6 +569,10 @@ func TestEvalRangeInvalid(t *testing.T) {
 		{"row 0 in the start corner", `.Sheet1["A0:C9"]`},
 		{"row 0 in the end corner", `.Sheet1["A1:C0"]`},
 		{"not a valid range, column, or cell reference", `.Sheet1["A1:C9:E1"]`},
+		{"row beyond Excel's real maximum", `.Sheet1["A1:A1048577"]`},
+		{"column beyond Excel's real maximum", `.Sheet1["A1:XFE1"]`},
+		{"column letter sequence too long to safely compute", `.Sheet1["A1:AAAAAAAAAAAAAAAAAAAA1"]`},
+		{"plain cell reference beyond Excel's real maximum row", `.Sheet1.A1048577`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -591,6 +595,10 @@ func TestEvalRangePreservesDeclaredShapeOverSparseContent(t *testing.T) {
 		Name: "Sheet1",
 		Rows: []model.Row{
 			{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0)}},
+			// Column A only: B and C are blank in every row of the
+			// range, so nothing but the anchor-cell logic keeps them
+			// present at all.
+			{Index: 1, Cells: []model.Cell{model.NewStringCell("Alice").At(0)}},
 			// Real content far outside the "A1:C3" range below, so it
 			// can't accidentally anchor that range's own bottom-right
 			// corner - only the anchor-cell logic can.
@@ -608,7 +616,7 @@ func TestEvalRangePreservesDeclaredShapeOverSparseContent(t *testing.T) {
 	}
 	wantGrid := [][]any{
 		{"Name", nil, nil},
-		{nil, nil, nil},
+		{"Alice", nil, nil},
 		{nil, nil, nil},
 	}
 	if !reflect.DeepEqual(grid, wantGrid) {
@@ -623,12 +631,14 @@ func TestEvalRangePreservesDeclaredShapeOverSparseContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Eval returned error: %v", err)
 	}
-	// Both data rows (relative indexes 1 and 2) are entirely blank, so
-	// records contributes none - but the fact no error occurred, and
-	// no duplicate-header collision happened, confirms all 3 declared
-	// columns (A, B, C) got distinct fallback-letter headers rather
-	// than collapsing to just column A.
-	if want := []map[string]any{}; !reflect.DeepEqual(records, want) {
+	// The one data row (relative index 1) only has column A populated,
+	// but the record still carries B's and C's fallback-letter keys
+	// with null values - proving they were preserved as real headers,
+	// not silently dropped because they're always blank in this range.
+	want := []map[string]any{
+		{"Name": "Alice", "B": nil, "C": nil},
+	}
+	if !reflect.DeepEqual(records, want) {
 		t.Errorf(`Eval(".Sheet1[\"A1:C3\"] | records") = %#v, want %#v`, records, want)
 	}
 }
@@ -721,5 +731,31 @@ func TestEvalRangeHugeDeclaredSizeRejected(t *testing.T) {
 	}
 	if _, err := Eval(expr, wb); err == nil {
 		t.Error("Eval on a range declared ~17 billion cells wide with one real cell: want error, got nil")
+	}
+}
+
+// TestEvalRangeRowBeyondExcelLimitRejectedBeforeColumnAllocation guards
+// against the exact gap a cubic-dev-ai review caught: a range's row
+// endpoint has no upper bound of its own beyond "non-zero", so nothing
+// stopped a filter string alone (no malicious file needed) from
+// declaring a billion-row range. wholeColumn - unlike sheetGrid/
+// sheetRecords - allocates a slice sized from Dimensions() with no
+// maxDenseCells check at all, so ".A" on such a range would have tried
+// to allocate a billion-element slice outright. The row bound in
+// parseCellReference must reject this before sheetRange ever builds
+// that Dimensions() value, not after.
+func TestEvalRangeRowBeyondExcelLimitRejectedBeforeColumnAllocation(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{{
+		Name: "Sheet1",
+		Rows: []model.Row{
+			{Index: 0, Cells: []model.Cell{model.NewStringCell("x").At(0)}},
+		},
+	}}}
+	expr, err := filter.Parse(`.Sheet1["A1:A1000000000"].A`)
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	if _, err := Eval(expr, wb); err == nil {
+		t.Error(`Eval('.Sheet1["A1:A1000000000"].A'): want error, got nil`)
 	}
 }
