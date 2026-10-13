@@ -65,8 +65,16 @@ func TestConfigExplicitFlagOverridesConfig(t *testing.T) {
 }
 
 func TestConfigCompactComposesWithExplicitFormatFlag(t *testing.T) {
+	// A1="x", C1="y", with column B entirely empty across the sheet's
+	// only row - a genuinely droppable column for output.Compact to
+	// remove. A fixture with no empty row/column at all can't tell a
+	// correctly-applied compact:true from one silently never applied:
+	// both would produce identical output.
 	path := buildFixture(t, func(f *excelize.File) {
 		if err := f.SetCellValue("Sheet1", "A1", "x"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "C1", "y"); err != nil {
 			t.Fatalf("SetCellValue: %v", err)
 		}
 	})
@@ -77,16 +85,12 @@ func TestConfigCompactComposesWithExplicitFormatFlag(t *testing.T) {
 	// table:true (since they're mutually exclusive) but must NOT
 	// suppress config's compact:true, which composes with every
 	// format.
-	withoutExplicitCSV, err := run(t, "--config", cfgPath, "--csv", ".Sheet1", path)
+	out, err := run(t, "--config", cfgPath, "--csv", ".Sheet1", path)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	withCompactOnly, err := run(t, "--config", cfgPath, "--csv", "--compact", ".Sheet1", path)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if withoutExplicitCSV != withCompactOnly {
-		t.Errorf("config's compact:true wasn't applied: --csv alone = %q, --csv --compact = %q, want equal", withoutExplicitCSV, withCompactOnly)
+	if want := "x,y\n"; out != want {
+		t.Errorf("output = %q, want %q (the empty B column dropped by config's compact:true, despite --csv suppressing table's own config default)", out, want)
 	}
 }
 
@@ -189,5 +193,65 @@ func TestConfigUnknownKeyRejected(t *testing.T) {
 	_, err := run(t, "--config", cfgPath, ".Sheet1", path)
 	if err == nil {
 		t.Fatal("Execute with an unrecognized config key: want error, got nil")
+	}
+}
+
+// TestConfigExplicitFalseInPlaceDoesNotSuppressConfig guards against a
+// prior bug: the -i suppression check used Flags().Changed, which
+// is also true for an explicit but no-op "--in-place=false" - wrongly
+// suppressing every config default even though -i isn't actually
+// active. The check must read the flag's actual value instead.
+func TestConfigExplicitFalseInPlaceDoesNotSuppressConfig(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "x"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+	cfgPath := writeTestConfig(t, "table: true\n")
+
+	out, err := run(t, "--config", cfgPath, "--in-place=false", ".Sheet1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "x\n"; out != want {
+		t.Errorf("output = %q, want %q (config's table:true should still apply)", out, want)
+	}
+}
+
+// TestConfigExplicitFalseFormatFlagDoesNotSuppressGroup guards against
+// the same class of bug as above, for the five-flag group: an explicit
+// but no-op "--table=false" must not suppress a config csv:true
+// default, the way an explicitly *active* --csv/--table/etc. does.
+func TestConfigExplicitFalseFormatFlagDoesNotSuppressGroup(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "x"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+	cfgPath := writeTestConfig(t, "csv: true\n")
+
+	out, err := run(t, "--config", cfgPath, "--table=false", ".Sheet1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "x\n"; out != want {
+		t.Errorf("output = %q, want %q (config's csv:true should still apply)", out, want)
+	}
+}
+
+// TestConfigNotLoadedForCompletionRequest guards against a config
+// file's own mistake (here, an unrecognized key) silently breaking
+// shell completion on every keystroke - completion has nothing to do
+// with config-defaultable flags at all, so it must never even attempt
+// to load the file.
+func TestConfigNotLoadedForCompletionRequest(t *testing.T) {
+	cfgPath := writeTestConfig(t, "delimeter: \";\"\n") // typo, would error if loaded
+
+	out, err := run(t, "--config", cfgPath, "completion", "bash")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if out == "" {
+		t.Error("completion script is empty")
 	}
 }

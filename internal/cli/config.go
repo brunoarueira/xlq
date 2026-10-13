@@ -20,6 +20,17 @@ import (
 // like sheets), not necessarily root, since Cobra always invokes the
 // nearest PersistentPreRun(E) with that command.
 func mergeConfigDefaults(cmd *cobra.Command, _ []string) error {
+	// Cobra's own "completion" command (and its bash/zsh/fish/
+	// powershell children) and its hidden __complete shell-completion-
+	// request command both have root as their nearest
+	// PersistentPreRunE too, but neither reads any config-defaultable
+	// flag - loading config for them only risks a config file's own
+	// typo silently breaking tab completion on every keystroke, for a
+	// command that has nothing to do with config at all.
+	if isCompletionRequest(cmd) {
+		return nil
+	}
+
 	explicit := cmd.Flags().Changed("config")
 	path, _ := cmd.Flags().GetString("config")
 	if !explicit {
@@ -44,7 +55,10 @@ func mergeConfigDefaults(cmd *cobra.Command, _ []string) error {
 	// content, so a config input-format/delimiter default meant for a
 	// user's everyday csv work has no business reaching an occasional
 	// -i edit of a real .xlsx file (ADR-0015's Precedence section).
-	if inPlace := cmd.Flags().Lookup("in-place"); inPlace != nil && inPlace.Changed {
+	// This checks the flag's actual value, not Changed - an explicit
+	// but no-op "--in-place=false" must not suppress every config
+	// value the way "-i"/"--in-place" (true) does.
+	if inPlace, _ := cmd.Flags().GetBool("in-place"); inPlace {
 		return nil
 	}
 
@@ -53,12 +67,15 @@ func mergeConfigDefaults(cmd *cobra.Command, _ []string) error {
 
 	// compact-output, raw-output, table, csv, and tsv aren't
 	// independent: they're outputOptions.validate()'s own mutually-
-	// exclusive set, so an explicit flag among them must suppress
-	// every one of config's values for the whole group, not just the
-	// one with the same name - otherwise an explicit --csv would
-	// leave a config table:true in place and fail validation instead
-	// of honoring the override.
-	if !anyChanged(cmd, "compact-output", "raw-output", "table", "csv", "tsv") {
+	// exclusive set, so an explicitly *active* flag among them must
+	// suppress every one of config's values for the whole group, not
+	// just the one with the same name - otherwise an explicit --csv
+	// would leave a config table:true in place and fail validation
+	// instead of honoring the override. This checks each flag's
+	// actual value (GetBool), not Changed, for the same reason as the
+	// -i check above: an explicit but no-op "--table=false" must not
+	// suppress a config csv:true default.
+	if !anyTrue(cmd, "compact-output", "raw-output", "table", "csv", "tsv") {
 		mergeBool(cmd, "compact-output", cfg.CompactOutput)
 		mergeBool(cmd, "raw-output", cfg.RawOutput)
 		mergeBool(cmd, "table", cfg.Table)
@@ -72,9 +89,29 @@ func mergeConfigDefaults(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func anyChanged(cmd *cobra.Command, names ...string) bool {
+// completionCmdName is Cobra's own name for its built-in "completion"
+// command (internal to Cobra as compCmdName - not exported, so it's
+// duplicated here as the literal it's defined as).
+const completionCmdName = "completion"
+
+// isCompletionRequest reports whether cmd is Cobra's own "completion"
+// command, one of its direct bash/zsh/fish/powershell children, or the
+// hidden shell-completion-request command (__complete/__completeNoDesc,
+// both named ShellCompRequestCmd - CalledAs, not Name, distinguishes
+// the alias, which doesn't matter here).
+func isCompletionRequest(cmd *cobra.Command) bool {
+	if cmd.Name() == cobra.ShellCompRequestCmd || cmd.Name() == completionCmdName {
+		return true
+	}
+	return cmd.Parent() != nil && cmd.Parent().Name() == completionCmdName
+}
+
+func anyTrue(cmd *cobra.Command, names ...string) bool {
 	for _, name := range names {
-		if f := cmd.Flags().Lookup(name); f != nil && f.Changed {
+		if cmd.Flags().Lookup(name) == nil {
+			continue
+		}
+		if v, _ := cmd.Flags().GetBool(name); v {
 			return true
 		}
 	}

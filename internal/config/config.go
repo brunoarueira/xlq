@@ -68,5 +68,20 @@ func Load(path string) (Config, error) {
 	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("config: parse %q: %w", path, err)
 	}
+
+	// A second "---"-separated document is rejected outright, rather
+	// than silently decoded and discarded: yaml.Decoder is a streaming
+	// API meant for exactly that (one Decode call per document), so
+	// without this check a config file with more than one document
+	// would have every document but the first silently ignored instead
+	// of being flagged as the probable mistake it is.
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return Config{}, fmt.Errorf("config: parse %q: multiple YAML documents are not supported", path)
+		}
+		return Config{}, fmt.Errorf("config: parse %q: %w", path, err)
+	}
+
 	return cfg, nil
 }

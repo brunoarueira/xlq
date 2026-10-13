@@ -32,11 +32,14 @@ func buildFixture(t *testing.T, fn func(f *excelize.File)) string {
 // internal/config.DefaultPath never resolves to a config file that
 // genuinely exists on whatever machine happens to run these tests -
 // every test here exercises CLI-flag-driven behavior only, unless it
-// explicitly passes its own --config.
+// explicitly passes its own --config. APPDATA is overridden the same
+// way for the same reason on Windows, where os.UserConfigDir() uses it
+// instead of HOME.
 func run(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("APPDATA", t.TempDir())
 	var out bytes.Buffer
 	root := NewRootCommand()
 	root.SetOut(&out)

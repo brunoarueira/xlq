@@ -92,6 +92,15 @@ func TestLoadUnknownKeyRejected(t *testing.T) {
 	}
 }
 
+func TestLoadMultiDocumentRejected(t *testing.T) {
+	path := writeConfig(t, "table: true\n---\ncsv: true\n")
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load with a multi-document YAML file: want error, got nil")
+	}
+}
+
 func TestLoadMalformedYAMLRejected(t *testing.T) {
 	path := writeConfig(t, "table: [this is not a bool\n")
 

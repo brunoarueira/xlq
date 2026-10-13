@@ -136,8 +136,10 @@ isn't a fixed set of words.
 
 ## Config file
 
-A YAML file can set defaults for any flag except `-i`/`--in-place`
-(see [ADR-0015](docs/adr/0015-config-file-for-default-flags.md)), so a
+A YAML file can set defaults for the eight input/output flags below -
+every flag xlq has except `-i`/`--in-place`, which can never be
+config-defaulted at all (see
+[ADR-0015](docs/adr/0015-config-file-for-default-flags.md)) - so a
 flag you'd otherwise pass on every invocation can be set once instead.
 By default it's read from `os.UserConfigDir()/xlq/config.yaml` -
 `~/.config/xlq/config.yaml` on Linux, `~/Library/Application
@@ -155,9 +157,11 @@ Keys match each flag's own long name exactly (`compact`,
 `compact-output`, `raw-output`, `table`, `csv`, `tsv`, `input-format`,
 `delimiter`) - an unrecognized key is a hard error, to catch a typo
 rather than silently ignore it. An explicitly-passed flag always wins
-over its config value; `-i` additionally suppresses every config value
-outright, so a config file never reaches - or breaks - an in-place
-edit.
+over its config value; `-i` additionally suppresses every one of
+config's *values* outright, so none of them can reach - or break - an
+in-place edit. The file itself is still loaded and must be valid
+either way: a malformed file, or one with an unrecognized key, is an
+error regardless of `-i`.
 
 ## License
 
