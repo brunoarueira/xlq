@@ -29,6 +29,8 @@ xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
 xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
 xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
 xlq --table '.Sheet1 | records' path/to/book.xlsx  # aligned table, not JSON
+xlq --csv '.Sheet1 | records' path/to/book.xlsx  # with a header row
+xlq --tsv '.Sheet1' path/to/book.xlsx            # positional, no header
 xlq --version
 ```
 
@@ -77,6 +79,15 @@ row per record headed by its sorted field names, but it handles every
 result shape (a whole sheet, a range, a single cell, the whole
 workbook). It's a different output mode entirely, not a JSON
 formatting tweak, so it can't be combined with `-c`/`-r`.
+
+`--csv`/`--tsv` (see [ADR-0013](docs/adr/0013-csv-tsv-output.md)) print
+proper RFC 4180 comma/tab-separated text instead of JSON. A sheet grid
+or range flattens positionally, with no header row; `records` gets a
+header row (its sorted field names) plus one row per record - pipe
+through `records` first when a header is wanted. The whole-workbook
+result is a clear error (no single tabular shape), not a guess.
+`--csv`/`--tsv`/`--table`/`-c`/`-r` are all mutually exclusive output
+modes.
 
 ## Install
 

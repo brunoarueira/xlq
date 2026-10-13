@@ -443,3 +443,92 @@ func TestRootFilterTableRejectedWithRawOutput(t *testing.T) {
 		t.Error("Execute with --table -r: want error, got nil")
 	}
 }
+
+func TestRootFilterCSVOnGrid(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "Name"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "B1", "Score"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "--csv", ".Sheet1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "Name,Score\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterCSVOnRecords(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "Name"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "A2", "Alice"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "--csv", ".Sheet1 | records", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "Name\nAlice\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterTSVUsesTabDelimiter(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "a"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "B1", "b"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "--tsv", ".Sheet1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "a\tb\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterCSVWholeWorkbookIsError(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "a"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+	if _, err := run(t, "--csv", ".", path); err == nil {
+		t.Error("Execute --csv on the whole workbook: want error, got nil")
+	}
+}
+
+func TestRootFilterCSVAndTSVMutuallyExclusive(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--csv", "--tsv", ".Sheet1", path); err == nil {
+		t.Error("Execute with --csv --tsv: want error, got nil")
+	}
+}
+
+func TestRootFilterCSVRejectedWithTable(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--csv", "--table", ".Sheet1", path); err == nil {
+		t.Error("Execute with --csv --table: want error, got nil")
+	}
+}
+
+func TestRootFilterCSVRejectedWithCompactOutput(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--csv", "-c", ".Sheet1", path); err == nil {
+		t.Error("Execute with --csv -c: want error, got nil")
+	}
+}

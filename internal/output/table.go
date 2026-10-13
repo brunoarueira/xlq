@@ -186,23 +186,32 @@ func tabwrite(write func(w *tabwriter.Writer)) string {
 // cellText renders v as it should appear inside one table cell: nil as
 // blank, a string as-is, and anything else (a number, a bool) via its
 // own JSON text - the same text that value would already render as in
-// JSON output. A tab or newline embedded in the value would otherwise
-// break the table's alignment, so both are flattened to a single
-// space.
+// JSON output (scalarText). A tab or newline embedded in the value
+// would otherwise break the table's alignment, so both are flattened
+// to a single space - unlike scalarText's other caller (CSV/TSV
+// output, csv.go), which doesn't need this: encoding/csv's own quoting
+// already represents an embedded tab or newline correctly.
 func cellText(v any) string {
-	if v == nil {
-		return ""
-	}
-	s, ok := v.(string)
-	if !ok {
-		b, err := json.Marshal(v)
-		if err != nil {
-			s = fmt.Sprintf("%v", v)
-		} else {
-			s = string(b)
-		}
-	}
+	s := scalarText(v)
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\t", " ")
 	return s
+}
+
+// scalarText renders v - nil, a string, or anything else (a number, a
+// bool) eval.Eval ever produces as a leaf value - as plain text: nil
+// as blank, a string as-is, anything else via its own JSON text (the
+// same text that value would already render as in JSON output).
+func scalarText(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(b)
 }
