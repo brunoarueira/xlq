@@ -158,11 +158,17 @@ Keys match each flag's own long name exactly (`compact`,
 `compact-output`, `raw-output`, `table`, `csv`, `tsv`, `input-format`,
 `delimiter`) - an unrecognized key is a hard error, to catch a typo
 rather than silently ignore it. An explicitly-passed flag always wins
-over its config value; `-i` additionally suppresses every one of
-config's *values* outright, so none of them can reach - or break - an
-in-place edit. The file itself is still loaded and must be valid
-either way: a malformed file, or one with an unrecognized key, is an
-error regardless of `-i`.
+over its config value. `compact-output`, `raw-output`, `table`, `csv`,
+and `tsv` don't override one at a time, though: since at most one of
+`table`/`csv`/`tsv` can ever be active together with either JSON
+option, an explicitly-active flag among these five suppresses config's
+values for *all five*, not just the one with the same name - an
+explicit `--csv` fully overrides a configured `table: true`, not just
+leaves it unset alongside `--csv` in a way that would fail. `-i`
+additionally suppresses every one of config's *values* outright, so
+none of them can reach - or break - an in-place edit. The file itself
+is still loaded and must be valid either way: a malformed file, or one
+with an unrecognized key, is an error regardless of `-i`.
 
 ## License
 

@@ -83,6 +83,15 @@ these flags already means the same thing everywhere it appears
 `Decoder.KnownFields(true)`) - silently ignoring a typo'd key (e.g.
 `delimeter:`) would be a footgun a strict decoder catches for free.
 
+A config value doesn't get its own, separate validation: once merged
+onto a flag (Precedence, below), it goes through exactly the same
+checks a CLI-typed value would - `input.validateDelimiter`
+(`internal/input/input.go`) rejects `delimiter` for `xlsx`/`ods`
+(no delimiter concept to override) and rejects `"`, a carriage return,
+a newline, or an invalid rune regardless of format, the same as
+`--delimiter` already does (see the README's own "Status" section
+for the full rationale) - nothing config-specific to decide here.
+
 Example:
 
 ```yaml
