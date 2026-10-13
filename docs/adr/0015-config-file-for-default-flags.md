@@ -118,7 +118,7 @@ the six-flag case below exists to prevent, just via a different flag.
 it's only ever explicit.)
 
 Otherwise (`-i` not active, or not even defined on the current
-command, like `sheets`), the remaining seven flags merge in two
+command, like `sheets`), all eight config flags merge in two
 different ways:
 
 - `input-format` and `delimiter` merge one flag at a time: if the
@@ -187,8 +187,13 @@ instead write `table: true` once to
 `~/.config/xlq/config.yaml` (or wherever `os.UserConfigDir()` resolves
 on their OS) and drop `--table` from the command entirely; explicitly
 passing `--csv` on some other invocation still overrides it - not just
-suppressing `table`'s own config value, but the config values of every
-other output flag too - the same as if no config file existed at all.
+suppressing `table`'s own config value, but `compact-output`'s and
+`raw-output`'s too, the same as if no config file set any of the five
+at all. A config `compact: true` alongside it is a different case,
+by design: `compact` composes freely with every format
+(`outputOptions.validate()` never objects to it), so it keeps applying
+regardless of which format flag - explicit or config-sourced - ends up
+in effect.
 
 A plain `xlq -i '...' report.xlsx`, with that same config file in
 place, behaves identically to a config-free install: no config value
