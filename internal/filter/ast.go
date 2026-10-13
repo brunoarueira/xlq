@@ -56,3 +56,16 @@ func (Pipe) exprNode() {}
 type Records struct{}
 
 func (Records) exprNode() {}
+
+// Assign is "path = value" (ADR-0014): in-place editing only, never
+// evaluated as a read-only query - eval.Eval rejects it outright.
+// Target reuses the same Field/Index nodes a read path already builds;
+// resolving whether it actually denotes a single sheet+cell (the only
+// valid shape) happens once, at resolution time in internal/xlsx, not
+// duplicated into this grammar.
+type Assign struct {
+	Target Expr
+	Value  any // string, float64, bool, or nil - already fully parsed
+}
+
+func (Assign) exprNode() {}

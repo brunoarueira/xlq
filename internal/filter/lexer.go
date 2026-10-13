@@ -13,14 +13,21 @@ const (
 	tokLBracket
 	tokRBracket
 	tokPipe
+	tokEquals
 	tokIdent
 	tokString
 	tokInt
+	// tokNumber is a decimal value literal (ADR-0014's NUMBER, e.g.
+	// "5.5") - distinct from tokInt so a bracket index like
+	// ".Sheet1[5]" keeps lexing exactly as it always has, unaffected
+	// by assignment values gaining their own, separate numeric form.
+	tokNumber
 )
 
 // token is one lexical token. text is the raw identifier text, the
-// unescaped string value, or the integer literal text (including a
-// leading "-", if present) - empty for punctuation tokens.
+// unescaped string value, or the integer/decimal literal text
+// (including a leading "-", if present) - empty for punctuation
+// tokens.
 type token struct {
 	kind tokenKind
 	text string
@@ -40,6 +47,8 @@ func (t token) describe() string {
 		return `"]"`
 	case tokPipe:
 		return `"|"`
+	case tokEquals:
+		return `"="`
 	default:
 		return fmt.Sprintf("%q", t.text)
 	}
@@ -67,6 +76,9 @@ func lex(input string) ([]token, error) {
 		case c == '|':
 			toks = append(toks, token{kind: tokPipe, pos: i})
 			i++
+		case c == '=':
+			toks = append(toks, token{kind: tokEquals, pos: i})
+			i++
 		case c == '"':
 			tok, next, err := lexString(input, i)
 			if err != nil {
@@ -74,7 +86,7 @@ func lex(input string) ([]token, error) {
 			}
 			toks, i = append(toks, tok), next
 		case c == '-' || isDigit(c):
-			tok, next, err := lexInt(input, i)
+			tok, next, err := lexNumber(input, i)
 			if err != nil {
 				return nil, err
 			}
@@ -97,8 +109,16 @@ func lexIdent(input string, start int) (token, int) {
 	return token{kind: tokIdent, text: input[start:i], pos: start}, i
 }
 
-// lexInt consumes an optional leading "-" followed by one or more digits.
-func lexInt(input string, start int) (token, int, error) {
+// lexNumber consumes an optional leading "-" followed by one or more
+// digits, producing tokInt - unless that's immediately followed by a
+// "." and at least one more digit, in which case the "." and its
+// digits are consumed too, producing tokNumber instead (ADR-0014's
+// NUMBER: the fraction is mandatory, so a bare "5" always stays
+// tokInt, exactly as it did before tokNumber existed - a trailing "."
+// with no digit after it, as in ".Sheet1[5]." or just "5.", is left
+// untouched, to be re-lexed separately as the ordinary path-anchor
+// token).
+func lexNumber(input string, start int) (token, int, error) {
 	i := start
 	if input[i] == '-' {
 		i++
@@ -109,6 +129,13 @@ func lexInt(input string, start int) (token, int, error) {
 	}
 	if i == digitsStart {
 		return token{}, 0, fmt.Errorf("filter: expected digits after %q at position %d", "-", start)
+	}
+	if i < len(input) && input[i] == '.' && i+1 < len(input) && isDigit(input[i+1]) {
+		i++ // consume "."
+		for i < len(input) && isDigit(input[i]) {
+			i++
+		}
+		return token{kind: tokNumber, text: input[start:i], pos: start}, i, nil
 	}
 	return token{kind: tokInt, text: input[start:i], pos: start}, i, nil
 }

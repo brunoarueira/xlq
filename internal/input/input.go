@@ -62,6 +62,15 @@ func resolve(path string, format Format) (Format, error) {
 	return detect(path)
 }
 
+// ResolveFormat is resolve, exported for a caller that needs to know
+// the resolved format before deciding whether an operation even
+// supports it - --in-place (ADR-0014), which only ever supports xlsx,
+// regardless of whether that came from an explicit --input-format or
+// was detected from path's extension.
+func ResolveFormat(path string, format Format) (Format, error) {
+	return resolve(path, format)
+}
+
 // Read reads path into a model.Workbook using format, or auto-
 // detecting one from path's extension if format is empty. delim
 // overrides the field delimiter for csv/tsv input (0 keeps each
