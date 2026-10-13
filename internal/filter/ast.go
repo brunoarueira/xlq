@@ -8,10 +8,10 @@
 package filter
 
 // Expr is a parsed filter expression: one of Identity, Field, Index,
-// Pipe, or Records. What a Field or Index node actually does (sheet
-// lookup, column or A1 cell access, row access, ...) depends on the
-// runtime type it's evaluated against - the AST itself is deliberately
-// untyped beyond this, per ADR-0008.
+// Pipe, Records, or Assign. What a Field or Index node actually does
+// (sheet lookup, column or A1 cell access, row access, ...) depends on
+// the runtime type it's evaluated against - the AST itself is
+// deliberately untyped beyond this, per ADR-0008.
 type Expr interface {
 	exprNode()
 }
@@ -56,3 +56,16 @@ func (Pipe) exprNode() {}
 type Records struct{}
 
 func (Records) exprNode() {}
+
+// Assign is "path = value" (ADR-0014): in-place editing only, never
+// evaluated as a read-only query - eval.Eval rejects it outright.
+// Target reuses the same Field/Index nodes a read path already builds;
+// resolving whether it actually denotes a single sheet+cell (the only
+// valid shape) happens once, at resolution time in internal/xlsx, not
+// duplicated into this grammar.
+type Assign struct {
+	Target Expr
+	Value  any // string, float64, bool, or nil - already fully parsed
+}
+
+func (Assign) exprNode() {}

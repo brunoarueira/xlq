@@ -5,18 +5,26 @@ import (
 	"strconv"
 )
 
-// Parse parses a filter string into an Expr, per
+// Parse parses a filter string into an Expr - either a read-only
+// pipeline or an in-place assignment - per
 // docs/adr/0008-filter-grammar-v1.md, the grammar correction in
-// docs/adr/0009-correct-filter-grammar-ebnf.md, and the builtin-step
-// addition in docs/adr/0011-header-aware-record-output.md:
+// docs/adr/0009-correct-filter-grammar-ebnf.md, the builtin-step
+// addition in docs/adr/0011-header-aware-record-output.md, and the
+// assignment form added by docs/adr/0014-in-place-editing.md:
 //
-//	filter   = pipeline
-//	pipeline = path ( "|" step )*
-//	step     = path | builtin
-//	builtin  = "records"
-//	path     = "." ( head tail* )?
-//	head     = IDENT | "[" STRING "]" | "[" INT "]"
-//	tail     = "." IDENT | "[" STRING "]" | "[" INT "]"
+//	filter     = pipeline | assignment
+//	pipeline   = path ( "|" step )*
+//	step       = path | builtin
+//	builtin    = "records"
+//	path       = "." ( head tail* )?
+//	head       = IDENT | "[" STRING "]" | "[" INT "]"
+//	tail       = "." IDENT | "[" STRING "]" | "[" INT "]"
+//	assignment = path "=" value
+//	value      = STRING | NUMBER | INT | "true" | "false" | "null"
+//
+// assignment is a wholly separate top-level alternative to pipeline,
+// never composed with a pipe - an Assign's Target is parsed as one
+// path, not a pipeline, and parsing stops right after its value.
 func Parse(input string) (Expr, error) {
 	toks, err := lex(input)
 	if err != nil {
@@ -24,9 +32,31 @@ func Parse(input string) (Expr, error) {
 	}
 	p := &parser{tokens: toks}
 
-	expr, err := p.parsePipeline()
+	path, err := p.parsePath()
 	if err != nil {
 		return nil, err
+	}
+
+	if p.peek().kind == tokEquals {
+		p.advance()
+		value, err := p.parseValue()
+		if err != nil {
+			return nil, err
+		}
+		if p.peek().kind != tokEOF {
+			return nil, fmt.Errorf("filter: unexpected %s at position %d", p.peek().describe(), p.peek().pos)
+		}
+		return Assign{Target: path, Value: value}, nil
+	}
+
+	expr := path
+	for p.peek().kind == tokPipe {
+		p.advance()
+		right, err := p.parseStep()
+		if err != nil {
+			return nil, err
+		}
+		expr = Pipe{Left: expr, Right: right}
 	}
 	if p.peek().kind != tokEOF {
 		if p.peek().kind == tokIdent && spacedAfterIdent(input, p.tokens, p.pos) {
@@ -56,26 +86,10 @@ func (p *parser) advance() token {
 	return t
 }
 
-func (p *parser) parsePipeline() (Expr, error) {
-	left, err := p.parsePath()
-	if err != nil {
-		return nil, err
-	}
-	for p.peek().kind == tokPipe {
-		p.advance()
-		right, err := p.parseStep()
-		if err != nil {
-			return nil, err
-		}
-		left = Pipe{Left: left, Right: right}
-	}
-	return left, nil
-}
-
 // parseStep parses one pipeline step after a "|": either a path, or a
 // bare builtin keyword (currently just "records", ADR-0011). A builtin
-// is only valid here - parsePipeline always parses a filter's first
-// segment via parsePath, never parseStep, so "records" alone (with no
+// is only valid here - Parse always parses a filter's first segment
+// via parsePath, never parseStep, so "records" alone (with no
 // preceding "|") isn't a valid filter on its own.
 func (p *parser) parseStep() (Expr, error) {
 	if p.peek().kind == tokIdent && p.peek().text == "records" {
@@ -157,6 +171,46 @@ func (p *parser) parseBracketSuffix(base Expr) (Expr, error) {
 	}
 	p.advance()
 	return result, nil
+}
+
+// parseValue parses an assignment's right-hand side (ADR-0014):
+// STRING, NUMBER, INT, or one of the "true"/"false"/"null" keywords.
+// INT (the same token a bracket index like ".Sheet1[5]" uses) is
+// accepted here too, alongside NUMBER, since NUMBER's fraction is
+// mandatory and so has no case of its own for a bare integer -
+// without INT, ".Sheet1.A1 = 5" would have no value alternative to
+// parse at all. true/false/null already lex as ordinary tokIdent
+// tokens (the same way "records" does) - recognizing them as literals
+// rather than field names is purely a parser-level distinction, made
+// only here. The result is already the Go value Assign.Value holds:
+// string, float64, bool, or nil.
+func (p *parser) parseValue() (any, error) {
+	tok := p.peek()
+	switch tok.kind {
+	case tokString:
+		p.advance()
+		return tok.text, nil
+	case tokNumber, tokInt:
+		p.advance()
+		f, err := strconv.ParseFloat(tok.text, 64)
+		if err != nil {
+			return nil, fmt.Errorf("filter: invalid number %q at position %d", tok.text, tok.pos)
+		}
+		return f, nil
+	case tokIdent:
+		switch tok.text {
+		case "true":
+			p.advance()
+			return true, nil
+		case "false":
+			p.advance()
+			return false, nil
+		case "null":
+			p.advance()
+			return nil, nil
+		}
+	}
+	return nil, fmt.Errorf("filter: expected a value (a string, number, true, false, or null) at position %d, found %s", tok.pos, tok.describe())
 }
 
 // spacedAfterIdent reports whether the token at pos is an identifier
