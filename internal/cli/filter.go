@@ -25,6 +25,12 @@ type outputOptions struct {
 	// rawOutput prints a string result bare, without JSON quoting,
 	// jq's -r/--raw-output. Any other result type is unaffected.
 	rawOutput bool
+	// table prints the result as a human-readable, column-aligned
+	// table (output.Table) instead of JSON. Mutually exclusive with
+	// compactJSON/rawOutput, which only ever meant something for JSON
+	// output - combining either with table is a CLI error, not a
+	// silent override.
+	table bool
 }
 
 // runFilter parses filterSrc, evaluates it against the workbook at path
@@ -34,6 +40,10 @@ type outputOptions struct {
 // an empty format detects one from path's extension, and delim(0)
 // keeps that format's own default field delimiter.
 func runFilter(cmd *cobra.Command, filterSrc, path string, format input.Format, delim rune, opts outputOptions) error {
+	if opts.table && (opts.compactJSON || opts.rawOutput) {
+		return fmt.Errorf("--table cannot be combined with --compact-output/--raw-output, which only apply to JSON output")
+	}
+
 	expr, err := filter.Parse(filterSrc)
 	if err != nil {
 		return err
@@ -51,6 +61,11 @@ func runFilter(cmd *cobra.Command, filterSrc, path string, format input.Format, 
 
 	if opts.compactData {
 		result = output.Compact(result)
+	}
+
+	if opts.table {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), output.Table(result))
+		return err
 	}
 
 	if opts.rawOutput {

@@ -28,6 +28,7 @@ xlq '.Sheet1["A3:C9"]' path/to/book.xlsx  # a rectangular range
 xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
 xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
 xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
+xlq --table '.Sheet1 | records' path/to/book.xlsx  # aligned table, not JSON
 xlq --version
 ```
 
@@ -69,6 +70,13 @@ sheet's `C3`, not its actual `A1`. This is what makes a sheet with two
 tables side by side addressable at all - narrow a range to one
 table's rows *and* columns before piping into `records`, so the other
 table's columns were never part of the slice to begin with.
+
+`--table` prints a human-readable, column-aligned table instead of
+JSON - particularly useful piped from `records`, where it renders one
+row per record headed by its sorted field names, but it handles every
+result shape (a whole sheet, a range, a single cell, the whole
+workbook). It's a different output mode entirely, not a JSON
+formatting tweak, so it can't be combined with `-c`/`-r`.
 
 ## Install
 

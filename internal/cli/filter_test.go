@@ -367,3 +367,79 @@ func TestSheetsSubcommandDelimiterOverride(t *testing.T) {
 		t.Errorf("output = %q, want %q", out, want)
 	}
 }
+
+func TestRootFilterTablePrintsAlignedGrid(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "Name"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "B1", "Score"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "A2", "Alice"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "B2", 90.0); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "--table", ".Sheet1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := "Name   Score\nAlice  90\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterTableWithRecords(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "Name"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "A2", "Alice"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "--table", ".Sheet1 | records", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := "Name\nAlice\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterTableScalar(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "hello"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "--table", ".Sheet1.A1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "hello\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterTableRejectedWithCompactOutput(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--table", "-c", ".Sheet1", path); err == nil {
+		t.Error("Execute with --table -c: want error, got nil")
+	}
+}
+
+func TestRootFilterTableRejectedWithRawOutput(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--table", "-r", ".Sheet1.A1", path); err == nil {
+		t.Error("Execute with --table -r: want error, got nil")
+	}
+}
