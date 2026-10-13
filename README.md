@@ -27,12 +27,19 @@ xlq '.Sheet1 | records | .[0].SomeHeader' path/to/book.xlsx  # by header name
 xlq '.Sheet1["A3:C9"]' path/to/book.xlsx  # a rectangular range
 xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
 xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
+xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
 xlq --version
 ```
 
 The input format (`xlsx`, `csv`, `tsv`, or `ods`) is picked from the
 file's extension; `--input-format` overrides that for a misnamed file
-or one with no recognizable extension.
+or one with no recognizable extension. `--delimiter` overrides a
+csv/tsv file's own default field separator (comma, tab) with any
+single character the CSV reader accepts (a double quote, carriage
+return, newline, or invalid character aren't valid delimiters) -
+useful for a semicolon-separated export from a locale where comma is
+the decimal separator. It's an error alongside
+an xlsx or ods input, which have no delimiter concept to override.
 
 Filters can address a sheet by name (`.Sheet1`, case-insensitive), and
 from there a cell by its A1 reference (`.Sheet1.A1`), a whole column

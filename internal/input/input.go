@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/brunoarueira/xlq/internal/csv"
 	"github.com/brunoarueira/xlq/internal/model"
@@ -62,19 +63,26 @@ func resolve(path string, format Format) (Format, error) {
 }
 
 // Read reads path into a model.Workbook using format, or auto-
-// detecting one from path's extension if format is empty.
-func Read(path string, format Format) (model.Workbook, error) {
+// detecting one from path's extension if format is empty. delim
+// overrides the field delimiter for csv/tsv input (0 keeps each
+// format's own default - a comma for csv, a tab for tsv); a non-zero
+// delim for any other format is an error, since xlsx/ods have no
+// delimiter concept to override at all.
+func Read(path string, format Format, delim rune) (model.Workbook, error) {
 	format, err := resolve(path, format)
 	if err != nil {
+		return model.Workbook{}, err
+	}
+	if err := validateDelimiter(format, delim); err != nil {
 		return model.Workbook{}, err
 	}
 	switch format {
 	case XLSX:
 		return xlsx.Read(path)
 	case CSV:
-		return csv.Read(path)
+		return csv.ReadWithDelimiter(path, delimOrDefault(delim, ','))
 	case TSV:
-		return csv.ReadTSV(path)
+		return csv.ReadWithDelimiter(path, delimOrDefault(delim, '\t'))
 	case ODS:
 		return ods.Read(path)
 	default:
@@ -83,16 +91,24 @@ func Read(path string, format Format) (model.Workbook, error) {
 }
 
 // SheetNames returns path's sheet names using format, or auto-
-// detecting one from path's extension if format is empty. xlsx has
-// its own lightweight fast path (xlsx.SheetNames, which skips parsing
-// any cell data); csv/tsv always have exactly one sheet, SheetName -
-// known without parsing the file, but its existence is still checked,
-// so a missing csv/tsv file errors here the same way a missing xlsx
-// or ods one does; ods has no fast path of its own yet, so this reads
-// the whole file just to list its sheets.
-func SheetNames(path string, format Format) ([]string, error) {
+// detecting one from path's extension if format is empty. delim is
+// validated the same way Read's is, even though csv/tsv's sheet name
+// doesn't actually depend on it - passing --delimiter alongside xlsx
+// or ods should still be a clear error here, not silently accepted
+// just because this particular operation happens not to need it.
+//
+// xlsx has its own lightweight fast path (xlsx.SheetNames, which skips
+// parsing any cell data); csv/tsv always have exactly one sheet,
+// SheetName - known without parsing the file, but its existence is
+// still checked, so a missing csv/tsv file errors here the same way a
+// missing xlsx or ods one does; ods has no fast path of its own yet,
+// so this reads the whole file just to list its sheets.
+func SheetNames(path string, format Format, delim rune) ([]string, error) {
 	format, err := resolve(path, format)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateDelimiter(format, delim); err != nil {
 		return nil, err
 	}
 	switch format {
@@ -116,6 +132,43 @@ func SheetNames(path string, format Format) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("input: %q is not a supported input format (xlsx, csv, tsv, ods)", format)
 	}
+}
+
+// validateDelimiter rejects a non-zero delim for any format that has
+// no delimiter concept at all (xlsx, ods) - a clear, deliberate error
+// rather than silently ignoring an override the user explicitly asked
+// for - and rejects a delim encoding/csv itself would refuse (a double
+// quote, carriage return, newline, or invalid rune), with a clear
+// xlq-level message instead of leaving that to surface later as
+// encoding/csv's own unlabeled "invalid field or comment delimiter".
+//
+// That second check matters for SheetNames as much as Read even
+// though its csv/tsv fast path never actually parses the file (so an
+// invalid delim would otherwise go uncaught there, while the exact
+// same delim would correctly fail once a filter actually reads the
+// file) - both call this same function, so both reject it the same
+// way, consistently, rather than one silently accepting what the
+// other would error on.
+func validateDelimiter(format Format, delim rune) error {
+	if delim == 0 {
+		return nil
+	}
+	if format != CSV && format != TSV {
+		return fmt.Errorf("input: --delimiter only applies to csv/tsv input, not %s", format)
+	}
+	if delim == '"' || delim == '\r' || delim == '\n' || delim == utf8.RuneError {
+		return fmt.Errorf("input: %q is not a valid --delimiter character", delim)
+	}
+	return nil
+}
+
+// delimOrDefault returns delim unless it's unset (0), in which case it
+// returns def.
+func delimOrDefault(delim, def rune) rune {
+	if delim == 0 {
+		return def
+	}
+	return delim
 }
 
 // checkReadableFile confirms path exists, is a regular file, and is

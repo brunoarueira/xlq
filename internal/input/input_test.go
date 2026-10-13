@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/xuri/excelize/v2"
 )
@@ -131,7 +132,7 @@ func TestReadDetectsByExtension(t *testing.T) {
 	buildODS(t, odsPath, wrapODSSpreadsheet(odsTableXML))
 
 	for _, path := range []string{xlsxPath, csvPath, tsvPath, odsPath} {
-		if _, err := Read(path, ""); err != nil {
+		if _, err := Read(path, "", 0); err != nil {
 			t.Errorf("Read(%q, \"\") returned error: %v", path, err)
 		}
 	}
@@ -142,7 +143,7 @@ func TestReadUnknownExtensionErrors(t *testing.T) {
 	if err := os.WriteFile(path, []byte("a,b\n1,2\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	_, err := Read(path, "")
+	_, err := Read(path, "", 0)
 	if err == nil {
 		t.Fatal("Read with an unrecognized extension: want error, got nil")
 	}
@@ -158,7 +159,7 @@ func TestReadExplicitFormatOverridesExtension(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "misnamed.txt")
 	buildCSV(t, path, "a,b\n1,2\n")
 
-	wb, err := Read(path, CSV)
+	wb, err := Read(path, CSV, 0)
 	if err != nil {
 		t.Fatalf("Read(%q, CSV): %v", path, err)
 	}
@@ -170,8 +171,94 @@ func TestReadExplicitFormatOverridesExtension(t *testing.T) {
 func TestReadInvalidExplicitFormat(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "book.csv")
 	buildCSV(t, path, "a,b\n1,2\n")
-	if _, err := Read(path, Format("yaml")); err == nil {
+	if _, err := Read(path, Format("yaml"), 0); err == nil {
 		t.Error(`Read with format "yaml": want error, got nil`)
+	}
+}
+
+// TestReadDelimiterOverride confirms an explicit delimiter overrides
+// the format's own default - a semicolon-separated export, detected as
+// csv by extension, read correctly only because delim overrides the
+// comma a bare .csv would otherwise assume. The motivating case from
+// the issue: a locale where comma is the decimal separator.
+func TestReadDelimiterOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.csv")
+	buildCSV(t, path, "a;b\n1;2\n")
+
+	wb, err := Read(path, "", ';')
+	if err != nil {
+		t.Fatalf("Read(%q, \"\", ';'): %v", path, err)
+	}
+	if len(wb.Sheets) != 1 || len(wb.Sheets[0].Rows) != 2 {
+		t.Fatalf("Read(%q, \"\", ';') = %+v, want 2 rows", path, wb)
+	}
+}
+
+// TestReadDelimiterOverridesTSVDefaultToo confirms the override applies
+// regardless of which delimiter-based format it's layered on - a tsv
+// file whose actual separator is a semicolon, not a tab, still reads
+// correctly once delim overrides tsv's own tab default.
+func TestReadDelimiterOverridesTSVDefaultToo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.tsv")
+	buildCSV(t, path, "a;b\n1;2\n")
+
+	wb, err := Read(path, "", ';')
+	if err != nil {
+		t.Fatalf("Read(%q, \"\", ';'): %v", path, err)
+	}
+	if len(wb.Sheets) != 1 || len(wb.Sheets[0].Rows) != 2 {
+		t.Fatalf("Read(%q, \"\", ';') = %+v, want 2 rows", path, wb)
+	}
+}
+
+// TestReadDelimiterRejectedForXLSXAndODS confirms a non-zero delimiter
+// is a clear error for a format with no delimiter concept at all,
+// rather than being silently ignored.
+func TestReadDelimiterRejectedForXLSXAndODS(t *testing.T) {
+	dir := t.TempDir()
+
+	xlsxPath := filepath.Join(dir, "book.xlsx")
+	buildXLSX(t, xlsxPath)
+	if _, err := Read(xlsxPath, "", ';'); err == nil {
+		t.Error("Read(xlsx, delim=';'): want error, got nil")
+	}
+
+	odsPath := filepath.Join(dir, "book.ods")
+	buildODS(t, odsPath, wrapODSSpreadsheet(odsTableXML))
+	if _, err := Read(odsPath, "", ';'); err == nil {
+		t.Error("Read(ods, delim=';'): want error, got nil")
+	}
+}
+
+// TestSheetNamesDelimiterRejectedForXLSX confirms SheetNames validates
+// delim the same way Read does, even though csv/tsv's own sheet name
+// doesn't depend on it - passing --delimiter alongside xlsx should
+// still be a clear error here, not silently accepted.
+func TestSheetNamesDelimiterRejectedForXLSX(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.xlsx")
+	buildXLSX(t, path)
+	if _, err := SheetNames(path, "", ';'); err == nil {
+		t.Error("SheetNames(xlsx, delim=';'): want error, got nil")
+	}
+}
+
+// TestDelimiterInvalidCharactersRejected guards against a delimiter
+// character encoding/csv itself would refuse (a double quote, carriage
+// return, newline, or invalid rune) only surfacing once a filter
+// actually reads the file - Read and SheetNames share validateDelimiter,
+// so both must reject the same characters the same way, not just
+// whichever one happens to parse the file.
+func TestDelimiterInvalidCharactersRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.csv")
+	buildCSV(t, path, "a,b\n1,2\n")
+
+	for _, delim := range []rune{'"', '\r', '\n', utf8.RuneError} {
+		if _, err := Read(path, "", delim); err == nil {
+			t.Errorf("Read(delim=%q): want error, got nil", delim)
+		}
+		if _, err := SheetNames(path, "", delim); err == nil {
+			t.Errorf("SheetNames(delim=%q): want error, got nil", delim)
+		}
 	}
 }
 
@@ -180,7 +267,7 @@ func TestSheetNamesDetectsByExtensionAndFormat(t *testing.T) {
 
 	xlsxPath := filepath.Join(dir, "book.xlsx")
 	buildXLSX(t, xlsxPath)
-	got, err := SheetNames(xlsxPath, "")
+	got, err := SheetNames(xlsxPath, "", 0)
 	if err != nil {
 		t.Fatalf("SheetNames(xlsx): %v", err)
 	}
@@ -190,7 +277,7 @@ func TestSheetNamesDetectsByExtensionAndFormat(t *testing.T) {
 
 	csvPath := filepath.Join(dir, "book.csv")
 	buildCSV(t, csvPath, "a,b\n1,2\n")
-	got, err = SheetNames(csvPath, "")
+	got, err = SheetNames(csvPath, "", 0)
 	if err != nil {
 		t.Fatalf("SheetNames(csv): %v", err)
 	}
@@ -200,7 +287,7 @@ func TestSheetNamesDetectsByExtensionAndFormat(t *testing.T) {
 
 	odsPath := filepath.Join(dir, "book.ods")
 	buildODS(t, odsPath, wrapODSSpreadsheet(odsTableXML))
-	got, err = SheetNames(odsPath, "")
+	got, err = SheetNames(odsPath, "", 0)
 	if err != nil {
 		t.Fatalf("SheetNames(ods): %v", err)
 	}
@@ -216,7 +303,7 @@ func TestSheetNamesDetectsByExtensionAndFormat(t *testing.T) {
 // "Sheet1" for a file that was never there.
 func TestSheetNamesCSVStillChecksFileExists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.csv")
-	if _, err := SheetNames(path, ""); err == nil {
+	if _, err := SheetNames(path, "", 0); err == nil {
 		t.Error("SheetNames on a missing .csv file: want error, got nil")
 	}
 }
@@ -232,7 +319,7 @@ func TestSheetNamesCSVRejectsDirectory(t *testing.T) {
 	if err := os.Mkdir(path, 0o755); err != nil {
 		t.Fatalf("Mkdir: %v", err)
 	}
-	if _, err := SheetNames(path, ""); err == nil {
+	if _, err := SheetNames(path, "", 0); err == nil {
 		t.Error("SheetNames on a directory named *.csv: want error, got nil")
 	}
 }
@@ -242,7 +329,7 @@ func TestSheetNamesUnknownExtensionErrors(t *testing.T) {
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if _, err := SheetNames(path, ""); err == nil {
+	if _, err := SheetNames(path, "", 0); err == nil {
 		t.Error("SheetNames with an unrecognized extension: want error, got nil")
 	}
 }

@@ -31,16 +31,24 @@ const SheetName = "Sheet1"
 // Read opens the CSV file at path (comma-delimited) and converts it into
 // a single-sheet model.Workbook.
 func Read(path string) (model.Workbook, error) {
-	return read(path, ',')
+	return ReadWithDelimiter(path, ',')
 }
 
 // ReadTSV opens the TSV file at path (tab-delimited) and converts it into
 // a single-sheet model.Workbook.
 func ReadTSV(path string) (model.Workbook, error) {
-	return read(path, '\t')
+	return ReadWithDelimiter(path, '\t')
 }
 
-func read(path string, delim rune) (model.Workbook, error) {
+// ReadWithDelimiter opens the delimiter-separated file at path, using
+// delim as the field separator instead of Read/ReadTSV's fixed comma
+// or tab - for a file that doesn't use either, e.g. a semicolon-
+// separated export from a locale where comma is the decimal separator.
+// An invalid delim (a newline, the quote character, or anything
+// encoding/csv itself rejects) surfaces as an error from the first
+// Read call, not from this function - encoding/csv validates it
+// lazily, and this package doesn't duplicate that check.
+func ReadWithDelimiter(path string, delim rune) (model.Workbook, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return model.Workbook{}, fmt.Errorf("open %q: %w", path, err)

@@ -18,7 +18,11 @@ func newSheetsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			names, err := input.SheetNames(args[0], format)
+			delim, err := inputDelimiter(cmd)
+			if err != nil {
+				return err
+			}
+			names, err := input.SheetNames(args[0], format, delim)
 			if err != nil {
 				return err
 			}
