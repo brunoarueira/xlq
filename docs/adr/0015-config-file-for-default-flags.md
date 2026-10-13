@@ -103,53 +103,54 @@ case this doesn't cover).
 Merging happens in a `PersistentPreRunE` on the root command - the one
 place that runs before *any* command's own `RunE` (`sheets` defines no
 `PersistentPreRunE` of its own, so Cobra runs the root's), without
-needing every `RunE` to know about config at all. `input-format` and
-`delimiter` merge one flag at a time: if the current command actually
-defines a flag by that name (`cmd.Flags().Lookup(name)`, since
-`sheets` has no `--table`) and the user didn't already pass it
-explicitly (`!cmd.Flags().Changed(name)`), set it via
-`cmd.Flags().Set(name, ...)` - the standard pflag idiom for "apply a
-default from somewhere other than the flag's own registration," and
-exactly what reading the flag normally (`GetString`) sees from then
-on.
+needing every `RunE` to know about config at all.
 
-The other six flags - `compact`, `compact-output`, `raw-output`,
-`table`, `csv`, `tsv` - can't merge one at a time like that: they're
-the same six `root.go`'s own `-i` check already treats as a single
-incompatible-with-`--in-place` set, and five of them (`compact-output`,
-`raw-output`, `table`, `csv`, `tsv`) are *also* `outputOptions.validate()`'s
-own mutually-exclusive set. A naive per-flag merge - skip a config
-value only when that exact flag was passed - gets both wrong:
-`table: true` in config would survive an explicit `--csv` (a
-*different* flag was passed, so the per-flag check never looks at
-`table` at all) and validation would reject the combination instead of
-honoring the override; the same `table: true` would equally survive a
-plain `xlq -i '...' report.xlsx` that never touched any output flag,
-tripping `-i`'s own mutual-exclusion check on a config value the user
-has no reason to suspect is even there.
+**If `-i`/`--in-place` was explicitly passed, no config value for any
+of the other eight flags is applied at all** - `input-format` and
+`delimiter` included, not just the six `root.go`'s own `-i` check
+already names. `-i` only ever supports `.xlsx` (ADR-0014) and rejects
+anything else outright regardless of the real file's actual content,
+so a config `input-format: csv` set for a user's everyday csv work has
+no business silently feeding into an occasional `-i` edit of a real
+`.xlsx` file and making it fail - exactly the same class of surprise
+the six-flag case below exists to prevent, just via a different flag.
+(`-i` itself is never config-defaultable, so this can't be circular:
+it's only ever explicit.)
 
-So these six merge as two groups, not six independent flags:
+Otherwise (`-i` not active, or not even defined on the current
+command, like `sheets`), the remaining seven flags merge in two
+different ways:
 
-- If `-i`/`--in-place` was explicitly passed, **none** of the six
-  config values are applied, regardless of whether the user touched
-  any of them - matching that none of the six have any meaning once
-  `-i` is active (`-i` itself is never config-defaultable, so this
-  can't be circular: it's only ever explicit).
-- Otherwise, if the user explicitly passed **any** of `compact-output`,
-  `raw-output`, `table`, `csv`, or `tsv`, **none** of config's values
-  for those same five are applied (`compact` is unaffected by this -
-  it composes freely with all five, per `validate()`, so an explicit
-  `--table` doesn't need to suppress a config `compact: true`
-  alongside it). Otherwise, each of the five config values that's
-  non-zero is applied - still individually, since a config file that
-  sets more than one of `table`/`csv`/`tsv` at once is an authoring
-  mistake `validate()` already catches once they're all merged in, no
-  differently than the same mistake typed directly on the command
-  line.
-- `compact` merges on its own otherwise: applied whenever the user
-  didn't pass `--compact` explicitly, independent of every other flag
-  here (unless suppressed outright by the first rule, when `-i` is
-  active).
+- `input-format` and `delimiter` merge one flag at a time: if the
+  current command actually defines a flag by that name
+  (`cmd.Flags().Lookup(name)`, since `sheets` has no `--table`) and
+  the user didn't already pass it explicitly
+  (`!cmd.Flags().Changed(name)`), set it via `cmd.Flags().Set(name,
+  ...)` - the standard pflag idiom for "apply a default from somewhere
+  other than the flag's own registration," and exactly what reading
+  the flag normally (`GetString`) sees from then on.
+- The other six - `compact`, `compact-output`, `raw-output`, `table`,
+  `csv`, `tsv` - can't merge one at a time like that: five of them
+  (`compact-output`, `raw-output`, `table`, `csv`, `tsv`) are
+  `outputOptions.validate()`'s own mutually-exclusive set. A naive
+  per-flag merge - skip a config value only when that exact flag was
+  passed - gets this wrong: `table: true` in config would survive an
+  explicit `--csv` (a *different* flag was passed, so the per-flag
+  check never looks at `table` at all), and validation would reject
+  the combination instead of honoring the override. So: if the user
+  explicitly passed **any** of `compact-output`, `raw-output`,
+  `table`, `csv`, or `tsv`, **none** of config's values for those same
+  five are applied (`compact` is unaffected by this - it composes
+  freely with all five, per `validate()`, so an explicit `--table`
+  doesn't need to suppress a config `compact: true` alongside it).
+  Otherwise, each of the five config values that's non-zero is applied
+  - still individually, since a config file that sets more than one of
+  `table`/`csv`/`tsv` at once is an authoring mistake `validate()`
+  already catches once they're all merged in, no differently than the
+  same mistake typed directly on the command line. `compact` merges on
+  its own throughout: applied whenever the user didn't pass
+  `--compact` explicitly, independent of every other flag in this
+  list.
 
 Every existing `RunE` (`runFilter`, `runInPlace`, `sheets`) is
 completely unchanged by any of this - from where they sit, a
@@ -186,14 +187,16 @@ instead write `table: true` once to
 `~/.config/xlq/config.yaml` (or wherever `os.UserConfigDir()` resolves
 on their OS) and drop `--table` from the command entirely; explicitly
 passing `--csv` on some other invocation still overrides it - not just
-suppressing `table`'s own config value, but every one of the other
-format-mode flags' - the same as if no config file existed at all.
-A plain `xlq -i '...' report.xlsx`, with the same `table: true` in
-config, behaves identically to a config-free install too: none of the
-six `-i`-incompatible flags' config values are applied when `-i` is
-active, so `-i` never fails - or even sees a difference - because of a
-config file the user forgot was there. `-i` is never defaultable, by
-design.
+suppressing `table`'s own config value, but the config values of every
+other output flag too - the same as if no config file existed at all.
+
+A plain `xlq -i '...' report.xlsx`, with that same config file in
+place, behaves identically to a config-free install: no config value
+for any flag - not just the six output flags, `input-format` and
+`delimiter` too - is applied once `-i` is active, so `-i` never fails,
+or even behaves differently, because of a config file the user forgot
+was there. `-i` is never defaultable, by design, and now nothing else
+in the config file can reach it indirectly either.
 
 A new dependency (`gopkg.in/yaml.v3`) and a new package
 (`internal/config`) are added. Every existing `RunE` and
