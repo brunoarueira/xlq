@@ -98,6 +98,51 @@ func TestParseValid(t *testing.T) {
 			`.["a\\b\tc\nd\re"]`,
 			Field{Identity{}, "a\\b\tc\nd\re"},
 		},
+		{
+			"assignment with a string value",
+			`.Sheet1.A1 = "hello"`,
+			Assign{Field{Field{Identity{}, "Sheet1"}, "A1"}, "hello"},
+		},
+		{
+			"assignment with a decimal number value",
+			".Sheet1.A1 = 5.5",
+			Assign{Field{Field{Identity{}, "Sheet1"}, "A1"}, 5.5},
+		},
+		{
+			"assignment with a negative decimal value",
+			".Sheet1.A1 = -5.5",
+			Assign{Field{Field{Identity{}, "Sheet1"}, "A1"}, -5.5},
+		},
+		{
+			"assignment with a bare integer value - NUMBER's fraction is mandatory, so INT fills this case",
+			".Sheet1.A1 = 5",
+			Assign{Field{Field{Identity{}, "Sheet1"}, "A1"}, 5.0},
+		},
+		{
+			"assignment with a true value",
+			".Sheet1.A1 = true",
+			Assign{Field{Field{Identity{}, "Sheet1"}, "A1"}, true},
+		},
+		{
+			"assignment with a false value",
+			".Sheet1.A1 = false",
+			Assign{Field{Field{Identity{}, "Sheet1"}, "A1"}, false},
+		},
+		{
+			"assignment with a null value",
+			".Sheet1.A1 = null",
+			Assign{Field{Field{Identity{}, "Sheet1"}, "A1"}, nil},
+		},
+		{
+			"assignment target via bracket-string sheet name",
+			`.["Q1 Report"].A1 = "x"`,
+			Assign{Field{Field{Identity{}, "Q1 Report"}, "A1"}, "x"},
+		},
+		{
+			"assignment target shape isn't validated at parse time - resolution is internal/xlsx's job",
+			`.Sheet1[0] = "x"`,
+			Assign{Index{Field{Identity{}, "Sheet1"}, 0}, "x"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -136,6 +181,11 @@ func TestParseInvalid(t *testing.T) {
 		{"trailing garbage after valid filter", ".Sheet1 extra"},
 		{"records can't be a filter's first segment", "records"},
 		{"records can't be chained directly without a pipe", ".Sheet1 | records.Impressions"},
+		{"assignment with no value after =", ".Sheet1.A1 = "},
+		{"assignment value must be a recognized literal, not an arbitrary ident", ".Sheet1.A1 = banana"},
+		{"assignment with trailing garbage after the value", `.Sheet1.A1 = "x" extra`},
+		{"double equals has no value on the right of the first", `.Sheet1.A1 == "x"`},
+		{"assignment target can't itself contain a pipe", `.Sheet1 | records = "x"`},
 	}
 
 	for _, tc := range cases {

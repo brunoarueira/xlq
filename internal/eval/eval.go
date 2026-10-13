@@ -40,7 +40,14 @@ import (
 )
 
 // Eval evaluates expr against wb and returns a JSON-marshalable result.
+// expr must be read-only: an Assign (ADR-0014's "path = value" in-place
+// edit) is rejected here rather than falling through to eval's default
+// "unknown expression type" case, since it's a clear, specific user
+// error (forgetting --in-place), not an internal inconsistency.
 func Eval(expr filter.Expr, wb model.Workbook) (any, error) {
+	if _, ok := expr.(filter.Assign); ok {
+		return nil, fmt.Errorf("eval: an assignment filter (\"path = value\") only works with --in-place")
+	}
 	v, err := eval(expr, wb)
 	if err != nil {
 		return nil, err

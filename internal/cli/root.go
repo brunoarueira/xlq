@@ -23,7 +23,10 @@ func NewRootCommand() *cobra.Command {
 			"--tsv asks for something else instead.\n\n" +
 			"<file>'s format (xlsx, csv, tsv, ods) is picked from its extension;\n" +
 			"use --input-format to override that for a misnamed file, and\n" +
-			"--delimiter to override a csv/tsv file's field separator.",
+			"--delimiter to override a csv/tsv file's field separator.\n\n" +
+			"-i/--in-place edits <file> instead of reading it: <filter> must be\n" +
+			"an assignment (\"path = value\"), and only .xlsx is supported - see\n" +
+			"docs/adr/0014-in-place-editing.md.",
 		Example: "  xlq '.Sheet1.A1' report.xlsx\n" +
 			"  xlq '.Sheet1' report.xlsx\n" +
 			"  xlq --compact '.Sheet1' report.xlsx\n" +
@@ -32,7 +35,8 @@ func NewRootCommand() *cobra.Command {
 			"  xlq --table '.Sheet1' report.xlsx\n" +
 			"  xlq --csv '.Sheet1 | records' report.xlsx\n" +
 			"  xlq --input-format csv '.Sheet1' report.txt\n" +
-			"  xlq --delimiter ';' '.Sheet1' report.csv",
+			"  xlq --delimiter ';' '.Sheet1' report.csv\n" +
+			`  xlq -i '.Sheet1.A1 = "done"' report.xlsx`,
 		Version: version.Version,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
@@ -49,6 +53,7 @@ func NewRootCommand() *cobra.Command {
 			table, _ := cmd.Flags().GetBool("table")
 			csvOut, _ := cmd.Flags().GetBool("csv")
 			tsvOut, _ := cmd.Flags().GetBool("tsv")
+			inPlace, _ := cmd.Flags().GetBool("in-place")
 			format, err := inputFormat(cmd)
 			if err != nil {
 				return err
@@ -56,6 +61,12 @@ func NewRootCommand() *cobra.Command {
 			delim, err := inputDelimiter(cmd)
 			if err != nil {
 				return err
+			}
+			if inPlace {
+				if compactData || compactJSON || rawOutput || table || csvOut || tsvOut {
+					return fmt.Errorf("--in-place cannot be combined with --compact/--compact-output/--raw-output/--table/--csv/--tsv - an in-place edit prints nothing")
+				}
+				return runInPlace(args[0], args[1], format, delim)
 			}
 			return runFilter(cmd, args[0], args[1], format, delim, outputOptions{
 				compactData: compactData,
@@ -73,6 +84,7 @@ func NewRootCommand() *cobra.Command {
 	root.Flags().Bool("table", false, "print a human-readable, column-aligned table instead of JSON")
 	root.Flags().Bool("csv", false, "print comma-separated values instead of JSON (see ADR-0013 for how a result flattens)")
 	root.Flags().Bool("tsv", false, "print tab-separated values instead of JSON (see ADR-0013 for how a result flattens)")
+	root.Flags().BoolP("in-place", "i", false, `edit the .xlsx file in place: <filter> must be an assignment, e.g. '.Sheet1.A1 = "value"' (see ADR-0014); prints nothing on success`)
 	root.PersistentFlags().String("input-format", "", "input format: xlsx, csv, tsv, or ods (default: detected from the file extension)")
 	root.PersistentFlags().String("delimiter", "", "field delimiter override for csv/tsv input, exactly one character (default: comma for csv, tab for tsv)")
 	root.SetVersionTemplate("xlq {{.Version}}\n")

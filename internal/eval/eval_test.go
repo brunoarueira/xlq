@@ -2,6 +2,7 @@ package eval
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,6 +158,7 @@ func TestEvalInvalid(t *testing.T) {
 		{"index on a scalar", ".Sheet1.A1[0]"},
 		{"field on a row array", ".Sheet1[1].A1"},
 		{"index on a column array", ".Sheet1.B[0]"},
+		{"an assignment filter requires --in-place, not Eval", `.Sheet1.A1 = "x"`},
 	}
 
 	for _, tc := range cases {
@@ -166,6 +168,21 @@ func TestEvalInvalid(t *testing.T) {
 				t.Errorf("Eval(%q): want error, got nil", tc.input)
 			}
 		})
+	}
+}
+
+// TestEvalAssignRejectedWithClearError confirms an assignment filter
+// fails with a specific, actionable message (forgot --in-place) rather
+// than falling through to eval's generic "unknown expression type"
+// case, which would be confusing for what's actually a plain user
+// mistake, not an internal inconsistency.
+func TestEvalAssignRejectedWithClearError(t *testing.T) {
+	_, err := evalString(t, `.Sheet1.A1 = "x"`)
+	if err == nil {
+		t.Fatal("Eval(assignment): want error, got nil")
+	}
+	if got := err.Error(); !strings.Contains(got, "--in-place") {
+		t.Errorf("Eval(assignment) error = %q, want it to mention --in-place", got)
 	}
 }
 
