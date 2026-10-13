@@ -51,9 +51,19 @@ separate `assignment` - never both, never composed with a pipe:
 ```
 filter     = pipeline | assignment
 assignment = path "=" value
-value      = STRING | NUMBER | "true" | "false" | "null"
+value      = STRING | NUMBER | INT | "true" | "false" | "null"
 NUMBER     = ["-"] digit+ "." digit+
 ```
+
+`INT` is the existing integer token (`tokInt`, used today for bracket
+indices like `.Sheet1[5]`) accepted in value position too - not a new
+token, just a new place an existing one is legal. Without it, `value`
+would have no alternative for a bare integer at all (`NUMBER` now
+requires a fraction, see below), making `.Sheet1.A1 = 5` - arguably
+the single most common cell write - a parse error. An `INT` value
+parses to the same `float64` an equivalent `NUMBER` would (`5` and
+`5.0` produce an identical cell value), so `Assign.Value`'s `float64`
+case doesn't care which token produced it.
 
 `STRING`, `true`, `false`, and `null` need no new lexing: a string
 already lexes the same way it does anywhere else in the grammar, and
@@ -131,7 +141,7 @@ handling - excelize already extends the sheet for a normal
 
 This command overwrites the user's own file with no undo. The save
 itself: `SaveAs` to a temporary file in the **same directory** as the
-target (so the following rename is same-filesystem, hence atomic) and
+target (so the following rename is same-filesystem) and
 **named with an `.xlsx` suffix** - e.g. `xlq-tmp-*.xlsx` via
 `os.CreateTemp(dir, "xlq-tmp-*.xlsx")` - not an arbitrary pattern.
 excelize's `SaveAs` rejects a path whose extension isn't a supported
@@ -146,6 +156,31 @@ itself, the save, or the re-open check - the original file is never
 touched. A bug that produces a subtly corrupted file is caught right
 there, not discovered the next time the user happens to reopen it,
 possibly much later with no other backup.
+
+Before that rename, the original file's mode is read (`os.Stat`) and
+applied to the temp file (`os.Chmod`) so the replacement keeps the
+original's permissions - `os.CreateTemp` creates its file `0600`
+regardless of the target's own mode, and `os.Rename` replaces the
+destination inode wholesale, so without this step a successful edit
+would silently narrow an originally `0644`/group-readable file to
+owner-only `0600`. Ownership (uid/gid) is left as whatever the temp
+file already has (the invoking user) - matching it would need
+platform-specific, usually privileged, APIs, and xlq already has to
+run as whatever user owns the file to read and rewrite it at all, so
+this isn't a meaningful new gap the way the mode change is.
+
+`os.Rename` is atomic on Unix (a same-filesystem rename always is,
+POSIX-guaranteed) but, per Go's own documentation, **not** guaranteed
+atomic on Windows, which this project ships for. The safety model here
+doesn't depend on that guarantee, though: the original is only ever
+touched by the rename call itself, after every prior step (edit, save,
+re-open check, chmod) has already succeeded against the *temporary*
+file - so the only Windows-specific risk is the rename call itself
+failing partway (e.g. if the target is open and locked by another
+process, which Windows - unlike Unix - can refuse to replace at all),
+and a failed rename leaves the original exactly as it was, with a
+leftover temp file as the only side effect. There's no scenario where
+a partial rename leaves the original in a half-written state.
 
 ### CLI surface
 
