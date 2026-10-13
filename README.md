@@ -142,7 +142,8 @@ config-defaulted at all (see
 [ADR-0015](docs/adr/0015-config-file-for-default-flags.md)) - so a
 flag you'd otherwise pass on every invocation can be set once instead.
 By default it's read from `os.UserConfigDir()/xlq/config.yaml` -
-`~/.config/xlq/config.yaml` on Linux, `~/Library/Application
+`$XDG_CONFIG_HOME/xlq/config.yaml` (or `~/.config/xlq/config.yaml` if
+`$XDG_CONFIG_HOME` is unset) on Linux, `~/Library/Application
 Support/xlq/config.yaml` on macOS, `%AppData%\xlq\config.yaml` on
 Windows - or from `--config <path>` instead. A missing file at the
 default location is fine (the feature is entirely opt-in); an

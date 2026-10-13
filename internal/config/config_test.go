@@ -101,6 +101,31 @@ func TestLoadMultiDocumentRejected(t *testing.T) {
 	}
 }
 
+// TestLoadNonMapRootRejected guards against yaml.v3's own tolerance
+// for decoding a non-mapping document (a bare "null"/"~", a scalar, or
+// a list) into a zero-valued Config without complaint - this format is
+// documented as a flat mapping, so anything else should be a clear
+// error, not silently treated the same as an empty file.
+func TestLoadNonMapRootRejected(t *testing.T) {
+	cases := []struct {
+		name     string
+		contents string
+	}{
+		{"explicit null", "null\n"},
+		{"tilde null", "~\n"},
+		{"bare scalar", "42\n"},
+		{"a list", "- a\n- b\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeConfig(t, tc.contents)
+			if _, err := Load(path); err == nil {
+				t.Errorf("Load(%q): want error, got nil", tc.contents)
+			}
+		})
+	}
+}
+
 func TestLoadMalformedYAMLRejected(t *testing.T) {
 	path := writeConfig(t, "table: [this is not a bool\n")
 

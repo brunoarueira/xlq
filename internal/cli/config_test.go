@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -253,5 +254,40 @@ func TestConfigNotLoadedForCompletionRequest(t *testing.T) {
 	}
 	if out == "" {
 		t.Error("completion script is empty")
+	}
+}
+
+// TestConfigDefaultPathUnresolvableIsNotFatal guards against a prior
+// bug: when no --config is passed, mergeConfigDefaults calls
+// config.DefaultPath, which itself can fail (os.UserConfigDir needs
+// HOME and/or XDG_CONFIG_HOME, which some minimal environments don't
+// set at all) - that failure was propagated as a command-aborting
+// error, which would have broken every single invocation, including
+// ones with no interest in a config file whatsoever. It must be
+// treated exactly like "no config file exists," not like a real
+// error. This bypasses run() deliberately, since run() itself sets
+// HOME to make every other test hermetic - this one needs HOME (and
+// XDG_CONFIG_HOME, and APPDATA for a hypothetical Windows run) truly
+// unset instead.
+func TestConfigDefaultPathUnresolvableIsNotFatal(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("APPDATA", "")
+
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "x"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	var out bytes.Buffer
+	root := NewRootCommand()
+	root.SetOut(&out)
+	root.SetArgs([]string{".Sheet1.A1", path})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute with HOME/XDG_CONFIG_HOME/APPDATA all unset: %v", err)
+	}
+	if want := "\"x\"\n"; out.String() != want {
+		t.Errorf("output = %q, want %q", out.String(), want)
 	}
 }

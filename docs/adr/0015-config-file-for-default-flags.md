@@ -103,19 +103,27 @@ case this doesn't cover).
 Merging happens in a `PersistentPreRunE` on the root command - the one
 place that runs before *any* command's own `RunE` (`sheets` defines no
 `PersistentPreRunE` of its own, so Cobra runs the root's), without
-needing every `RunE` to know about config at all.
+needing every `RunE` to know about config at all. The file is loaded
+and parsed first, unconditionally - a malformed file, or one with an
+unrecognized key, is a hard error regardless of what flags are in play
+below, `-i` included: suppressing config's *values* under `-i` (next)
+isn't the same as the file never being read at all.
 
-**If `-i`/`--in-place` was explicitly passed, no config value for any
-of the other eight flags is applied at all** - `input-format` and
+**If `-i`/`--in-place` evaluates to true, no config value for any of
+the other eight flags is applied at all** - `input-format` and
 `delimiter` included, not just the six `root.go`'s own `-i` check
-already names. `-i` only ever supports `.xlsx` (ADR-0014) and rejects
-anything else outright regardless of the real file's actual content,
-so a config `input-format: csv` set for a user's everyday csv work has
-no business silently feeding into an occasional `-i` edit of a real
-`.xlsx` file and making it fail - exactly the same class of surprise
-the six-flag case below exists to prevent, just via a different flag.
-(`-i` itself is never config-defaultable, so this can't be circular:
-it's only ever explicit.)
+already names. This checks the flag's actual value
+(`cmd.Flags().GetBool("in-place")`), not whether it was passed -
+an explicit but no-op `--in-place=false` must not trigger this, only
+an `-i`/`--in-place` that's actually `true`. `-i` only ever supports
+`.xlsx` (ADR-0014) and rejects anything else outright regardless of
+the real file's actual content, so a config `input-format: csv` set
+for a user's everyday csv work has no business silently feeding into
+an occasional `-i` edit of a real `.xlsx` file and making it fail -
+exactly the same class of surprise the six-flag case below exists to
+prevent, just via a different flag. (`-i` itself is never
+config-defaultable, so this can't be circular: it's only ever
+explicit.)
 
 Otherwise (`-i` not active, or not even defined on the current
 command, like `sheets`), all eight config flags merge in two
@@ -130,21 +138,28 @@ different ways:
   other than the flag's own registration," and exactly what reading
   the flag normally (`GetString`) sees from then on.
 - The other six - `compact`, `compact-output`, `raw-output`, `table`,
-  `csv`, `tsv` - can't merge one at a time like that: five of them
-  (`compact-output`, `raw-output`, `table`, `csv`, `tsv`) are
-  `outputOptions.validate()`'s own mutually-exclusive set. A naive
-  per-flag merge - skip a config value only when that exact flag was
-  passed - gets this wrong: `table: true` in config would survive an
-  explicit `--csv` (a *different* flag was passed, so the per-flag
-  check never looks at `table` at all), and validation would reject
-  the combination instead of honoring the override. So: if the user
-  explicitly passed **any** of `compact-output`, `raw-output`,
-  `table`, `csv`, or `tsv`, **none** of config's values for those same
-  five are applied (`compact` is unaffected by this - it composes
-  freely with all five, per `validate()`, so an explicit `--table`
-  doesn't need to suppress a config `compact: true` alongside it).
-  Otherwise, each of the five config values that's non-zero is applied
-  - still individually, since a config file that sets more than one of
+  `csv`, `tsv` - can't merge one at a time like that. They aren't all
+  pairwise mutually exclusive (`compact-output` and `raw-output`
+  compose fine together, per `outputOptions.validate()`), but five of
+  them - `compact-output`, `raw-output`, `table`, `csv`, `tsv` - form a
+  single *config-precedence* group: the three formats conflict with
+  each other and with either JSON option, so "has the user already
+  expressed a preference anywhere in this group" has to be answered
+  once, for the group as a whole, not flag by flag. A naive per-flag
+  merge - skip a config value only when that exact flag was passed -
+  gets this wrong: `table: true` in config would survive an explicit
+  `--csv` (a *different* flag was passed, so the per-flag check never
+  looks at `table` at all), and validation would reject the
+  combination instead of honoring the override. So: if **any** of
+  `compact-output`, `raw-output`, `table`, `csv`, or `tsv` evaluates to
+  true (`GetBool`, the same "value, not Changed" reasoning as `-i`
+  above - an explicit but no-op `--table=false` mustn't suppress a
+  config `csv: true`), **none** of config's values for those same five
+  are applied (`compact` is unaffected by this - it composes freely
+  with all five, per `validate()`, so an explicit `--table` doesn't
+  need to suppress a config `compact: true` alongside it). Otherwise,
+  each of the five config values that's non-zero is applied - still
+  individually, since a config file that sets more than one of
   `table`/`csv`/`tsv` at once is an authoring mistake `validate()`
   already catches once they're all merged in, no differently than the
   same mistake typed directly on the command line. `compact` merges on
@@ -196,12 +211,17 @@ regardless of which format flag - explicit or config-sourced - ends up
 in effect.
 
 A plain `xlq -i '...' report.xlsx`, with that same config file in
-place, behaves identically to a config-free install: no config value
-for any flag - not just the six output flags, `input-format` and
-`delimiter` too - is applied once `-i` is active, so `-i` never fails,
-or even behaves differently, because of a config file the user forgot
-was there. `-i` is never defaultable, by design, and now nothing else
-in the config file can reach it indirectly either.
+place, behaves identically to a config-free install *for every value*
+it sets: no config value for any flag - not just the six output flags,
+`input-format` and `delimiter` too - is applied once `-i` is active, so
+`-i` never fails, or even behaves differently, because of what a
+config file the user forgot about *says*. The file itself is still
+loaded and parsed either way, though: a malformed file, or one with an
+unrecognized key, is exactly as much of an error under `-i` as without
+it - suppressing a file's *values* under `-i` was never meant to mean
+"don't bother reading it at all." `-i` is never defaultable, by
+design, and now nothing else in the config file's actual *settings*
+can reach it indirectly either.
 
 A new dependency (`gopkg.in/yaml.v3`) and a new package
 (`internal/config`) are added. Every existing `RunE` and

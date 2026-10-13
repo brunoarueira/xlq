@@ -36,7 +36,15 @@ func mergeConfigDefaults(cmd *cobra.Command, _ []string) error {
 	if !explicit {
 		def, err := config.DefaultPath()
 		if err != nil {
-			return err
+			// os.UserConfigDir() itself failing (e.g. HOME and
+			// XDG_CONFIG_HOME both unset) is exactly as "no config"
+			// as the default location simply not existing - neither
+			// is a reason to fail an invocation that never asked for
+			// a config file at all. An explicit --config has no such
+			// escape hatch: GetString above already resolved it to a
+			// literal path with no resolution step that can fail this
+			// way.
+			return nil
 		}
 		path = def
 	}

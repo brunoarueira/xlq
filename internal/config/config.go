@@ -7,6 +7,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -55,14 +56,31 @@ func DefaultPath() (string, error) {
 // Unknown keys are a hard error, not silently ignored - a config file
 // is edited by hand, so a typo'd key (e.g. "delimeter") is far more
 // likely than a genuine need to carry extra, unrecognized data.
+//
+// The file is read into memory up front (config files are always
+// tiny) so it can be decoded more than once from independent readers:
+// once to check the document's root is actually a mapping - this
+// format is documented as a flat map, and a bare scalar or list
+// shouldn't silently succeed as "no config" the way an empty file
+// does, and neither should an explicit "null"/"~" document, which
+// yaml.v3 would otherwise decode into a zero-value Config without
+// complaint - and again (with strict unknown-field checking) for the
+// real parse, plus a check for a second "---"-separated document.
 func Load(path string) (Config, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, err
 	}
-	defer func() { _ = f.Close() }()
 
-	dec := yaml.NewDecoder(f)
+	var probe yaml.Node
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return Config{}, fmt.Errorf("config: parse %q: %w", path, err)
+	}
+	if len(probe.Content) > 0 && probe.Content[0].Kind != yaml.MappingNode {
+		return Config{}, fmt.Errorf("config: parse %q: must be a YAML mapping (key: value pairs), not %s", path, describeNode(probe.Content[0]))
+	}
+
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	var cfg Config
 	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
@@ -84,4 +102,18 @@ func Load(path string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// describeNode names node's kind for an error message - "a null
+// value," "a list," or "a scalar value" - without exposing its actual
+// content, which could be sensitive.
+func describeNode(node *yaml.Node) string {
+	switch {
+	case node.Tag == "!!null":
+		return "a null value"
+	case node.Kind == yaml.SequenceNode:
+		return "a list"
+	default:
+		return "a scalar value"
+	}
 }
