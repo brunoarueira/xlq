@@ -123,15 +123,16 @@ For example, on bash:
 source <(xlq completion bash)
 
 # load for every new session (Linux)
-xlq completion bash > /etc/bash_completion.d/xlq
+xlq completion bash | sudo tee /etc/bash_completion.d/xlq >/dev/null
 
 # load for every new session (macOS, Homebrew's bash-completion@2)
 xlq completion bash > $(brew --prefix)/etc/bash_completion.d/xlq
 ```
 
-Completion only covers subcommands and flags (`xlq sheets`, `--table`,
-...) - `<filter>` itself isn't completed, since it isn't a fixed set
-of words.
+`xlq`'s completion covers subcommands and flags (`xlq sheets`,
+`--table`, ...) and may fall back to filename completion for
+positional arguments; `<filter>` itself isn't completed, since it
+isn't a fixed set of words.
 
 ## License
 
