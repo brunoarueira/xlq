@@ -227,12 +227,15 @@ literals) and one AST node (`Assign`); every existing filter's parse
 result is completely unchanged, since `assignment` is a wholly separate
 top-level alternative to `pipeline`, never substituted into it.
 
-Implementing this (a follow-up issue, blocked on this ADR) needs: the
-`NUMBER` lexer rule and `value`/`assignment` parsing
-(`internal/filter`), the `Assign` AST node (`internal/filter`), the
-target-resolution walk and the open/set/save-to-temp/verify/rename
-write path (most likely a new `internal/xlsx` export, since it's
-`.xlsx`-specific and belongs next to the existing reader), and the
-`-i` flag plus its assignment-only validation (`internal/cli`) - no
-changes needed to `internal/eval` or `internal/model` at all, since
-the write path deliberately never touches either.
+Implementing this needs: the `NUMBER` lexer rule and `value`/`assignment`
+parsing (`internal/filter`), the `Assign` AST node (`internal/filter`),
+the target-resolution walk and the open/set/save-to-temp/verify/rename
+write path (`internal/xlsx`, next to the existing reader, since it's
+`.xlsx`-specific), the `-i` flag plus its assignment-only validation
+(`internal/cli`), and one small addition to `internal/eval`: `Eval`
+rejects an `Assign` outright, with a clear "use --in-place" message,
+rather than falling through to its generic unknown-expression-type
+case - the write path itself still never touches `eval` or `model` at
+all, exactly as planned; this is purely about giving a user who passes
+an assignment filter without `-i` a specific error instead of a
+confusing internal-looking one.

@@ -299,15 +299,17 @@ func TestWriteCellFollowsSymlink(t *testing.T) {
 }
 
 // TestWriteCellFailureAfterStagingLeavesOriginalUntouched exercises a
-// failure that happens after the temp file has already been created
-// and written (SaveAs succeeds), not merely before staging begins
+// failure that happens after staging has begun - the temp file has
+// already been created via os.CreateTemp - rather than before it
 // (unlike TestWriteCellLeavesOriginalUntouchedOnFailure, which fails
 // at the very first step, resolving the sheet name). The temp
 // directory's path is made to exceed excelize's own 207 UTF-16-unit
-// SaveAs limit, so SaveAs itself fails deterministically and
-// portably, with the already-created temp file still on disk at that
-// point - the same safety property (original untouched, temp file
-// cleaned up) must hold here too.
+// SaveAs limit, so it's SaveAs itself that fails here, deterministically
+// and portably, leaving an empty temp file on disk at that point (not
+// a fully written one - SaveAs's own length check runs before it
+// writes anything) - the same safety property (original untouched,
+// temp file cleaned up) must hold regardless of which staging step
+// fails.
 func TestWriteCellFailureAfterStagingLeavesOriginalUntouched(t *testing.T) {
 	// excelize's SaveAs itself enforces the 207-character limit this
 	// test needs to trigger, so the fixture can't be created directly
