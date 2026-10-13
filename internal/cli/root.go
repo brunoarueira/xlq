@@ -19,8 +19,8 @@ func NewRootCommand() *cobra.Command {
 			"<filter> is evaluated against <file> - see\n" +
 			"docs/adr/0008-filter-grammar-v1.md (and the grammar correction in\n" +
 			"docs/adr/0009-correct-filter-grammar-ebnf.md) for the v1 grammar -\n" +
-			"and the result is printed as JSON, unless --table asks for a\n" +
-			"human-readable table instead.\n\n" +
+			"and the result is printed as JSON, unless --table, --csv, or\n" +
+			"--tsv asks for something else instead.\n\n" +
 			"<file>'s format (xlsx, csv, tsv, ods) is picked from its extension;\n" +
 			"use --input-format to override that for a misnamed file, and\n" +
 			"--delimiter to override a csv/tsv file's field separator.",
@@ -30,6 +30,7 @@ func NewRootCommand() *cobra.Command {
 			"  xlq -c '.Sheet1' report.xlsx\n" +
 			"  xlq -r '.Sheet1.A1' report.xlsx\n" +
 			"  xlq --table '.Sheet1' report.xlsx\n" +
+			"  xlq --csv '.Sheet1 | records' report.xlsx\n" +
 			"  xlq --input-format csv '.Sheet1' report.txt\n" +
 			"  xlq --delimiter ';' '.Sheet1' report.csv",
 		Version: version.Version,
@@ -46,6 +47,8 @@ func NewRootCommand() *cobra.Command {
 			compactJSON, _ := cmd.Flags().GetBool("compact-output")
 			rawOutput, _ := cmd.Flags().GetBool("raw-output")
 			table, _ := cmd.Flags().GetBool("table")
+			csvOut, _ := cmd.Flags().GetBool("csv")
+			tsvOut, _ := cmd.Flags().GetBool("tsv")
 			format, err := inputFormat(cmd)
 			if err != nil {
 				return err
@@ -59,6 +62,8 @@ func NewRootCommand() *cobra.Command {
 				compactJSON: compactJSON,
 				rawOutput:   rawOutput,
 				table:       table,
+				csv:         csvOut,
+				tsv:         tsvOut,
 			})
 		},
 	}
@@ -66,6 +71,8 @@ func NewRootCommand() *cobra.Command {
 	root.Flags().BoolP("compact-output", "c", false, "print JSON on one line, without indentation")
 	root.Flags().BoolP("raw-output", "r", false, "print a string result without JSON quotes")
 	root.Flags().Bool("table", false, "print a human-readable, column-aligned table instead of JSON")
+	root.Flags().Bool("csv", false, "print comma-separated values instead of JSON (see ADR-0013 for how a result flattens)")
+	root.Flags().Bool("tsv", false, "print tab-separated values instead of JSON (see ADR-0013 for how a result flattens)")
 	root.PersistentFlags().String("input-format", "", "input format: xlsx, csv, tsv, or ods (default: detected from the file extension)")
 	root.PersistentFlags().String("delimiter", "", "field delimiter override for csv/tsv input, exactly one character (default: comma for csv, tab for tsv)")
 	root.SetVersionTemplate("xlq {{.Version}}\n")
