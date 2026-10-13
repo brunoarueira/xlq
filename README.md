@@ -31,6 +31,7 @@ xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
 xlq --table '.Sheet1 | records' path/to/book.xlsx  # aligned table, not JSON
 xlq --csv '.Sheet1 | records' path/to/book.xlsx  # with a header row
 xlq --tsv '.Sheet1' path/to/book.xlsx            # positional, no header
+xlq -i '.Sheet1.A1 = "done"' path/to/book.xlsx   # edit a cell in place (.xlsx only)
 xlq --version
 ```
 
@@ -91,6 +92,14 @@ are mutually exclusive output modes, and each is also mutually
 exclusive with `-c`/`-r` (which only ever meant something for JSON) -
 but `-c` and `-r` themselves still compose freely with each other.
 
+`-i`/`--in-place` (see
+[ADR-0014](docs/adr/0014-in-place-editing.md)) edits a `.xlsx` file
+instead of reading it: `<filter>` must be an assignment
+(`.Sheet1.A1 = "value"`, a literal string/number/`true`/`false`/`null`,
+exactly one cell), not a pipeline. It prints nothing on success,
+matching `yq -i`'s own silence - the edit is the result. csv/tsv/ods
+have no writer yet, so `-i` only supports xlsx.
+
 ## Install
 
 Prebuilt binaries (macOS, Linux, Windows) are attached to each
@@ -101,6 +110,28 @@ Or build from source with Go 1.24+:
 ```sh
 go install github.com/brunoarueira/xlq/cmd/xlq@latest
 ```
+
+## Shell completions
+
+`xlq completion <shell>` generates a completion script for bash, zsh,
+fish, or powershell (via Cobra's own built-in generator - run `xlq
+completion <shell> --help` for that shell's exact setup instructions).
+For example, on bash:
+
+```sh
+# load for the current session only
+source <(xlq completion bash)
+
+# load for every new session (Linux)
+xlq completion bash > /etc/bash_completion.d/xlq
+
+# load for every new session (macOS, Homebrew's bash-completion@2)
+xlq completion bash > $(brew --prefix)/etc/bash_completion.d/xlq
+```
+
+Completion only covers subcommands and flags (`xlq sheets`, `--table`,
+...) - `<filter>` itself isn't completed, since it isn't a fixed set
+of words.
 
 ## License
 
