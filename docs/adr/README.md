@@ -20,6 +20,7 @@ xlq, using the format described in
 | [0012](0012-range-references.md) | Range references: `A1:C10`, and composing with `records` |
 | [0013](0013-csv-tsv-output.md) | CSV/TSV output: flattening rules, header row, delimiter |
 | [0014](0014-in-place-editing.md) | In-place `.xlsx` editing: assignment grammar and the write path |
+| [0015](0015-config-file-for-default-flags.md) | Config file for default flags: location, format, precedence |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
