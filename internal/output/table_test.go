@@ -142,11 +142,11 @@ func TestTableFlattensEmbeddedTabsAndNewlines(t *testing.T) {
 	}
 }
 
-// TestTableGridPreservesTrailingBlankRow guards against a cubic-dev-ai
-// finding: stripping *every* trailing newline (rather than only the
-// one tabwriter's Flush itself appends) would silently collapse a
-// grid's own trailing blank row into nothing, printing a range ending
-// in a blank row as though that row had never been selected.
+// TestTableGridPreservesTrailingBlankRow confirms a grid's own
+// trailing blank row still appears as a blank line - stripping every
+// trailing newline rather than only the one Flush itself appends
+// would collapse it into nothing, printing a range ending in a blank
+// row as though that row had never been selected.
 func TestTableGridPreservesTrailingBlankRow(t *testing.T) {
 	in := [][]any{{"a"}, {}}
 	want := "a\n"
@@ -155,11 +155,11 @@ func TestTableGridPreservesTrailingBlankRow(t *testing.T) {
 	}
 }
 
-// TestTableDoesNotStripGenuineTrailingSpace guards against another
-// cubic-dev-ai finding: a row's last cell is never tabwriter-aligned
-// (tab-terminated, not tab-separated - see tabwrite's own comment), so
-// any trailing space the cell's own value actually has must survive,
-// not be mistaken for alignment padding and trimmed away.
+// TestTableDoesNotStripGenuineTrailingSpace confirms a cell's own
+// trailing space survives even when it's a row's last cell - never
+// tabwriter-aligned (tab-terminated, not tab-separated - see
+// tabwrite's own comment), so it must not be mistaken for alignment
+// padding and trimmed away.
 func TestTableDoesNotStripGenuineTrailingSpace(t *testing.T) {
 	in := [][]any{
 		{"a", "hello "},
@@ -171,12 +171,11 @@ func TestTableDoesNotStripGenuineTrailingSpace(t *testing.T) {
 	}
 }
 
-// TestTableFlattensHeaderAndKeyTabsAndNewlines guards against a third
-// cubic-dev-ai finding: a records header (ADR-0011's own header-cell
-// text) or a map key can itself legitimately contain a tab or newline
-// - the same hazard cellText already guards against for ordinary data
-// cells - so headers and keys must be flattened the same way, not
-// written raw.
+// TestTableFlattensHeaderAndKeyTabsAndNewlines confirms a records
+// header (ADR-0011's own header-cell text) or a map key is flattened
+// the same way cellText already flattens an ordinary data cell -
+// either can legitimately contain a tab or newline, which would
+// otherwise break the table's alignment just the same.
 func TestTableFlattensHeaderAndKeyTabsAndNewlines(t *testing.T) {
 	records := []map[string]any{{"a\tb": "1"}}
 	if got, want := Table(records), "a b\n1"; got != want {
