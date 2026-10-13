@@ -339,11 +339,11 @@ func TestRootFilterDelimiterInvalidCharacterRejected(t *testing.T) {
 	if err := os.WriteFile(path, []byte("A,B\n1,2\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if _, err := run(t, "--delimiter", "\n", ".Sheet1", path); err == nil {
-		t.Error(`Execute with --delimiter "\n": want error, got nil`)
+	if _, err := run(t, "--delimiter", "\n", ".Sheet1", path); err == nil || !strings.Contains(err.Error(), "--delimiter") {
+		t.Errorf(`Execute with --delimiter "\n": want a --delimiter error, got %v`, err)
 	}
-	if _, err := run(t, "--delimiter", "\n", "sheets", path); err == nil {
-		t.Error(`Execute sheets with --delimiter "\n": want error, got nil`)
+	if _, err := run(t, "--delimiter", "\n", "sheets", path); err == nil || !strings.Contains(err.Error(), "--delimiter") {
+		t.Errorf(`Execute sheets with --delimiter "\n": want a --delimiter error, got %v`, err)
 	}
 }
 
