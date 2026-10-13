@@ -26,7 +26,10 @@ func NewRootCommand() *cobra.Command {
 			"--delimiter to override a csv/tsv file's field separator.\n\n" +
 			"-i/--in-place edits <file> instead of reading it: <filter> must be\n" +
 			"an assignment (\"path = value\"), and only .xlsx is supported - see\n" +
-			"docs/adr/0014-in-place-editing.md.",
+			"docs/adr/0014-in-place-editing.md.\n\n" +
+			"A config file (default: os.UserConfigDir()/xlq/config.yaml, override\n" +
+			"with --config) can set defaults for any flag above except -i - see\n" +
+			"docs/adr/0015-config-file-for-default-flags.md.",
 		Example: "  xlq '.Sheet1.A1' report.xlsx\n" +
 			"  xlq '.Sheet1' report.xlsx\n" +
 			"  xlq --compact '.Sheet1' report.xlsx\n" +
@@ -36,7 +39,8 @@ func NewRootCommand() *cobra.Command {
 			"  xlq --csv '.Sheet1 | records' report.xlsx\n" +
 			"  xlq --input-format csv '.Sheet1' report.txt\n" +
 			"  xlq --delimiter ';' '.Sheet1' report.csv\n" +
-			`  xlq -i '.Sheet1.A1 = "done"' report.xlsx`,
+			`  xlq -i '.Sheet1.A1 = "done"' report.xlsx` + "\n" +
+			"  xlq --config ~/my-xlq.yaml '.Sheet1' report.xlsx",
 		Version: version.Version,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
@@ -44,8 +48,9 @@ func NewRootCommand() *cobra.Command {
 			}
 			return nil
 		},
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		PersistentPreRunE: mergeConfigDefaults,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			compactData, _ := cmd.Flags().GetBool("compact")
 			compactJSON, _ := cmd.Flags().GetBool("compact-output")
@@ -87,6 +92,7 @@ func NewRootCommand() *cobra.Command {
 	root.Flags().BoolP("in-place", "i", false, `edit the .xlsx file in place: <filter> must be an assignment, e.g. '.Sheet1.A1 = "value"' (see ADR-0014); prints nothing on success`)
 	root.PersistentFlags().String("input-format", "", "input format: xlsx, csv, tsv, or ods (default: detected from the file extension)")
 	root.PersistentFlags().String("delimiter", "", "field delimiter override for csv/tsv input, exactly one character (default: comma for csv, tab for tsv)")
+	root.PersistentFlags().String("config", "", "config file path (default: os.UserConfigDir()/xlq/config.yaml; see ADR-0015 for which flags it can default and how)")
 	root.SetVersionTemplate("xlq {{.Version}}\n")
 	root.AddCommand(newSheetsCommand())
 	return root
