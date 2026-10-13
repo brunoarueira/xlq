@@ -52,7 +52,7 @@ separate `assignment` - never both, never composed with a pipe:
 filter     = pipeline | assignment
 assignment = path "=" value
 value      = STRING | NUMBER | "true" | "false" | "null"
-NUMBER     = ["-"] digit+ ["." digit+]
+NUMBER     = ["-"] digit+ "." digit+
 ```
 
 `STRING`, `true`, `false`, and `null` need no new lexing: a string
@@ -68,7 +68,14 @@ value literal needs its own token, produced by its own lexer rule, not
 a widened integer token - bracket indices should never accept a
 decimal point, and reusing one token for both roles risks `.Sheet1[5.5]`
 lexing successfully only to fail confusingly somewhere later instead
-of being rejected as the wrong kind of token to begin with.
+of being rejected as the wrong kind of token to begin with. The
+fraction is mandatory, not optional, in `NUMBER`'s own grammar - a
+bare `5` must keep lexing as the existing `tokInt`, exactly as it does
+today inside `.Sheet1[5]`, with `NUMBER` only ever firing for a value
+with a decimal point. Making the fraction optional would let `5` lex
+as either token depending on the implementation, silently breaking the
+"every existing filter's parse result is completely unchanged"
+consequence below.
 
 ### AST
 
@@ -101,10 +108,15 @@ cell) pair is a small, dedicated walk over the AST - not
 `eval.Eval`, which is for read-only queries against an already-reduced
 `model.Workbook` and has no reason to exist on this path at all.
 
-Concretely: open the file with `excelize.OpenFile`, confirm the target
-sheet is in `f.GetSheetList()` (a clear error if not - v1 never
-creates a sheet that doesn't exist, only modifies one that does),
-call `f.SetCellValue(sheet, cellRef, value)` with the already-typed
+Concretely: open the file with `excelize.OpenFile`, resolve the target
+sheet name against `f.GetSheetList()` the same way the read path's own
+`findSheet` (`internal/eval/eval.go`) does - an exact match wins,
+otherwise the first case-insensitive match - so `xlq -i
+'.sheet1.A1 = "x"'` and the read-only `.sheet1.A1` agree on which
+sheet `sheet1` means on a workbook whose sheet is actually named
+`Sheet1`. No match at all (case-insensitive included) is a clear error
+- v1 never creates a sheet that doesn't exist, only modifies one that
+does. Then call `f.SetCellValue(sheet, cellRef, value)` with the already-typed
 value, and save. Every bit of the original file `SetCellValue` doesn't
 touch - formatting, other cells, charts, merged ranges, anything else
 OOXML holds - survives untouched, because the whole file stays in
@@ -119,8 +131,15 @@ handling - excelize already extends the sheet for a normal
 
 This command overwrites the user's own file with no undo. The save
 itself: `SaveAs` to a temporary file in the **same directory** as the
-target (so the following rename is same-filesystem, hence atomic), then
-re-open that temp file with a fresh `excelize.OpenFile` as a sanity
+target (so the following rename is same-filesystem, hence atomic) and
+**named with an `.xlsx` suffix** - e.g. `xlq-tmp-*.xlsx` via
+`os.CreateTemp(dir, "xlq-tmp-*.xlsx")` - not an arbitrary pattern.
+excelize's `SaveAs` rejects a path whose extension isn't a supported
+workbook type (checked against `f.Path`'s extension, lowercased), so a
+temp name without `.xlsx` as its literal extension, including
+something like `report.xlsx.tmp` (extension is the last dot segment,
+`.tmp`), fails the save outright and the sanity-check re-open below
+would never even run. Then re-open that temp file with a fresh `excelize.OpenFile` as a sanity
 check that it's actually readable, and only then `os.Rename` it over
 the original path. If anything fails before the rename - the edit
 itself, the save, or the re-open check - the original file is never
