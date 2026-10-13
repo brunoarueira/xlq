@@ -8,9 +8,13 @@ func TestTableGrid(t *testing.T) {
 		{"Alice", 90.0},
 		{"Bob", nil},
 	}
+	// "Bob" ends with trailing spaces: it's tab-terminated (there's a
+	// second, blank cell after it in that row), so tabwriter pads it to
+	// match "Alice"'s column width - genuine alignment padding, not
+	// something to trim away (see TestTableDoesNotStripGenuineTrailingSpace).
 	want := "Name   Score\n" +
 		"Alice  90\n" +
-		"Bob"
+		"Bob    "
 	if got := Table(in); got != want {
 		t.Errorf("Table(%v) = %q, want %q", in, got, want)
 	}
@@ -27,10 +31,11 @@ func TestTableRecords(t *testing.T) {
 		{"Name": "Alice", "Score": 90.0},
 		{"Name": "Bob", "Score": nil},
 	}
-	// Keys sort alphabetically: Name before Score.
+	// Keys sort alphabetically: Name before Score. "Bob" has trailing
+	// padding spaces for the same reason as TestTableGrid's.
 	want := "Name   Score\n" +
 		"Alice  90\n" +
-		"Bob"
+		"Bob    "
 	if got := Table(in); got != want {
 		t.Errorf("Table(%v) = %q, want %q", in, got, want)
 	}
@@ -38,13 +43,15 @@ func TestTableRecords(t *testing.T) {
 
 func TestTableRecordsUnionsKeysAcrossRecords(t *testing.T) {
 	// Not all records share every key - the header is the union,
-	// sorted, and a record missing a key renders that cell blank.
+	// sorted, and a record missing a key renders that cell blank. "1"
+	// has trailing padding (tab-terminated, column B's blank cell
+	// follows it), but "2" doesn't need any (it's the last column).
 	in := []map[string]any{
 		{"A": "1"},
 		{"B": "2"},
 	}
 	want := "A  B\n" +
-		"1\n" +
+		"1  \n" +
 		"   2"
 	if got := Table(in); got != want {
 		t.Errorf("Table(%v) = %q, want %q", in, got, want)
@@ -132,5 +139,52 @@ func TestTableFlattensEmbeddedTabsAndNewlines(t *testing.T) {
 	want := "a b  c d"
 	if got := Table(in); got != want {
 		t.Errorf("Table(%v) = %q, want %q", in, got, want)
+	}
+}
+
+// TestTableGridPreservesTrailingBlankRow guards against a cubic-dev-ai
+// finding: stripping *every* trailing newline (rather than only the
+// one tabwriter's Flush itself appends) would silently collapse a
+// grid's own trailing blank row into nothing, printing a range ending
+// in a blank row as though that row had never been selected.
+func TestTableGridPreservesTrailingBlankRow(t *testing.T) {
+	in := [][]any{{"a"}, {}}
+	want := "a\n"
+	if got := Table(in); got != want {
+		t.Errorf("Table(%v) = %q, want %q", in, got, want)
+	}
+}
+
+// TestTableDoesNotStripGenuineTrailingSpace guards against another
+// cubic-dev-ai finding: a row's last cell is never tabwriter-aligned
+// (tab-terminated, not tab-separated - see tabwrite's own comment), so
+// any trailing space the cell's own value actually has must survive,
+// not be mistaken for alignment padding and trimmed away.
+func TestTableDoesNotStripGenuineTrailingSpace(t *testing.T) {
+	in := [][]any{
+		{"a", "hello "},
+		{"bb", "x"},
+	}
+	want := "a   hello \nbb  x"
+	if got := Table(in); got != want {
+		t.Errorf("Table(%v) = %q, want %q", in, got, want)
+	}
+}
+
+// TestTableFlattensHeaderAndKeyTabsAndNewlines guards against a third
+// cubic-dev-ai finding: a records header (ADR-0011's own header-cell
+// text) or a map key can itself legitimately contain a tab or newline
+// - the same hazard cellText already guards against for ordinary data
+// cells - so headers and keys must be flattened the same way, not
+// written raw.
+func TestTableFlattensHeaderAndKeyTabsAndNewlines(t *testing.T) {
+	records := []map[string]any{{"a\tb": "1"}}
+	if got, want := Table(records), "a b\n1"; got != want {
+		t.Errorf("Table(%v) = %q, want %q", records, got, want)
+	}
+
+	m := map[string]any{"a\nb": "1"}
+	if got, want := Table(m), "a b  1"; got != want {
+		t.Errorf("Table(%v) = %q, want %q", m, got, want)
 	}
 }

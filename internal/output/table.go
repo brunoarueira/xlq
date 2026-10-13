@@ -30,6 +30,15 @@ import (
 //   - anything else (a scalar or nil): printed as cellText would
 //     render it inside a table cell - no table structure needed for a
 //     single value.
+//
+// Known limitation: alignment is entirely text/tabwriter's own, which
+// assumes every Unicode code point occupies one terminal column. That
+// holds for plain and accented Latin text (an "ã" is still one column
+// wide), but not for CJK, other wide/fullwidth characters, or most
+// emoji, which visually occupy two columns each - a cell containing
+// any of those is counted as narrower than it actually displays, so
+// the whole column it's in (every row, not just that one) ends up
+// under-padded relative to how it actually renders in a terminal.
 func Table(v any) string {
 	switch val := v.(type) {
 	case map[string]any:
@@ -63,7 +72,16 @@ func recordsTable(records []map[string]any) string {
 	}
 	headers := sortedUnionKeys(records)
 	return tabwrite(func(w *tabwriter.Writer) {
-		_, _ = fmt.Fprintln(w, strings.Join(headers, "\t"))
+		headerCells := make([]string, len(headers))
+		for i, h := range headers {
+			// A header is a header-row cell's own string (ADR-0011),
+			// not a value cellText already flattens elsewhere in this
+			// row - an embedded tab or newline in it would break the
+			// table's alignment exactly the same way an unflattened
+			// data cell would.
+			headerCells[i] = cellText(h)
+		}
+		_, _ = fmt.Fprintln(w, strings.Join(headerCells, "\t"))
 		for _, rec := range records {
 			cells := make([]string, len(headers))
 			for i, h := range headers {
@@ -99,7 +117,9 @@ func mapTable(m map[string]any) string {
 
 	return tabwrite(func(w *tabwriter.Writer) {
 		for _, k := range keys {
-			_, _ = fmt.Fprintln(w, k+"\t"+cellText(m[k]))
+			// k is a map key, not run through cellText like any other
+			// cell - same reasoning as recordsTable's headers above.
+			_, _ = fmt.Fprintln(w, cellText(k)+"\t"+cellText(m[k]))
 		}
 	})
 }
@@ -141,27 +161,26 @@ func sortedUnionKeys(records []map[string]any) []string {
 }
 
 // tabwrite runs write against a tab-delimited tabwriter.Writer and
-// returns the column-aligned result, with no trailing newline. A cell
-// is tab-terminated, not tab-separated (tabwriter's own convention,
-// matching how write's cells are joined here: joining N cells with
-// "\t" only inserts a tab *between* them), so a row's last cell is
-// never column-aligned - padding a short last cell to match a wider
-// one elsewhere in that column only ever happens via the *next*
-// cell's own leading alignment, not trailing space on a short line.
-// Any trailing space tabwriter does still produce (aligning a cell
-// that isn't a row's last one) is just unused decoration once nothing
-// meaningful follows it on that line, so it's trimmed per line here.
+// returns the column-aligned result, with no trailing newline.
+//
+// Only the single trailing newline Flush leaves after the last
+// Fprintln is stripped here (TrimSuffix, which removes at most one
+// occurrence) - not every trailing newline (TrimRight would also
+// collapse a grid's own trailing blank row into nothing, silently
+// printing it as though that row had never been selected). Tabwriter
+// output isn't otherwise touched: a row's last cell is tab-terminated,
+// not tab-separated (tabwriter's own convention - joining N cells with
+// "\t" only inserts a tab *between* them), so it's never column-
+// aligned/padded at all, and trimming trailing whitespace line-by-line
+// would silently strip a genuine trailing space that's part of that
+// cell's own value, not alignment padding - cellText's "a string as-is"
+// promise would quietly stop being true only for a row's last column.
 func tabwrite(write func(w *tabwriter.Writer)) string {
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	write(w)
 	_ = w.Flush()
-
-	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	for i, line := range lines {
-		lines[i] = strings.TrimRight(line, " ")
-	}
-	return strings.Join(lines, "\n")
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 // cellText renders v as it should appear inside one table cell: nil as
