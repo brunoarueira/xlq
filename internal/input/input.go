@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/brunoarueira/xlq/internal/csv"
 	"github.com/brunoarueira/xlq/internal/model"
@@ -136,10 +137,27 @@ func SheetNames(path string, format Format, delim rune) ([]string, error) {
 // validateDelimiter rejects a non-zero delim for any format that has
 // no delimiter concept at all (xlsx, ods) - a clear, deliberate error
 // rather than silently ignoring an override the user explicitly asked
-// for.
+// for - and rejects a delim encoding/csv itself would refuse (a double
+// quote, carriage return, newline, or invalid rune), with a clear
+// xlq-level message instead of leaving that to surface later as
+// encoding/csv's own unlabeled "invalid field or comment delimiter".
+//
+// That second check matters for SheetNames as much as Read even
+// though its csv/tsv fast path never actually parses the file (so an
+// invalid delim would otherwise go uncaught there, while the exact
+// same delim would correctly fail once a filter actually reads the
+// file) - both call this same function, so both reject it the same
+// way, consistently, rather than one silently accepting what the
+// other would error on.
 func validateDelimiter(format Format, delim rune) error {
-	if delim != 0 && format != CSV && format != TSV {
+	if delim == 0 {
+		return nil
+	}
+	if format != CSV && format != TSV {
 		return fmt.Errorf("input: --delimiter only applies to csv/tsv input, not %s", format)
+	}
+	if delim == '"' || delim == '\r' || delim == '\n' || delim == utf8.RuneError {
+		return fmt.Errorf("input: %q is not a valid --delimiter character", delim)
 	}
 	return nil
 }

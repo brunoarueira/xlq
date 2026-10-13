@@ -313,6 +313,40 @@ func TestRootFilterDelimiterMustBeOneCharacter(t *testing.T) {
 	}
 }
 
+// TestRootFilterDelimiterExplicitlyEmptyIsRejected guards against
+// --delimiter "" being indistinguishable from not passing --delimiter
+// at all - an explicitly empty value is a flag the user did set, to
+// zero characters, and must fail the one-character check like any
+// other wrong length, not silently fall back to the default delimiter.
+func TestRootFilterDelimiterExplicitlyEmptyIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.csv")
+	if err := os.WriteFile(path, []byte("A,B\n1,2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := run(t, "--delimiter", "", ".Sheet1", path); err == nil {
+		t.Error(`Execute with --delimiter "": want error, got nil`)
+	}
+}
+
+// TestRootFilterDelimiterInvalidCharacterRejected guards against a
+// delimiter character encoding/csv itself would refuse (here, a
+// newline) only being caught once a filter actually reads the file -
+// SheetNames' csv/tsv fast path never parses the file at all, so
+// without validateDelimiter also rejecting it, `sheets` would silently
+// accept a delimiter that reading the same file would error on.
+func TestRootFilterDelimiterInvalidCharacterRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.csv")
+	if err := os.WriteFile(path, []byte("A,B\n1,2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := run(t, "--delimiter", "\n", ".Sheet1", path); err == nil {
+		t.Error(`Execute with --delimiter "\n": want error, got nil`)
+	}
+	if _, err := run(t, "--delimiter", "\n", "sheets", path); err == nil {
+		t.Error(`Execute sheets with --delimiter "\n": want error, got nil`)
+	}
+}
+
 func TestRootFilterDelimiterRejectedForXLSX(t *testing.T) {
 	path := buildFixture(t, func(*excelize.File) {})
 	if _, err := run(t, "--delimiter", ";", ".Sheet1", path); err == nil {

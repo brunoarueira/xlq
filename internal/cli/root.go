@@ -92,11 +92,18 @@ func inputFormat(cmd *cobra.Command) (input.Format, error) {
 // rune(0) - input.Read and input.SheetNames both treat that as "use
 // the resolved format's own default delimiter," and reject a non-zero
 // one for a format that has no delimiter concept at all.
+//
+// Whether the flag was set is read from Changed, not from comparing
+// its value to "" - --delimiter "" is a flag the user did set, just to
+// an empty string, and that's exactly zero characters, not the "I
+// didn't pass this" case; it must fail the one-character check below
+// like any other wrong-length value, not silently fall back to the
+// format's default.
 func inputDelimiter(cmd *cobra.Command) (rune, error) {
-	s, _ := cmd.Flags().GetString("delimiter")
-	if s == "" {
+	if !cmd.Flags().Changed("delimiter") {
 		return 0, nil
 	}
+	s, _ := cmd.Flags().GetString("delimiter")
 	runes := []rune(s)
 	if len(runes) != 1 {
 		return 0, fmt.Errorf("--delimiter must be exactly one character, got %q", s)

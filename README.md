@@ -35,8 +35,10 @@ The input format (`xlsx`, `csv`, `tsv`, or `ods`) is picked from the
 file's extension; `--input-format` overrides that for a misnamed file
 or one with no recognizable extension. `--delimiter` overrides a
 csv/tsv file's own default field separator (comma, tab) with any
-single character - useful for a semicolon-separated export from a
-locale where comma is the decimal separator. It's an error alongside
+single character the CSV reader accepts (a double quote, carriage
+return, newline, or invalid character aren't valid delimiters) -
+useful for a semicolon-separated export from a locale where comma is
+the decimal separator. It's an error alongside
 an xlsx or ods input, which have no delimiter concept to override.
 
 Filters can address a sheet by name (`.Sheet1`, case-insensitive), and

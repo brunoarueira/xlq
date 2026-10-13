@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/xuri/excelize/v2"
 )
@@ -238,6 +239,26 @@ func TestSheetNamesDelimiterRejectedForXLSX(t *testing.T) {
 	buildXLSX(t, path)
 	if _, err := SheetNames(path, "", ';'); err == nil {
 		t.Error("SheetNames(xlsx, delim=';'): want error, got nil")
+	}
+}
+
+// TestDelimiterInvalidCharactersRejected guards against a delimiter
+// character encoding/csv itself would refuse (a double quote, carriage
+// return, newline, or invalid rune) only surfacing once a filter
+// actually reads the file - Read and SheetNames share validateDelimiter,
+// so both must reject the same characters the same way, not just
+// whichever one happens to parse the file.
+func TestDelimiterInvalidCharactersRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.csv")
+	buildCSV(t, path, "a,b\n1,2\n")
+
+	for _, delim := range []rune{'"', '\r', '\n', utf8.RuneError} {
+		if _, err := Read(path, "", delim); err == nil {
+			t.Errorf("Read(delim=%q): want error, got nil", delim)
+		}
+		if _, err := SheetNames(path, "", delim); err == nil {
+			t.Errorf("SheetNames(delim=%q): want error, got nil", delim)
+		}
 	}
 }
 
