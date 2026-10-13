@@ -1,6 +1,8 @@
 // Package output post-processes an eval.Eval result for display,
 // independent of the dense result shapes ADR-0008 defines - those stay
-// exactly as evaluated; this only reshapes a copy for printing.
+// exactly as evaluated; this only reshapes a copy for printing. See
+// also Table (table.go), which renders a result as an aligned table
+// instead of reshaping it for JSON.
 package output
 
 // Compact drops rows and columns with no values from v, recursing into
