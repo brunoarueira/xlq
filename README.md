@@ -134,6 +134,31 @@ xlq completion bash > $(brew --prefix)/etc/bash_completion.d/xlq
 positional arguments; `<filter>` itself isn't completed, since it
 isn't a fixed set of words.
 
+## Config file
+
+A YAML file can set defaults for any flag except `-i`/`--in-place`
+(see [ADR-0015](docs/adr/0015-config-file-for-default-flags.md)), so a
+flag you'd otherwise pass on every invocation can be set once instead.
+By default it's read from `os.UserConfigDir()/xlq/config.yaml` -
+`~/.config/xlq/config.yaml` on Linux, `~/Library/Application
+Support/xlq/config.yaml` on macOS, `%AppData%\xlq\config.yaml` on
+Windows - or from `--config <path>` instead. A missing file at the
+default location is fine (the feature is entirely opt-in); an
+explicitly-passed `--config` path that doesn't exist is an error.
+
+```yaml
+table: true
+input-format: csv
+```
+
+Keys match each flag's own long name exactly (`compact`,
+`compact-output`, `raw-output`, `table`, `csv`, `tsv`, `input-format`,
+`delimiter`) - an unrecognized key is a hard error, to catch a typo
+rather than silently ignore it. An explicitly-passed flag always wins
+over its config value; `-i` additionally suppresses every config value
+outright, so a config file never reaches - or breaks - an in-place
+edit.
+
 ## License
 
 MIT, see [`LICENSE`](LICENSE).
