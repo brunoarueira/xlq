@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
@@ -27,6 +28,11 @@ func TestResolveTargetValid(t *testing.T) {
 			"bracket-string sheet name",
 			filter.Field{Base: filter.Field{Base: filter.Identity{}, Name: "Q1 Report"}, Name: "Z99"},
 			"Q1 Report", "Z99",
+		},
+		{
+			"Excel's actual maximum address is in bounds",
+			filter.Field{Base: filter.Field{Base: filter.Identity{}, Name: "Sheet1"}, Name: "XFD1048576"},
+			"Sheet1", "XFD1048576",
 		},
 	}
 
@@ -55,6 +61,10 @@ func TestResolveTargetInvalid(t *testing.T) {
 		{"an index instead of a field for the cell", filter.Index{Base: filter.Field{Base: filter.Identity{}, Name: "Sheet1"}, N: 0}},
 		{"a pipe inside the target", filter.Pipe{Left: filter.Field{Base: filter.Identity{}, Name: "Sheet1"}, Right: filter.Records{}}},
 		{"a records step as the base instead of Identity", filter.Field{Base: filter.Field{Base: filter.Records{}, Name: "Sheet1"}, Name: "A1"}},
+		{"row 0 isn't a real A1 address", filter.Field{Base: filter.Field{Base: filter.Identity{}, Name: "Sheet1"}, Name: "A0"}},
+		{"row past Excel's maximum", filter.Field{Base: filter.Field{Base: filter.Identity{}, Name: "Sheet1"}, Name: "A1048577"}},
+		{"column past Excel's maximum (XFD)", filter.Field{Base: filter.Field{Base: filter.Identity{}, Name: "Sheet1"}, Name: "XFE1"}},
+		{"column letters longer than 3", filter.Field{Base: filter.Field{Base: filter.Identity{}, Name: "Sheet1"}, Name: "ABCD1"}},
 	}
 
 	for _, tc := range cases {
@@ -223,6 +233,123 @@ func TestWriteCellLeavesOriginalUntouchedOnFailure(t *testing.T) {
 	// temp file was ever created (resolving the sheet name happens
 	// before SaveAs).
 	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name() != filepath.Base(path) {
+			t.Errorf("unexpected leftover file in target directory: %s", e.Name())
+		}
+	}
+}
+
+// TestWriteCellFollowsSymlink confirms that editing through a symlink
+// updates the real target file and leaves the symlink itself intact -
+// not replaced by a regular file. os.Rename replaces a directory
+// entry, not a file: renaming the write's temp file directly over a
+// symlink's own name would turn the symlink into a plain file,
+// silently breaking it while leaving whatever it pointed at
+// untouched.
+func TestWriteCellFollowsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs elevated privileges on Windows")
+	}
+
+	realPath := build(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "original"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+	linkPath := filepath.Join(t.TempDir(), "link.xlsx")
+	if err := os.Symlink(realPath, linkPath); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	if err := WriteCell(linkPath, "Sheet1", "A1", "updated"); err != nil {
+		t.Fatalf("WriteCell: %v", err)
+	}
+
+	info, err := os.Lstat(linkPath)
+	if err != nil {
+		t.Fatalf("Lstat: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("linkPath is no longer a symlink after WriteCell - it was replaced by a regular file")
+	}
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		t.Fatalf("Readlink: %v", err)
+	}
+	if target != realPath {
+		t.Errorf("symlink now points to %q, want %q (unchanged)", target, realPath)
+	}
+
+	f, err := excelize.OpenFile(realPath)
+	if err != nil {
+		t.Fatalf("OpenFile(realPath): %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	got, err := f.GetCellValue("Sheet1", "A1")
+	if err != nil {
+		t.Fatalf("GetCellValue: %v", err)
+	}
+	if got != "updated" {
+		t.Errorf("the real target's A1 = %q, want %q", got, "updated")
+	}
+}
+
+// TestWriteCellFailureAfterStagingLeavesOriginalUntouched exercises a
+// failure that happens after the temp file has already been created
+// and written (SaveAs succeeds), not merely before staging begins
+// (unlike TestWriteCellLeavesOriginalUntouchedOnFailure, which fails
+// at the very first step, resolving the sheet name). The temp
+// directory's path is made to exceed excelize's own 207 UTF-16-unit
+// SaveAs limit, so SaveAs itself fails deterministically and
+// portably, with the already-created temp file still on disk at that
+// point - the same safety property (original untouched, temp file
+// cleaned up) must hold here too.
+func TestWriteCellFailureAfterStagingLeavesOriginalUntouched(t *testing.T) {
+	// excelize's SaveAs itself enforces the 207-character limit this
+	// test needs to trigger, so the fixture can't be created directly
+	// at its final, over-long path - build it short, then move it
+	// (a plain filesystem rename, which excelize's length check
+	// doesn't apply to) into the long directory.
+	shortPath := build(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "original"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+	longDir := filepath.Join(t.TempDir(), strings.Repeat("a", 220))
+	if err := os.MkdirAll(longDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	path := filepath.Join(longDir, "book.xlsx")
+	if err := os.Rename(shortPath, path); err != nil {
+		t.Fatalf("Rename (fixture): %v", err)
+	}
+
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	err = WriteCell(path, "Sheet1", "A1", "updated")
+	if err == nil {
+		t.Fatal("WriteCell with an over-long temp path: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "save") {
+		t.Errorf("error = %q, want it to report the save step failing", err.Error())
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Error("original file was modified despite the save failing")
+	}
+
+	entries, err := os.ReadDir(longDir)
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
