@@ -7,10 +7,19 @@ import (
 )
 
 // CSV renders v - any shape eval.Eval can produce - as comma-delimited
-// CSV text (RFC 4180, via encoding/csv.Writer - quoting and escaping
-// are that package's own, not hand-rolled). TSV is identical, tab-
-// delimited instead; both follow the flattening rules ADR-0013
-// decided:
+// text, via encoding/csv.Writer: quoting a field containing the
+// delimiter, a double quote, or a newline (doubling any quote inside
+// it) is that package's own behavior, not hand-rolled. Line endings
+// are encoding/csv's own default, a bare "\n" - a deliberate choice,
+// not merely accepting the default: RFC 4180 specifies CRLF, but
+// every other xlq output mode (JSON, --table) already uses a bare
+// "\n", matching Unix CLI convention; real-world CSV consumers
+// (Excel included) have handled LF-only CSV for decades regardless of
+// what the RFC says, and TSV was never an RFC 4180 format to begin
+// with, so this intentionally doesn't chase strict conformance to a
+// spec a tab-delimited sibling output couldn't follow anyway. TSV is
+// identical, tab-delimited instead; both follow the flattening rules
+// ADR-0013 decided:
 //
 //   - [][]any (a sheet grid, or a range): one row per grid row, in
 //     column order. No header row - the grid has no column names of

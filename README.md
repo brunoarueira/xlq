@@ -81,13 +81,15 @@ workbook). It's a different output mode entirely, not a JSON
 formatting tweak, so it can't be combined with `-c`/`-r`.
 
 `--csv`/`--tsv` (see [ADR-0013](docs/adr/0013-csv-tsv-output.md)) print
-proper RFC 4180 comma/tab-separated text instead of JSON. A sheet grid
-or range flattens positionally, with no header row; `records` gets a
-header row (its sorted field names) plus one row per record - pipe
-through `records` first when a header is wanted. The whole-workbook
-result is a clear error (no single tabular shape), not a guess.
-`--csv`/`--tsv`/`--table`/`-c`/`-r` are all mutually exclusive output
-modes.
+comma/tab-separated text instead of JSON, with `encoding/csv`'s own
+quoting and escaping. A sheet grid or range flattens positionally,
+with no header row; `records` gets a header row (its sorted field
+names) plus one row per record - pipe through `records` first when a
+header is wanted. The whole-workbook result is a clear error (no
+single tabular shape), not a guess. `--table`, `--csv`, and `--tsv`
+are mutually exclusive output modes, and each is also mutually
+exclusive with `-c`/`-r` (which only ever meant something for JSON) -
+but `-c` and `-r` themselves still compose freely with each other.
 
 ## Install
 

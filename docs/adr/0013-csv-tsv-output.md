@@ -21,18 +21,29 @@ land first - it has (merged as #39) - so this ADR makes the call.
 `--csv` and `--tsv` are discrete bool flags, matching the convention
 `-c`/`--compact-output` and `-r`/`--raw-output` already established
 (#32/#46) over a single `--output-format` enum - and the same
-convention `--table` (#13) already followed. All five of
-`--table`/`--csv`/`--tsv`/`-c`/`-r` are mutually exclusive: `--table`,
-`--csv`, and `--tsv` are different output *modes*, not JSON formatting
-tweaks, so combining any two is a CLI error, not a silent override.
+convention `--table` (#13) already followed. `--table`, `--csv`, and
+`--tsv` are three different output *modes*, mutually exclusive with
+each other, and each is also mutually exclusive with `-c`/`-r` (which
+only ever meant something for JSON output) - a CLI error, not a silent
+override, for any of those combinations. `-c` and `-r` themselves are
+not an output mode of their own, just a JSON-specific tweak, and still
+compose freely with each other (already established in #46) when
+neither `--table`, `--csv`, nor `--tsv` is set.
 
 The delimiter is fixed - comma for `--csv`, tab for `--tsv` - matching
-`internal/csv`'s own reader naming (`Read`/`ReadTSV`). Escaping is
-`encoding/csv.Writer`'s own (RFC 4180: a field containing the
-delimiter, a quote, or a newline is quoted, with doubled internal
-quotes) - not hand-rolled, the same way the reader side already
-delegates parsing to `encoding/csv.Reader` rather than a hand-rolled
-splitter.
+`internal/csv`'s own reader naming (`Read`/`ReadTSV`). Escaping (a
+field containing the delimiter, a double quote, or a newline is
+quoted, with doubled internal quotes) is `encoding/csv.Writer`'s own -
+not hand-rolled, the same way the reader side already delegates
+parsing to `encoding/csv.Reader` rather than a hand-rolled splitter.
+Line endings are that writer's own default, a bare `\n`, not RFC
+4180's CRLF - a deliberate choice: every other xlq output mode (JSON,
+`--table`) already uses a bare `\n`, matching Unix CLI convention,
+real-world CSV consumers have handled LF-only CSV for decades
+regardless of what the RFC specifies, and TSV was never an RFC 4180
+format to begin with - so "RFC 4180" isn't claimed as a conformance
+target here, just as the source of the quoting convention being
+followed.
 
 ### Flattening, by result shape
 
