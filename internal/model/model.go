@@ -139,16 +139,13 @@ type Row struct {
 // Sheet is one sparse sheet in a Workbook: only rows containing at
 // least one cell are present, ordered ascending by Index.
 //
-// Rows is shaped for laziness (docs/adr/0018-streaming-xlsx-reader.md):
-// ranging over it may one day read from disk and fail mid-stream,
-// which is why it yields an error alongside each Row rather than
-// being a plain slice. internal/xlsx's reader is the intended,
-// eventual producer that's genuinely backed by a live file and can
-// fail mid-stream; for now it still reads every row eagerly before
-// returning, same as every other producer (internal/csv, internal/ods,
-// a range reference, every test), all of which build from an
-// already-materialized slice and should use NewSheet below rather
-// than build this field by hand.
+// Rows is lazy (docs/adr/0018-streaming-xlsx-reader.md): ranging over
+// it may read from disk, and may fail mid-stream, which is why it
+// yields an error alongside each Row rather than being a plain slice.
+// internal/xlsx's reader is the only producer that's genuinely backed
+// by a live file; every other producer (internal/csv, internal/ods, a
+// range reference, every test) already has its rows as a plain slice
+// and should use NewSheet below rather than build this field by hand.
 //
 // There is deliberately no Dimensions method: every operation that
 // used to call one now tracks whatever bound it needs - a row count,
