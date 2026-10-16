@@ -126,12 +126,33 @@ No per-file override syntax - both flags already resolve to one
 value per invocation (an explicit override, or empty meaning
 "detect/default"), and that one value is used for every file's own
 `input.Read` call. A mix of formats across files (e.g. diffing an
-`.xlsx` against a `.csv`) is supported by this design: when neither
-flag is set, each file's format is still detected independently from
-its own extension, exactly as `input.Read` already does for the one
-file a single invocation can name today - this ADR doesn't change
-that per-file detection logic at all, just lets more than one file
-reach it in the same invocation.
+`.xlsx` against a `.csv`) is supported by this design: when *neither*
+flag resolves to a non-empty/non-zero value, each file's format is
+still detected independently from its own extension, exactly as
+`input.Read` already does for the one file a single invocation can
+name today - this ADR doesn't change that per-file detection logic at
+all, just lets more than one file reach it in the same invocation.
+
+That "neither flag set" qualifier matters in exactly the same way the
+table/csv/tsv guard's does: these two also resolve to their
+config-merged, effective value, not just what was explicitly typed. A
+persistent config `input-format` default forces *every* file in the
+set to that one format regardless of its own extension - misreading
+whichever file genuinely isn't that format, not an error, since
+`input.Read` has no way to tell "this came from a default" from "the
+user meant this file specifically." A persistent config `delimiter`
+default is worse: `input.validateDelimiter` already rejects a
+non-zero delimiter outright for `xlsx`/`ods` (no delimiter concept to
+override there), so it fails the whole invocation the moment it
+reaches whichever file in the set isn't `csv`/`tsv`. `--input-format
+""`, explicitly passed, clears an `input-format` default for one
+invocation (the same `Changed`-based escape hatch as `--table=false`);
+`delimiter` has no equivalent - `inputDelimiter` already treats an
+explicit empty value as a distinct, deliberately-rejected error case
+(ADR established back when `--delimiter` first shipped, #28), not a
+reset signal. A persistent `delimiter` default and a multi-file
+invocation that includes any `xlsx`/`ods` file are simply incompatible
+unless the config file itself is edited first.
 
 ### `sheets` is unaffected
 
