@@ -31,6 +31,7 @@ xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
 xlq --table '.Sheet1 | records' path/to/book.xlsx  # aligned table, not JSON
 xlq --csv '.Sheet1 | records' path/to/book.xlsx  # with a header row
 xlq --tsv '.Sheet1' path/to/book.xlsx            # positional, no header
+xlq '.Sheet1.A1' old.xlsx new.xlsx   # same filter on each file, results as an array
 xlq -i '.Sheet1.A1 = "done"' path/to/book.xlsx   # edit a cell in place (.xlsx only)
 xlq --version
 ```
@@ -99,6 +100,49 @@ instead of reading it: `<filter>` must be an assignment
 exactly one cell), not a pipeline. It prints nothing on success,
 matching `yq -i`'s own silence - the edit is the result. csv/tsv/ods
 have no writer yet, so `-i` only supports xlsx.
+
+Passing more than one `<file>` (see
+[ADR-0017](docs/adr/0017-multiple-input-files.md)) maps the *same*
+`<filter>` over each file independently - not a diff, just each file's
+own result placed at that file's own index - collecting them into a
+JSON array in file order:
+
+```sh
+xlq '.Sheet1 | records' old.xlsx new.xlsx
+# [ [ {old file's records...} ], [ {new file's records...} ] ]
+```
+
+A single file's result is completely unaffected by this - still
+printed bare, never wrapped in a one-element array. `--table`/`--csv`/
+`--tsv` and `-i` don't support more than one file (no single tabular
+shape to flatten N results into, and an in-place edit of more than one
+file is out of scope) - this includes a config-file default
+(`table: true`, etc., see below): it hits the same rejection a typed
+`--table` would, since there's no way to tell them apart by the time
+this check runs, so `--table=false` (or `--csv=false`/`--tsv=false`)
+is how to get plain JSON for one multi-file invocation despite that
+default. A read/parse error names which file (by position and path)
+failed.
+
+`--input-format`/`--delimiter` (typed or from a config default) apply
+to *every* file uniformly, not per-file - mixing formats across files
+(e.g. diffing an `.xlsx` against a `.csv`) only auto-detects correctly
+when neither resolves to a value, letting each file's own extension
+decide its format as usual. A config `input-format` default forces
+every file to that one *resolved* format regardless of its own
+extension - a file that isn't actually that format might get silently
+misread, or might fail outright with a read/parse error, depending on
+its actual content. A config `delimiter` default fails the moment any
+file *resolves* to `xlsx`/`ods` (whether from its own extension or
+from an `input-format` override putting it there), since those have no
+delimiter concept to override - pairing a delimiter default with an
+`input-format` override of `csv`/`tsv` avoids that conflict entirely,
+since nothing resolves to `xlsx`/`ods` either way. `--input-format ""`
+clears a config default for one invocation the same way `--table=false`
+does; `--delimiter ""` has no equivalent (an explicit empty delimiter is
+already its own error, not a reset) - a persistent `delimiter` default
+and mixing in an `.xlsx`/`.ods` file are simply incompatible short of
+editing the config file.
 
 ## Install
 
