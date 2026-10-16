@@ -38,12 +38,22 @@ deprecated at all - `brews` was the one soft-deprecation here, not a
 choice between two equally-supported options - so there's no future
 removal risk to plan around either.
 
-### No GoReleaser CLI version pin needed
+### The GoReleaser CLI version in CI is pinned, for a different reason than `brews` would have been
 
-Since `homebrew_casks` isn't deprecated, there's no analog to `brews`'
-removal risk to hedge against by pinning the GoReleaser CLI version in
-`release.yml` - it stays on `version: latest`, as it already was
-before this change.
+Migrating off `brews` removed the original reason to pin (an
+unannounced hard-removal of a soft-deprecated key) - `homebrew_casks`
+isn't deprecated, so that specific risk doesn't apply here. But
+writing the quarantine-removal hook below surfaced a *second*, more
+concrete reason to pin anyway: GoReleaser's `homebrew_casks` hook
+schema is already version-sensitive in practice, not just in theory -
+a newer, not-yet-released schema renames `hooks.post.install` to
+`install_steps` and replaces the Ruby `staged_path` method with a
+`{{ .StagedPath }}` GoReleaser template variable, discovered firsthand
+while getting this hook to actually validate (see below). `release.yml`
+is pinned to `v2.18.3` - the version this hook's exact syntax is
+verified against - so an unattended `latest` upgrade can't silently
+reintroduce that same breakage on some future release between now and
+whenever this pin is next deliberately revisited.
 
 ### A separate token, not the default `GITHUB_TOKEN`
 
@@ -115,7 +125,11 @@ than erroring. ADR-0006's "No package-manager publishing... yet"
 subsection is now out of date; this ADR is what changed it, without
 ADR-0006 itself being edited.
 
-Unlike the `brews` path this ADR initially (incorrectly) chose, this
-one has no known future-removal risk to track - `homebrew_casks` is
+Unlike the `brews` path this ADR initially (incorrectly) chose,
+`homebrew_casks` itself has no known removal risk to track - it's
 GoReleaser's currently-supported, non-deprecated mechanism for exactly
-this.
+this. The CLI version is still pinned, though, for the schema-drift
+reason above: upgrading past `v2.18.3` needs the quarantine hook's
+exact syntax re-verified against whatever version comes next, the
+same way getting it right against `v2.18.3` itself needed two
+corrections.
