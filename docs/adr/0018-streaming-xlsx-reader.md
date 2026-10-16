@@ -167,15 +167,18 @@ func lazySheet(path, name string, date1904 bool, dateStyles map[int]bool) model.
 }
 ```
 
-`date1904` (a workbook-wide property) and `dateStyles` (a cache keyed
-by style ID, not by any particular open `*excelize.File`) are read
-once, upfront, by `xlsx.Read` itself - which still opens the file once
-to get `f.GetSheetList()`/`f.GetWorkbookProps()`, exactly as today,
-then closes it immediately, before building these closures - and
-captured by every sheet's closure as plain values (`dateStyles`
-specifically as a shared, mutable map, captured *by reference*: every
-sheet's pass still benefits from a style-ID lookup another pass - of
-this sheet, or another one - already resolved, with no need for the
+`date1904` (a workbook-wide property) is read once, upfront, by
+`xlsx.Read` itself - which still opens the file once to get
+`f.GetSheetList()`/`f.GetWorkbookProps()`, exactly as today, then
+closes it immediately, before building these closures. `dateStyles`
+isn't read upfront at all - `xlsx.Read` creates it empty, the same way
+it does today, and it's populated lazily, one style ID at a time, by
+`isDateStyled` as cells are actually read, same as today. Both values
+are captured by every sheet's closure (`dateStyles` specifically as a
+shared, mutable, *initially empty* map, captured *by reference*, keyed
+by style ID rather than by any particular open `*excelize.File`):
+every sheet's pass still benefits from a style-ID lookup another pass -
+of this sheet, or another one - already resolved, with no need for the
 file itself to stay open for that sharing to work; this project has no
 concurrent sheet access anywhere, so a bare shared map needs no mutex).
 
@@ -207,7 +210,7 @@ Every existing `internal/eval` function that touches `sheet.Rows`
 needed checking individually - "make it lazy" doesn't uniformly speed
 up every operation, since some of them read the *whole* sheet by
 design, not by accident. `model.Sheet.Dimensions()` itself is **removed**
-as part of this: every one of its four callers (all in
+as part of this: every one of its five callers (all in
 `internal/eval`, nothing outside it - a handful of test files also
 call it purely as an assertion convenience, and switch to draining
 `Rows` directly) is rewritten below to track whatever bound it needs
@@ -240,8 +243,9 @@ caller does its own single-pass accumulation instead.
   `cellScalar`'s fix above. Genuine early exit, bounded by the range's
   own declared size - already separately capped by
   `maxExcelRow`/`maxExcelCol` (PR #55).
-- **`wholeColumn`** and **`sheetGrid`/`sheetRecords`** (`.Sheet1.B`,
-  `.Sheet1`, `records`) all currently call `sheet.Dimensions()` *then*
+- **`wholeColumn`**, **`sheetGrid`/`sheetRecords`**, and **`toJSON`**'s
+  own whole-workbook loop (`.Sheet1.B`, `.Sheet1`, `records`, bare `.`)
+  all currently call `sheet.Dimensions()` *then*
   iterate `sheet.Rows` separately - a free second pass today, since
   both read the same in-memory slice. Against a lazy `Rows`, that
   pattern would mean two *separate XML scans* instead of one (setting
