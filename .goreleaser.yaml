@@ -46,3 +46,31 @@ release:
   github:
     owner: brunoarueira
     name: xlq
+
+# See docs/adr/0016-homebrew-publishing.md: homebrew_casks, not the
+# soft-deprecated brews - it supports Linux too (on_macos/on_linux
+# blocks below, generated automatically from the archives above).
+homebrew_casks:
+  - name: xlq
+    binaries: [xlq]
+    repository:
+      owner: brunoarueira
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/brunoarueira/xlq"
+    description: "A jq/yq-style command-line processor for spreadsheet files (.xlsx, .csv, .tsv, .ods)"
+    commit_author:
+      name: github-actions[bot]
+      email: github-actions[bot]@users.noreply.github.com
+    # xlq's binaries aren't signed/notarized (see docs/adr/0016-homebrew-publishing.md).
+    # Without this, macOS quarantines a browser/brew-downloaded binary
+    # and Gatekeeper refuses to run it at all ("xlq is damaged and
+    # cannot be opened") - not a cosmetic nicety, per GoReleaser's own
+    # docs on this exact hook.
+    hooks:
+      post:
+        install: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/xlq"]
+          end

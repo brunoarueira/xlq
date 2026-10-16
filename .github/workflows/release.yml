@@ -83,7 +83,15 @@ jobs:
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
-          version: latest
+          # Pinned, not "latest": the homebrew_casks hooks.post.install
+          # syntax (see .goreleaser.yaml) is schema-version-sensitive -
+          # a newer, not-yet-released GoReleaser schema already renames
+          # this field and its template variable (docs/adr/0016-homebrew-publishing.md
+          # has the detail), discovered firsthand while writing this
+          # hook. An unpinned upgrade could silently reintroduce that
+          # exact breakage on some future release.
+          version: v2.18.3
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

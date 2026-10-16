@@ -102,6 +102,12 @@ have no writer yet, so `-i` only supports xlsx.
 
 ## Install
 
+On macOS or Linux, via Homebrew:
+
+```sh
+brew install brunoarueira/tap/xlq
+```
+
 Prebuilt binaries (macOS, Linux, Windows) are attached to each
 [release](https://github.com/brunoarueira/xlq/releases).
 
