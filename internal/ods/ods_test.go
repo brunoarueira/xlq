@@ -59,7 +59,7 @@ func buildODS(t *testing.T, contentXML string) string {
 
 func cellAt(t *testing.T, wb model.Workbook, sheetIndex, rowIndex, colIndex int) (model.Cell, bool) {
 	t.Helper()
-	for _, r := range wb.Sheets[sheetIndex].Rows {
+	for _, r := range rowsOf(t, wb.Sheets[sheetIndex]) {
 		if r.Index != rowIndex {
 			continue
 		}
@@ -70,6 +70,18 @@ func cellAt(t *testing.T, wb model.Workbook, sheetIndex, rowIndex, colIndex int)
 		}
 	}
 	return model.Cell{}, false
+}
+
+// rowsOf drains sheet's rows into a slice, failing the test on any
+// error - internal/ods's own reader never produces one once Read has
+// already succeeded, so this is purely a convenience for assertions.
+func rowsOf(t *testing.T, sheet model.Sheet) []model.Row {
+	t.Helper()
+	rows, err := model.CollectRows(sheet)
+	if err != nil {
+		t.Fatalf("CollectRows: %v", err)
+	}
+	return rows
 }
 
 func TestReadMissingFile(t *testing.T) {
@@ -297,8 +309,9 @@ func TestReadRepeatedBlankCellSkipsGap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if len(wb.Sheets[0].Rows[0].Cells) != 2 {
-		t.Fatalf("len(Cells) = %d, want 2 (the 5 blank repeats must not be materialized)", len(wb.Sheets[0].Rows[0].Cells))
+	rows := rowsOf(t, wb.Sheets[0])
+	if len(rows[0].Cells) != 2 {
+		t.Fatalf("len(Cells) = %d, want 2 (the 5 blank repeats must not be materialized)", len(rows[0].Cells))
 	}
 	c, ok := cellAt(t, wb, 0, 0, 6)
 	if !ok {
@@ -321,8 +334,9 @@ func TestReadRepeatedRealCellIsExpanded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if len(wb.Sheets[0].Rows[0].Cells) != 3 {
-		t.Fatalf("len(Cells) = %d, want 3", len(wb.Sheets[0].Rows[0].Cells))
+	rows := rowsOf(t, wb.Sheets[0])
+	if len(rows[0].Cells) != 3 {
+		t.Fatalf("len(Cells) = %d, want 3", len(rows[0].Cells))
 	}
 	for col := 0; col < 3; col++ {
 		c, ok := cellAt(t, wb, 0, 0, col)
@@ -353,8 +367,8 @@ func TestReadHugeBlankRowRepeatIsSkippedInstantly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if len(wb.Sheets[0].Rows) != 1 {
-		t.Fatalf("len(Rows) = %d, want 1 (the huge blank-repeat row must be skipped)", len(wb.Sheets[0].Rows))
+	if rows := rowsOf(t, wb.Sheets[0]); len(rows) != 1 {
+		t.Fatalf("len(rows) = %d, want 1 (the huge blank-repeat row must be skipped)", len(rows))
 	}
 }
 
@@ -440,8 +454,8 @@ func TestReadHeaderRowsWrapperIsFlattened(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if len(wb.Sheets[0].Rows) != 2 {
-		t.Fatalf("len(Rows) = %d, want 2 (the header row must not be dropped)", len(wb.Sheets[0].Rows))
+	if rows := rowsOf(t, wb.Sheets[0]); len(rows) != 2 {
+		t.Fatalf("len(rows) = %d, want 2 (the header row must not be dropped)", len(rows))
 	}
 	c, ok := cellAt(t, wb, 0, 0, 0)
 	if !ok {
@@ -473,8 +487,8 @@ func TestReadTableRowsWrapperIsFlattened(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if len(wb.Sheets[0].Rows) != 1 {
-		t.Fatalf("len(Rows) = %d, want 1", len(wb.Sheets[0].Rows))
+	if rows := rowsOf(t, wb.Sheets[0]); len(rows) != 1 {
+		t.Fatalf("len(rows) = %d, want 1", len(rows))
 	}
 	c, ok := cellAt(t, wb, 0, 0, 0)
 	if !ok {
@@ -502,8 +516,8 @@ func TestReadNestedRowGroupIsFlattened(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if len(wb.Sheets[0].Rows) != 1 {
-		t.Fatalf("len(Rows) = %d, want 1 (nested row-group must be flattened)", len(wb.Sheets[0].Rows))
+	if rows := rowsOf(t, wb.Sheets[0]); len(rows) != 1 {
+		t.Fatalf("len(rows) = %d, want 1 (nested row-group must be flattened)", len(rows))
 	}
 	c, ok := cellAt(t, wb, 0, 0, 0)
 	if !ok {

@@ -23,30 +23,24 @@ import (
 var testDate = time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
 
 func testWorkbook() model.Workbook {
-	sheet1 := model.Sheet{
-		Name: "Sheet1",
-		Rows: []model.Row{
-			{Index: 0, Cells: []model.Cell{
-				model.NewStringCell("hello").At(0),
-				model.NewNumberCell(42).At(1),
-			}},
-			{Index: 1, Cells: []model.Cell{
-				model.NewBoolCell(true).At(0),
-				model.NewEmptyCell().At(1),
-			}},
-			{Index: 2, Cells: []model.Cell{
-				model.NewDateCell(testDate).At(2),
-			}},
-		},
-	}
-	data := model.Sheet{
-		Name: "Data",
-		Rows: []model.Row{
-			{Index: 0, Cells: []model.Cell{
-				model.NewStringCell("from data sheet").At(0),
-			}},
-		},
-	}
+	sheet1 := model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("hello").At(0),
+			model.NewNumberCell(42).At(1),
+		}},
+		{Index: 1, Cells: []model.Cell{
+			model.NewBoolCell(true).At(0),
+			model.NewEmptyCell().At(1),
+		}},
+		{Index: 2, Cells: []model.Cell{
+			model.NewDateCell(testDate).At(2),
+		}},
+	})
+	data := model.NewSheet("Data", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("from data sheet").At(0),
+		}},
+	})
 	return model.Workbook{Sheets: []model.Sheet{sheet1, data}}
 }
 
@@ -144,6 +138,41 @@ func TestEvalIdentityReturnsWholeWorkbook(t *testing.T) {
 	}
 }
 
+// TestEvalEmptySheetShapesAreEmptyArraysNotNull guards against the
+// dense accumulators (sheetGrid, wholeColumn, wholeRow) reverting to a
+// nil slice for a sheet with no rows at all, which would marshal to
+// JSON null instead of the empty-array shape these operators have
+// always produced.
+func TestEvalEmptySheetShapesAreEmptyArraysNotNull(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Empty", nil)}}
+
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"bare empty sheet is an empty grid", ".Empty", [][]any{}},
+		{"whole column of an empty sheet is an empty array", ".Empty.A", []any{}},
+		{"whole row of an empty sheet is an empty array", ".Empty[1]", []any{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestEvalInvalid(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -197,14 +226,11 @@ func TestEvalAssignRejectedWithClearError(t *testing.T) {
 func TestEvalHugeDimensionsRejected(t *testing.T) {
 	huge := model.Workbook{
 		Sheets: []model.Sheet{
-			{
-				Name: "Sheet1",
-				Rows: []model.Row{
-					{Index: 1048575, Cells: []model.Cell{
-						model.NewNumberCell(1).At(16383),
-					}},
-				},
-			},
+			model.NewSheet("Sheet1", []model.Row{
+				{Index: 1048575, Cells: []model.Cell{
+					model.NewNumberCell(1).At(16383),
+				}},
+			}),
 		},
 	}
 
@@ -229,14 +255,11 @@ func TestEvalHugeDimensionsRejected(t *testing.T) {
 // once, can see this - a single sheet alone is always fine.
 func TestEvalCumulativeWorkbookBudgetRejected(t *testing.T) {
 	sheet := func(name string) model.Sheet {
-		return model.Sheet{
-			Name: name,
-			Rows: []model.Row{
-				{Index: 1999, Cells: []model.Cell{
-					model.NewNumberCell(1).At(1999),
-				}},
-			},
-		}
+		return model.NewSheet(name, []model.Row{
+			{Index: 1999, Cells: []model.Cell{
+				model.NewNumberCell(1).At(1999),
+			}},
+		})
 	}
 	wb := model.Workbook{Sheets: []model.Sheet{
 		sheet("Sheet1"), sheet("Sheet2"), sheet("Sheet3"),
@@ -333,15 +356,12 @@ func TestEvalRecordsInvalid(t *testing.T) {
 // there are 2 data rows in the fixture (indexes 1 and 3), with index 2
 // entirely absent.
 func TestEvalRecordsSkipsEntirelyBlankDataRows(t *testing.T) {
-	wb := model.Workbook{Sheets: []model.Sheet{{
-		Name: "Sheet1",
-		Rows: []model.Row{
-			{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0)}},
-			{Index: 1, Cells: []model.Cell{model.NewStringCell("Alice").At(0)}},
-			// Index 2 deliberately absent: an entirely blank row.
-			{Index: 3, Cells: []model.Cell{model.NewStringCell("Bob").At(0)}},
-		},
-	}}}
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0)}},
+		{Index: 1, Cells: []model.Cell{model.NewStringCell("Alice").At(0)}},
+		// Index 2 deliberately absent: an entirely blank row.
+		{Index: 3, Cells: []model.Cell{model.NewStringCell("Bob").At(0)}},
+	})}}
 	expr, err := filter.Parse(".Sheet1 | records")
 	if err != nil {
 		t.Fatalf("filter.Parse: %v", err)
@@ -362,14 +382,11 @@ func TestEvalRecordsSkipsEntirelyBlankDataRows(t *testing.T) {
 // cell is explicitly model.Empty, e.g. a formula that evaluated to
 // blank - still just noise, not a record worth emitting.
 func TestEvalRecordsSkipsRowPresentButAllCellsEmpty(t *testing.T) {
-	wb := model.Workbook{Sheets: []model.Sheet{{
-		Name: "Sheet1",
-		Rows: []model.Row{
-			{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0)}},
-			{Index: 1, Cells: []model.Cell{model.NewEmptyCell().At(0)}},
-			{Index: 2, Cells: []model.Cell{model.NewStringCell("Alice").At(0)}},
-		},
-	}}}
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0)}},
+		{Index: 1, Cells: []model.Cell{model.NewEmptyCell().At(0)}},
+		{Index: 2, Cells: []model.Cell{model.NewStringCell("Alice").At(0)}},
+	})}}
 	expr, err := filter.Parse(".Sheet1 | records")
 	if err != nil {
 		t.Fatalf("filter.Parse: %v", err)
@@ -391,13 +408,10 @@ func TestEvalRecordsSkipsRowPresentButAllCellsEmpty(t *testing.T) {
 // data row, which can't distinguish a correct lookup from a missing
 // key defaulting to null.
 func TestEvalRecordsNumericHeaderLookup(t *testing.T) {
-	wb := model.Workbook{Sheets: []model.Sheet{{
-		Name: "Sheet1",
-		Rows: []model.Row{
-			{Index: 0, Cells: []model.Cell{model.NewNumberCell(42).At(0)}},
-			{Index: 1, Cells: []model.Cell{model.NewStringCell("value under 42").At(0)}},
-		},
-	}}}
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{model.NewNumberCell(42).At(0)}},
+		{Index: 1, Cells: []model.Cell{model.NewStringCell("value under 42").At(0)}},
+	})}}
 	expr, err := filter.Parse(`.Sheet1 | records | .[0]["42"]`)
 	if err != nil {
 		t.Fatalf("filter.Parse: %v", err)
@@ -415,15 +429,12 @@ func TestEvalRecordsNumericHeaderLookup(t *testing.T) {
 // whose row 1 doesn't exist at all (not just blank-but-present) still
 // produces records, keyed by column letter for every column.
 func TestEvalRecordsMissingHeaderRowFallsBackToLetters(t *testing.T) {
-	wb := model.Workbook{Sheets: []model.Sheet{{
-		Name: "Sheet1",
-		Rows: []model.Row{
-			{Index: 1, Cells: []model.Cell{
-				model.NewStringCell("x").At(0),
-				model.NewStringCell("y").At(1),
-			}},
-		},
-	}}}
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 1, Cells: []model.Cell{
+			model.NewStringCell("x").At(0),
+			model.NewStringCell("y").At(1),
+		}},
+	})}}
 	expr, err := filter.Parse(".Sheet1 | records")
 	if err != nil {
 		t.Fatalf("filter.Parse: %v", err)
@@ -443,21 +454,18 @@ func TestEvalRecordsMissingHeaderRowFallsBackToLetters(t *testing.T) {
 // as a real export's two side-by-side tables can - would silently
 // collide in a plain Go map, keeping only the last-written value.
 func TestEvalRecordsDuplicateHeaderRejected(t *testing.T) {
-	wb := model.Workbook{Sheets: []model.Sheet{{
-		Name: "Sheet1",
-		Rows: []model.Row{
-			{Index: 0, Cells: []model.Cell{
-				model.NewStringCell("Post URL").At(0),
-				model.NewStringCell("Engagements").At(1),
-				model.NewStringCell("Post URL").At(2),
-			}},
-			{Index: 1, Cells: []model.Cell{
-				model.NewStringCell("a").At(0),
-				model.NewNumberCell(1).At(1),
-				model.NewStringCell("b").At(2),
-			}},
-		},
-	}}}
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("Post URL").At(0),
+			model.NewStringCell("Engagements").At(1),
+			model.NewStringCell("Post URL").At(2),
+		}},
+		{Index: 1, Cells: []model.Cell{
+			model.NewStringCell("a").At(0),
+			model.NewNumberCell(1).At(1),
+			model.NewStringCell("b").At(2),
+		}},
+	})}}
 	expr, err := filter.Parse(".Sheet1 | records")
 	if err != nil {
 		t.Fatalf("filter.Parse: %v", err)
@@ -472,15 +480,12 @@ func TestEvalRecordsDuplicateHeaderRejected(t *testing.T) {
 // treated as one collision, not two distinct headers - the duplicate
 // check runs on the final rendered key, not the pre-render cellValue().
 func TestEvalRecordsNumericAndTextHeaderCollide(t *testing.T) {
-	wb := model.Workbook{Sheets: []model.Sheet{{
-		Name: "Sheet1",
-		Rows: []model.Row{
-			{Index: 0, Cells: []model.Cell{
-				model.NewNumberCell(42).At(0),
-				model.NewStringCell("42").At(1),
-			}},
-		},
-	}}}
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewNumberCell(42).At(0),
+			model.NewStringCell("42").At(1),
+		}},
+	})}}
 	expr, err := filter.Parse(".Sheet1 | records")
 	if err != nil {
 		t.Fatalf("filter.Parse: %v", err)
@@ -497,14 +502,11 @@ func TestEvalRecordsNumericAndTextHeaderCollide(t *testing.T) {
 func TestEvalRecordsHugeDimensionsRejected(t *testing.T) {
 	huge := model.Workbook{
 		Sheets: []model.Sheet{
-			{
-				Name: "Sheet1",
-				Rows: []model.Row{
-					{Index: 1048575, Cells: []model.Cell{
-						model.NewNumberCell(1).At(16383),
-					}},
-				},
-			},
+			model.NewSheet("Sheet1", []model.Row{
+				{Index: 1048575, Cells: []model.Cell{
+					model.NewNumberCell(1).At(16383),
+				}},
+			}),
 		},
 	}
 	expr, err := filter.Parse(".Sheet1 | records")
@@ -608,20 +610,17 @@ func TestEvalRangeInvalid(t *testing.T) {
 // range's top-left, with real content well outside the range's bottom-
 // right corner so nothing else keeps that corner alive by accident.
 func TestEvalRangePreservesDeclaredShapeOverSparseContent(t *testing.T) {
-	wb := model.Workbook{Sheets: []model.Sheet{{
-		Name: "Sheet1",
-		Rows: []model.Row{
-			{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0)}},
-			// Column A only: B and C are blank in every row of the
-			// range, so nothing but the anchor-cell logic keeps them
-			// present at all.
-			{Index: 1, Cells: []model.Cell{model.NewStringCell("Alice").At(0)}},
-			// Real content far outside the "A1:C3" range below, so it
-			// can't accidentally anchor that range's own bottom-right
-			// corner - only the anchor-cell logic can.
-			{Index: 50, Cells: []model.Cell{model.NewStringCell("elsewhere").At(50)}},
-		},
-	}}}
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0)}},
+		// Column A only: B and C are blank in every row of the
+		// range, so nothing but the anchor-cell logic keeps them
+		// present at all.
+		{Index: 1, Cells: []model.Cell{model.NewStringCell("Alice").At(0)}},
+		// Real content far outside the "A1:C3" range below, so it
+		// can't accidentally anchor that range's own bottom-right
+		// corner - only the anchor-cell logic can.
+		{Index: 50, Cells: []model.Cell{model.NewStringCell("elsewhere").At(50)}},
+	})}}
 
 	expr, err := filter.Parse(`.Sheet1["A1:C3"]`)
 	if err != nil {
@@ -668,29 +667,26 @@ func TestEvalRangePreservesDeclaredShapeOverSparseContent(t *testing.T) {
 // collides on the duplicate headers; a range that isolates one
 // table's rows and columns first resolves it.
 func TestEvalRangeComposesWithRecordsForMultiTableSheet(t *testing.T) {
-	wb := model.Workbook{Sheets: []model.Sheet{{
-		Name: "TOP POSTS",
-		Rows: []model.Row{
-			{Index: 0, Cells: []model.Cell{model.NewStringCell("Maximum of 50 posts").At(0)}},
-			// Index 1 deliberately absent: a blank separator row.
-			{Index: 2, Cells: []model.Cell{
-				model.NewStringCell("Post URL").At(0),
-				model.NewStringCell("Date").At(1),
-				model.NewStringCell("Engagements").At(2),
-				model.NewStringCell("Post URL").At(4),
-				model.NewStringCell("Date").At(5),
-				model.NewStringCell("Impressions").At(6),
-			}},
-			{Index: 3, Cells: []model.Cell{
-				model.NewStringCell("url1").At(0),
-				model.NewStringCell("d1").At(1),
-				model.NewNumberCell(10).At(2),
-				model.NewStringCell("url2").At(4),
-				model.NewStringCell("d2").At(5),
-				model.NewNumberCell(20).At(6),
-			}},
-		},
-	}}}
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("TOP POSTS", []model.Row{
+		{Index: 0, Cells: []model.Cell{model.NewStringCell("Maximum of 50 posts").At(0)}},
+		// Index 1 deliberately absent: a blank separator row.
+		{Index: 2, Cells: []model.Cell{
+			model.NewStringCell("Post URL").At(0),
+			model.NewStringCell("Date").At(1),
+			model.NewStringCell("Engagements").At(2),
+			model.NewStringCell("Post URL").At(4),
+			model.NewStringCell("Date").At(5),
+			model.NewStringCell("Impressions").At(6),
+		}},
+		{Index: 3, Cells: []model.Cell{
+			model.NewStringCell("url1").At(0),
+			model.NewStringCell("d1").At(1),
+			model.NewNumberCell(10).At(2),
+			model.NewStringCell("url2").At(4),
+			model.NewStringCell("d2").At(5),
+			model.NewNumberCell(20).At(6),
+		}},
+	})}}
 
 	// records on the whole sheet uses row 0 (the title), not row 2 -
 	// no error, but useless: every column but A falls back to a
@@ -736,12 +732,9 @@ func TestEvalRangeComposesWithRecordsForMultiTableSheet(t *testing.T) {
 // a single real cell at the range's top-left with a declared bottom-
 // right corner at Excel's actual maximum address is still rejected.
 func TestEvalRangeHugeDeclaredSizeRejected(t *testing.T) {
-	wb := model.Workbook{Sheets: []model.Sheet{{
-		Name: "Sheet1",
-		Rows: []model.Row{
-			{Index: 0, Cells: []model.Cell{model.NewStringCell("x").At(0)}},
-		},
-	}}}
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{model.NewStringCell("x").At(0)}},
+	})}}
 	expr, err := filter.Parse(`.Sheet1["A1:XFD1048576"]`)
 	if err != nil {
 		t.Fatalf("filter.Parse: %v", err)
@@ -756,18 +749,14 @@ func TestEvalRangeHugeDeclaredSizeRejected(t *testing.T) {
 // endpoint has no upper bound of its own beyond "non-zero", so nothing
 // stopped a filter string alone (no malicious file needed) from
 // declaring a billion-row range. wholeColumn - unlike sheetGrid/
-// sheetRecords - allocates a slice sized from Dimensions() with no
-// maxDenseCells check at all, so ".A" on such a range would have tried
-// to allocate a billion-element slice outright. The row bound in
-// parseCellReference must reject this before sheetRange ever builds
-// that Dimensions() value, not after.
+// sheetRecords - has no maxDenseCells check at all, so ".A" on such a
+// range would have tried to grow its result to a billion elements
+// outright. The row bound in parseCellReference must reject this
+// before sheetRange ever builds a range that wide, not after.
 func TestEvalRangeRowBeyondExcelLimitRejectedBeforeColumnAllocation(t *testing.T) {
-	wb := model.Workbook{Sheets: []model.Sheet{{
-		Name: "Sheet1",
-		Rows: []model.Row{
-			{Index: 0, Cells: []model.Cell{model.NewStringCell("x").At(0)}},
-		},
-	}}}
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{model.NewStringCell("x").At(0)}},
+	})}}
 	expr, err := filter.Parse(`.Sheet1["A1:A1000000000"].A`)
 	if err != nil {
 		t.Fatalf("filter.Parse: %v", err)

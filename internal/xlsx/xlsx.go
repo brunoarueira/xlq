@@ -77,6 +77,11 @@ func SheetNames(path string) ([]string, error) {
 	return f.GetSheetList(), nil
 }
 
+// readSheet still reads every row eagerly, exactly as before - this is
+// an intermediate step adapting to model.Sheet's new, lazy-shaped
+// Rows (docs/adr/0018-streaming-xlsx-reader.md) without yet making
+// this package's own reading genuinely lazy, which is its own,
+// separate change.
 func readSheet(f *excelize.File, name string, date1904 bool, dateStyles map[int]bool) (model.Sheet, error) {
 	rows, err := f.Rows(name)
 	if err != nil {
@@ -84,7 +89,7 @@ func readSheet(f *excelize.File, name string, date1904 bool, dateStyles map[int]
 	}
 	defer func() { _ = rows.Close() }()
 
-	sheet := model.Sheet{Name: name}
+	var sheetRows []model.Row
 	// excelize's row iterator yields one iteration per row *number*
 	// (padding with an empty Columns() result for any row the sheet XML
 	// omits entirely, e.g. a wholly blank row 2 between rows 1 and 3),
@@ -107,13 +112,13 @@ func readSheet(f *excelize.File, name string, date1904 bool, dateStyles map[int]
 			}
 		}
 		if len(cells) > 0 {
-			sheet.Rows = append(sheet.Rows, model.Row{Index: rowIndex, Cells: cells})
+			sheetRows = append(sheetRows, model.Row{Index: rowIndex, Cells: cells})
 		}
 	}
 	if err := rows.Error(); err != nil {
 		return model.Sheet{}, err
 	}
-	return sheet, nil
+	return model.NewSheet(name, sheetRows), nil
 }
 
 // readCell reads the cell at (colIndex, rowIndex) (both 0-based), given
