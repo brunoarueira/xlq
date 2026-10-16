@@ -36,7 +36,7 @@ request.
 Versioning is a single `VERSION` file at the repo root. Bump it in a
 PR to `main`; once merged, `.github/workflows/release.yml` tags
 `v<version>`, cross-compiles binaries, publishes the GitHub Release,
-and pushes a Homebrew formula to
+and pushes a Homebrew cask to
 [`brunoarueira/homebrew-tap`](https://github.com/brunoarueira/homebrew-tap)
 automatically. See [ADR-0006](docs/adr/0006-release-automation.md) and,
 for the Homebrew piece specifically,
@@ -49,11 +49,11 @@ access to both repos, **before the next `VERSION` bump**: create a
 fine-grained personal access token scoped to
 `brunoarueira/homebrew-tap` with Contents: read and write, then add it
 as a secret named `HOMEBREW_TAP_GITHUB_TOKEN` in this repo's settings.
-Without it, GoReleaser's `brews` step has no way to push to the tap
-repo and the release run fails there - whether the binaries/checksums/
-GitHub Release from earlier in that same run still end up published
-despite that failure isn't confirmed, so don't rely on a partial
-success; set the secret up first.
+Without it, GoReleaser's `homebrew_casks` step has no way to push to
+the tap repo and the release run fails there - whether the
+binaries/checksums/GitHub Release from earlier in that same run still
+end up published despite that failure isn't confirmed, so don't rely
+on a partial success; set the secret up first.
 
 ## License
 

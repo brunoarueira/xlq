@@ -83,14 +83,7 @@ jobs:
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
-          # Pinned, not "latest": GoReleaser soft-deprecated the `brews`
-          # config key this release uses (see .goreleaser.yaml) in favor
-          # of `homebrew_casks` - which isn't a fit for xlq (Casks are a
-          # macOS-only Homebrew mechanism, with no Linuxbrew support,
-          # unlike a Formula). `brews` still works as of this version,
-          # just with a warning; pinning avoids a silent future
-          # GoReleaser upgrade hard-removing it mid-release.
-          version: v2.18.3
+          version: latest
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

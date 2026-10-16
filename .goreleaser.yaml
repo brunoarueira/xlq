@@ -47,24 +47,19 @@ release:
     owner: brunoarueira
     name: xlq
 
-# See docs/adr/0016-homebrew-publishing.md: brews (not GoReleaser's
-# newer homebrew_casks) deliberately, since Casks have no Linuxbrew
-# support and xlq ships Linux binaries too.
-brews:
+# See docs/adr/0016-homebrew-publishing.md: homebrew_casks, not the
+# soft-deprecated brews - it supports Linux too (on_macos/on_linux
+# blocks below, generated automatically from the archives above).
+homebrew_casks:
   - name: xlq
+    binaries: [xlq]
     repository:
       owner: brunoarueira
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
     homepage: "https://github.com/brunoarueira/xlq"
     description: "A jq/yq-style command-line processor for spreadsheet files (.xlsx, .csv, .tsv, .ods)"
-    license: "MIT"
     commit_author:
       name: github-actions[bot]
       email: github-actions[bot]@users.noreply.github.com
-    test: |
-      system "#{bin}/xlq --version"
-    install: |
-      bin.install "xlq"

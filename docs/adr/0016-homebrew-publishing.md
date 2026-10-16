@@ -20,33 +20,30 @@ it.
 
 ## Decision
 
-### `brews`, not GoReleaser's `homebrew_casks`
+### `homebrew_casks`, not GoReleaser's older `brews`
 
 GoReleaser soft-deprecated `brews` (its longstanding Homebrew Formula
-publisher) in favor of `homebrew_casks`, now recommending Casks
-generally for "binary distribution," not just GUI `.app` bundles.
-Casks are a macOS-only Homebrew extension, though - Linuxbrew doesn't
-support them at all - while xlq ships Linux binaries (ADR-0006) that a
-Homebrew Formula installs there exactly as well as on macOS. `brews`
-was kept deliberately for this reason: a Cask-based tap would silently
-drop Linux support for `brew install`, where a Formula doesn't.
-`brews` still works as of the pinned GoReleaser version - confirmed
-locally: `goreleaser check` and `goreleaser release --snapshot
---clean --skip=publish` both only warn about the deprecated key, they
-don't fail on it.
+publisher) in favor of `homebrew_casks`. An earlier version of this
+decision kept `brews` anyway, on the belief that Casks only work on
+macOS - that belief was wrong, caught in review, and is worth
+recording precisely since it reverses the actual decision: Homebrew
+Casks support Linux too, via `on_macos`/`on_linux` blocks inside the
+same cask, and GoReleaser already generates exactly that split
+automatically from whichever `goos` targets `builds`/`archives`
+produce - confirmed locally (`goreleaser release --snapshot --clean
+--skip=publish`), the generated `Casks/xlq.rb` has both an `on_macos`
+block (arm/intel) and an `on_linux` block (arm/intel), covering every
+archive this project actually builds. `homebrew_casks` is also not
+deprecated at all - `brews` was the one soft-deprecation here, not a
+choice between two equally-supported options - so there's no future
+removal risk to plan around either.
 
-### The GoReleaser CLI version in CI is pinned, not `latest`
+### No GoReleaser CLI version pin needed
 
-`release.yml`'s GoReleaser step previously used `version: latest`.
-Since `brews` is explicitly marked for eventual removal, an
-unannounced future GoReleaser release could drop it entirely, silently
-breaking the very next tag's release run with no warning beforehand.
-Pinned instead to the exact version confirmed to still support it
-(`v2.18.3`, the actual latest release as of this decision - verified
-via `gh api repos/goreleaser/goreleaser/releases/latest`), so
-upgrading past it - and re-verifying `brews` still works, or migrating
-to whatever replaces it - becomes a deliberate, reviewed step instead
-of something that happens automatically the next time a release runs.
+Since `homebrew_casks` isn't deprecated, there's no analog to `brews`'
+removal risk to hedge against by pinning the GoReleaser CLI version in
+`release.yml` - it stays on `version: latest`, as it already was
+before this change.
 
 ### A separate token, not the default `GITHUB_TOKEN`
 
@@ -61,25 +58,37 @@ wiring up that token is manual, one-time setup outside any PR's reach
 - documented in `CONTRIBUTING.md`'s Releasing section as an
 operational step, not decided here as a design choice.
 
-### Formula layout
+### Cask layout
 
-`directory: Formula` (Homebrew's own convention for where a tap's
-formula files live), `install`/`test` blocks matching every other
-single-binary Homebrew formula (`bin.install "xlq"`, `system
-"#{bin}/xlq --version"`), `license: "MIT"` matching ADR-0003.
+`binaries: [xlq]` (the plural form - `binary:`, singular, is itself
+separately deprecated as of GoReleaser 2.12.6), `name`/`homepage`/
+`description` matching `.goreleaser.yaml`'s existing `release` block
+conventions, no `directory:` override (`Casks/`, the default, is
+already Homebrew's own convention for a tap's cask files - unlike a
+Formula, which needed an explicit `directory: Formula`).
+
+### Explicitly deferred
+
+- A macOS quarantine-removal post-install hook, which GoReleaser's own
+  `homebrew_casks` docs mention as sometimes needed for an unsigned
+  binary. xlq's binaries aren't signed or notarized (nothing in
+  ADR-0006 does that), so this may eventually matter for a smooth
+  first-run experience on macOS - worth revisiting if it turns out to
+  be needed in practice, not decided here.
+- A `test` block equivalent to the Formula mechanism's `test do ...
+  end` - `homebrew_casks`' schema doesn't document one the way `brews`
+  did.
 
 ## Consequences
 
 `brew install brunoarueira/tap/xlq` works once a release ships through
-the updated workflow, for both macOS and Linux - not Windows, since
-Homebrew doesn't run there at all, which isn't a gap this ADR needs to
-address. ADR-0006's "No package-manager publishing... yet" subsection
-is now out of date; this ADR is what changed it, without ADR-0006
-itself being edited.
+the updated workflow, for both macOS and Linux - not natively on
+Windows (Homebrew itself doesn't run there outside WSL2), which isn't
+a gap this ADR needs to address. ADR-0006's "No package-manager
+publishing... yet" subsection is now out of date; this ADR is what
+changed it, without ADR-0006 itself being edited.
 
-`brews` being soft-deprecated means this isn't an indefinitely stable
-choice: if GoReleaser hard-removes it in some future release,
-upgrading past the pin here needs a fresh look - migrate to whatever
-replaces it for cross-platform CLI distribution, or re-evaluate Casks
-if Linuxbrew ever gains support - tracked as a reason to revisit this
-decision later, not a problem to solve now.
+Unlike the `brews` path this ADR initially (incorrectly) chose, this
+one has no known future-removal risk to track - `homebrew_casks` is
+GoReleaser's currently-supported, non-deprecated mechanism for exactly
+this.
