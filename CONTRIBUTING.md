@@ -38,7 +38,9 @@ PR to `main`; once merged, `.github/workflows/release.yml` tags
 `v<version>`, cross-compiles binaries, publishes the GitHub Release,
 and pushes a Homebrew formula to
 [`brunoarueira/homebrew-tap`](https://github.com/brunoarueira/homebrew-tap)
-automatically. See [ADR-0006](docs/adr/0006-release-automation.md).
+automatically. See [ADR-0006](docs/adr/0006-release-automation.md) and,
+for the Homebrew piece specifically,
+[ADR-0016](docs/adr/0016-homebrew-publishing.md).
 
 The Homebrew step needs a `HOMEBREW_TAP_GITHUB_TOKEN` repository
 secret - the default `GITHUB_TOKEN` only has write access to this

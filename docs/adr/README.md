@@ -21,6 +21,7 @@ xlq, using the format described in
 | [0013](0013-csv-tsv-output.md) | CSV/TSV output: flattening rules, header row, delimiter |
 | [0014](0014-in-place-editing.md) | In-place `.xlsx` editing: assignment grammar and the write path |
 | [0015](0015-config-file-for-default-flags.md) | Config file for default flags: location, format, precedence |
+| [0016](0016-homebrew-publishing.md) | Homebrew package publishing via GoReleaser (supersedes ADR-0006's "not yet") |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is

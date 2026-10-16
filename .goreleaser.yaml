@@ -47,6 +47,9 @@ release:
     owner: brunoarueira
     name: xlq
 
+# See docs/adr/0016-homebrew-publishing.md: brews (not GoReleaser's
+# newer homebrew_casks) deliberately, since Casks have no Linuxbrew
+# support and xlq ships Linux binaries too.
 brews:
   - name: xlq
     repository:
