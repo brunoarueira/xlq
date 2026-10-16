@@ -13,7 +13,7 @@ import (
 // NewRootCommand builds the xlq root command and its subcommands.
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "xlq <filter> <file>",
+		Use:   "xlq <filter> <file>...",
 		Short: "xlq is a command-line spreadsheet processor",
 		Long: "xlq is a jq/yq-style command-line processor for spreadsheet files.\n\n" +
 			"<filter> is evaluated against <file> - see\n" +
@@ -24,6 +24,11 @@ func NewRootCommand() *cobra.Command {
 			"<file>'s format (xlsx, csv, tsv, ods) is picked from its extension;\n" +
 			"use --input-format to override that for a misnamed file, and\n" +
 			"--delimiter to override a csv/tsv file's field separator.\n\n" +
+			"More than one <file> maps the same <filter> over each one\n" +
+			"independently, collecting the results into a JSON array in file\n" +
+			"order - useful for diffing two exports; --table/--csv/--tsv and\n" +
+			"-i don't support more than one file - see\n" +
+			"docs/adr/0017-multiple-input-files.md.\n\n" +
 			"-i/--in-place edits <file> instead of reading it: <filter> must be\n" +
 			"an assignment (\"path = value\"), and only .xlsx is supported - see\n" +
 			"docs/adr/0014-in-place-editing.md.\n\n" +
@@ -39,11 +44,12 @@ func NewRootCommand() *cobra.Command {
 			"  xlq --csv '.Sheet1 | records' report.xlsx\n" +
 			"  xlq --input-format csv '.Sheet1' report.txt\n" +
 			"  xlq --delimiter ';' '.Sheet1' report.csv\n" +
+			"  xlq '.Sheet1.A1' old.xlsx new.xlsx\n" +
 			`  xlq -i '.Sheet1.A1 = "done"' report.xlsx` + "\n" +
 			"  xlq --config ~/my-xlq.yaml '.Sheet1' report.xlsx",
 		Version: version.Version,
 		Args: func(cmd *cobra.Command, args []string) error {
-			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+			if err := cobra.MinimumNArgs(2)(cmd, args); err != nil {
 				return fmt.Errorf("%w\n\nRun 'xlq --help' for usage", err)
 			}
 			return nil
@@ -71,9 +77,12 @@ func NewRootCommand() *cobra.Command {
 				if compactData || compactJSON || rawOutput || table || csvOut || tsvOut {
 					return fmt.Errorf("--in-place cannot be combined with --compact/--compact-output/--raw-output/--table/--csv/--tsv - an in-place edit prints nothing")
 				}
+				if len(args) != 2 {
+					return fmt.Errorf("--in-place requires exactly one file, got %d", len(args)-1)
+				}
 				return runInPlace(args[0], args[1], format, delim)
 			}
-			return runFilter(cmd, args[0], args[1], format, delim, outputOptions{
+			return runFilter(cmd, args[0], args[1:], format, delim, outputOptions{
 				compactData: compactData,
 				compactJSON: compactJSON,
 				rawOutput:   rawOutput,

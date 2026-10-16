@@ -38,7 +38,21 @@ type outputOptions struct {
 // validate rejects a combination of output modes that don't compose:
 // table/csv/tsv are mutually exclusive with each other and with
 // compactJSON/rawOutput, which only ever meant something for JSON.
-func (o outputOptions) validate() error {
+// fileCount additionally rejects table/csv/tsv for more than one file
+// (docs/adr/0017-multiple-input-files.md): both already have a case
+// for a plain []any ("a single row or column," one line per element),
+// and a multi-file results array is structurally identical to that -
+// without this check, --table would silently flatten each file's
+// entire result into one mangled cell instead of erroring, the same
+// way ADR-0013 already rejects a whole workbook's CSV output rather
+// than guess at a flattening. This checks o's fields directly, which
+// already hold each flag's effective, config-merged value by the time
+// RunE reads them - not just what was explicitly typed - so a config
+// table/csv/tsv default (ADR-0015) hits this the same way an explicit
+// flag would; --table=false (etc.) is the escape hatch for one
+// invocation, via the same Changed-based skip mergeConfigDefaults
+// already uses.
+func (o outputOptions) validate(fileCount int) error {
 	modes := 0
 	for _, set := range []bool{o.table, o.csv, o.tsv} {
 		if set {
@@ -51,18 +65,30 @@ func (o outputOptions) validate() error {
 	if modes == 1 && (o.compactJSON || o.rawOutput) {
 		return fmt.Errorf("--table/--csv/--tsv cannot be combined with --compact-output/--raw-output, which only apply to JSON output")
 	}
+	if modes == 1 && fileCount > 1 {
+		return fmt.Errorf("--table/--csv/--tsv don't support multiple files - no single tabular shape for %d independent results; use JSON, or run xlq once per file", fileCount)
+	}
 	return nil
 }
 
-// runFilter parses filterSrc, evaluates it against the workbook at path
-// (per docs/adr/0008-filter-grammar-v1.md), and prints the result as
-// JSON by default, or in whichever mode opts selects instead (a table,
-// CSV, or TSV; or for a string result under opts.rawOutput, bare
-// text). format and delim pick and configure path's reader
-// (internal/input); an empty format detects one from path's extension,
-// and delim(0) keeps that format's own default field delimiter.
-func runFilter(cmd *cobra.Command, filterSrc, path string, format input.Format, delim rune, opts outputOptions) error {
-	if err := opts.validate(); err != nil {
+// runFilter parses filterSrc and evaluates it against the workbook at
+// each of paths independently (per docs/adr/0008-filter-grammar-v1.md
+// for evaluation, docs/adr/0017-multiple-input-files.md for more than
+// one path), printing the result as JSON by default, or in whichever
+// mode opts selects instead (a table, CSV, or TSV; or for a string
+// result under opts.rawOutput, bare text). format and delim pick and
+// configure every path's reader (internal/input) uniformly; an empty
+// format detects one from each path's own extension, and delim(0)
+// keeps each format's own default field delimiter.
+//
+// For exactly one path, the result is exactly what it always was -
+// unwrapped, with unwrapped errors - matching ADR-0017's promise that
+// a single-file invocation is completely unchanged. For more than one,
+// the top-level result is a JSON array of each path's own result, in
+// argument order, and a read/eval error names which path (by position
+// and value) failed.
+func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format input.Format, delim rune, opts outputOptions) error {
+	if err := opts.validate(len(paths)); err != nil {
 		return err
 	}
 
@@ -71,18 +97,33 @@ func runFilter(cmd *cobra.Command, filterSrc, path string, format input.Format, 
 		return err
 	}
 
-	wb, err := input.Read(path, format, delim)
-	if err != nil {
-		return err
+	results := make([]any, len(paths))
+	for i, path := range paths {
+		wb, err := input.Read(path, format, delim)
+		if err != nil {
+			if len(paths) > 1 {
+				return fmt.Errorf("file %d (%s): %w", i+1, path, err)
+			}
+			return err
+		}
+
+		r, err := eval.Eval(expr, wb)
+		if err != nil {
+			if len(paths) > 1 {
+				return fmt.Errorf("file %d (%s): %w", i+1, path, err)
+			}
+			return err
+		}
+
+		if opts.compactData {
+			r = output.Compact(r)
+		}
+		results[i] = r
 	}
 
-	result, err := eval.Eval(expr, wb)
-	if err != nil {
-		return err
-	}
-
-	if opts.compactData {
-		result = output.Compact(result)
+	result := results[0]
+	if len(paths) > 1 {
+		result = results
 	}
 
 	switch {
