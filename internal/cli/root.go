@@ -10,6 +10,22 @@ import (
 	"github.com/brunoarueira/xlq/internal/version"
 )
 
+// adrURL is the base of a stable link to an ADR's own file, for any
+// text that ships inside the compiled binary (--help, flag
+// descriptions) rather than being read from a checkout or GitHub's own
+// repo browser. A local "docs/adr/NNNN-....md" path - which every
+// internal Go doc comment and every Markdown file in this repo still
+// uses, deliberately, since those are read from a checkout or
+// GitHub's own rendering of this repo, where a relative link already
+// resolves correctly - is dead for anyone who installed xlq via `go
+// install`, a release tarball, or Homebrew: none of those ship a
+// docs/ directory alongside the binary at all. main, not a tagged
+// version, is safe to link because an ADR's own content never changes
+// after it's Accepted (CONTRIBUTING.md's own convention - a later
+// decision is a new ADR, not an edit to an old one), so any version of
+// xlq and this link always agree on what a given ADR number says.
+const adrURL = "https://github.com/brunoarueira/xlq/blob/main/docs/adr/"
+
 // NewRootCommand builds the xlq root command and its subcommands.
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
@@ -17,10 +33,11 @@ func NewRootCommand() *cobra.Command {
 		Short: "xlq is a command-line spreadsheet processor",
 		Long: "xlq is a jq/yq-style command-line processor for spreadsheet files.\n\n" +
 			"<filter> is evaluated against <file> - see\n" +
-			"docs/adr/0008-filter-grammar-v1.md (and the grammar correction in\n" +
-			"docs/adr/0009-correct-filter-grammar-ebnf.md) for the v1 grammar -\n" +
-			"and the result is printed as JSON, unless --table, --csv, or\n" +
-			"--tsv asks for something else instead.\n\n" +
+			adrURL + "0008-filter-grammar-v1.md\n" +
+			"- and the grammar correction in\n" +
+			adrURL + "0009-correct-filter-grammar-ebnf.md\n" +
+			"- for the v1 grammar. The result is printed as JSON, unless\n" +
+			"--table, --csv, or --tsv asks for something else instead.\n\n" +
 			"<file>'s format (xlsx, csv, tsv, ods) is picked from its extension;\n" +
 			"use --input-format to override that for a misnamed file, and\n" +
 			"--delimiter to override a csv/tsv file's field separator.\n\n" +
@@ -28,13 +45,13 @@ func NewRootCommand() *cobra.Command {
 			"independently, collecting the results into a JSON array in file\n" +
 			"order - useful for diffing two exports; --table/--csv/--tsv and\n" +
 			"-i don't support more than one file - see\n" +
-			"docs/adr/0017-multiple-input-files.md.\n\n" +
+			adrURL + "0017-multiple-input-files.md\n\n" +
 			"-i/--in-place edits <file> instead of reading it: <filter> must be\n" +
 			"an assignment (\"path = value\"), and only .xlsx is supported - see\n" +
-			"docs/adr/0014-in-place-editing.md.\n\n" +
+			adrURL + "0014-in-place-editing.md\n\n" +
 			"A config file (default: os.UserConfigDir()/xlq/config.yaml, override\n" +
 			"with --config) can set defaults for any flag above except -i - see\n" +
-			"docs/adr/0015-config-file-for-default-flags.md.",
+			adrURL + "0015-config-file-for-default-flags.md",
 		Example: "  xlq '.Sheet1.A1' report.xlsx\n" +
 			"  xlq '.Sheet1' report.xlsx\n" +
 			"  xlq --compact '.Sheet1' report.xlsx\n" +
@@ -96,12 +113,12 @@ func NewRootCommand() *cobra.Command {
 	root.Flags().BoolP("compact-output", "c", false, "print JSON on one line, without indentation")
 	root.Flags().BoolP("raw-output", "r", false, "print a string result without JSON quotes")
 	root.Flags().Bool("table", false, "print a human-readable, column-aligned table instead of JSON")
-	root.Flags().Bool("csv", false, "print comma-separated values instead of JSON (see ADR-0013 for how a result flattens)")
-	root.Flags().Bool("tsv", false, "print tab-separated values instead of JSON (see ADR-0013 for how a result flattens)")
-	root.Flags().BoolP("in-place", "i", false, `edit the .xlsx file in place: <filter> must be an assignment, e.g. '.Sheet1.A1 = "value"' (see ADR-0014); prints nothing on success`)
+	root.Flags().Bool("csv", false, "print comma-separated values instead of JSON (see "+adrURL+"0013-csv-tsv-output.md for how a result flattens)")
+	root.Flags().Bool("tsv", false, "print tab-separated values instead of JSON (see "+adrURL+"0013-csv-tsv-output.md for how a result flattens)")
+	root.Flags().BoolP("in-place", "i", false, `edit the .xlsx file in place: <filter> must be an assignment, e.g. '.Sheet1.A1 = "value"' (see `+adrURL+`0014-in-place-editing.md); prints nothing on success`)
 	root.PersistentFlags().String("input-format", "", "input format: xlsx, csv, tsv, or ods (default: detected from the file extension)")
 	root.PersistentFlags().String("delimiter", "", "field delimiter override for csv/tsv input, exactly one character (default: comma for csv, tab for tsv)")
-	root.PersistentFlags().String("config", "", "config file path (default: os.UserConfigDir()/xlq/config.yaml; see ADR-0015 for which flags it can default and how)")
+	root.PersistentFlags().String("config", "", "config file path (default: os.UserConfigDir()/xlq/config.yaml; see "+adrURL+"0015-config-file-for-default-flags.md for which flags it can default and how)")
 	root.SetVersionTemplate("xlq {{.Version}}\n")
 	root.AddCommand(newSheetsCommand())
 	return root
