@@ -63,3 +63,14 @@ homebrew_casks:
     commit_author:
       name: github-actions[bot]
       email: github-actions[bot]@users.noreply.github.com
+    # xlq's binaries aren't signed/notarized (see docs/adr/0016-homebrew-publishing.md).
+    # Without this, macOS quarantines a browser/brew-downloaded binary
+    # and Gatekeeper refuses to run it at all ("xlq is damaged and
+    # cannot be opened") - not a cosmetic nicety, per GoReleaser's own
+    # docs on this exact hook.
+    hooks:
+      post:
+        install: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/xlq"]
+          end

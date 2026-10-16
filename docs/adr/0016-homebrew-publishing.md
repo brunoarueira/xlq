@@ -67,14 +67,35 @@ conventions, no `directory:` override (`Casks/`, the default, is
 already Homebrew's own convention for a tap's cask files - unlike a
 Formula, which needed an explicit `directory: Formula`).
 
+### A macOS quarantine-removal hook, since xlq's binaries aren't signed
+
+xlq's binaries aren't signed or notarized (nothing in ADR-0006 does
+that). A binary downloaded through `brew install` on macOS still gets
+the `com.apple.quarantine` extended attribute, and Gatekeeper refuses
+to run a quarantined, unsigned binary at all - not a rough edge, per
+GoReleaser's own `homebrew_casks` docs: "Not following this might lead
+to your app or binary not running," surfacing to the user as "xlq is
+damaged and cannot be opened." A `hooks.post.install` block (compiles
+to a `postflight do ... end` in the generated cask, confirmed via a
+local snapshot build) strips it: `on_macos do run "/usr/bin/xattr",
+args: ["-dr", "com.apple.quarantine", "#{staged_path}/xlq"] end` -
+`staged_path` is Homebrew's own Cask DSL method for the install
+directory inside a hook, not a GoReleaser template variable (an
+earlier draft of this hook used a `{{ .StagedPath }}` GoReleaser
+template placeholder instead, following GoReleaser's current docs -
+that field doesn't exist in the pinned CLI version, v2.18.3, caught
+immediately by `goreleaser check` failing; the docs describe a newer,
+not-yet-released schema).
+
+This bypasses Gatekeeper's verification rather than fixing its root
+cause (no code signing), a tradeoff explicitly called out by
+GoReleaser's own docs as appropriate "only when code signing is not
+feasible" - true here: notarization needs a paid Apple Developer
+account, which this project doesn't have reason to acquire for a free
+CLI tool.
+
 ### Explicitly deferred
 
-- A macOS quarantine-removal post-install hook, which GoReleaser's own
-  `homebrew_casks` docs mention as sometimes needed for an unsigned
-  binary. xlq's binaries aren't signed or notarized (nothing in
-  ADR-0006 does that), so this may eventually matter for a smooth
-  first-run experience on macOS - worth revisiting if it turns out to
-  be needed in practice, not decided here.
 - A `test` block equivalent to the Formula mechanism's `test do ...
   end` - `homebrew_casks`' schema doesn't document one the way `brews`
   did.
@@ -84,9 +105,15 @@ Formula, which needed an explicit `directory: Formula`).
 `brew install brunoarueira/tap/xlq` works once a release ships through
 the updated workflow, for both macOS and Linux - not natively on
 Windows (Homebrew itself doesn't run there outside WSL2), which isn't
-a gap this ADR needs to address. ADR-0006's "No package-manager
-publishing... yet" subsection is now out of date; this ADR is what
-changed it, without ADR-0006 itself being edited.
+a gap this ADR needs to address. No `--cask` flag is needed despite
+the tap having only a cask, not a formula, named `xlq`: `brew install
+<name>` tries a formula first and falls back to a cask automatically
+when none exists (`brew`'s own `Library/Homebrew/cli/named_args.rb`,
+`load_formula_or_cask` - verified directly against that source, not
+just a doc page), printing `Warning: Treating xlq as a cask.` rather
+than erroring. ADR-0006's "No package-manager publishing... yet"
+subsection is now out of date; this ADR is what changed it, without
+ADR-0006 itself being edited.
 
 Unlike the `brews` path this ADR initially (incorrectly) chose, this
 one has no known future-removal risk to track - `homebrew_casks` is
