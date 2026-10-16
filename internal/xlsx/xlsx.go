@@ -2,6 +2,11 @@
 // (see internal/model and docs/adr/0007-spreadsheet-data-model.md) using
 // excelize, so the rest of xlq never depends on excelize directly.
 //
+// Read itself returns as soon as it knows the sheet list: no sheet's
+// row data is read until something actually ranges over that Sheet's
+// Rows, at which point it opens its own fresh copy of the file for
+// that one pass (docs/adr/0018-streaming-xlsx-reader.md).
+//
 // Known limitation: a formula cell with no cached result yet (the
 // workbook has never been opened/recalculated by a spreadsheet
 // application, nor by excelize itself) is computed live via
@@ -50,16 +55,15 @@ func Read(path string) (model.Workbook, error) {
 
 	// Cell styles are shared workbook-wide, so cache the (usually small)
 	// set of "is this style a date format" answers by style ID rather
-	// than re-deriving it for every cell.
+	// than re-deriving it for every cell. Shared across every sheet's
+	// own lazy pass below (captured by reference, keyed by style ID
+	// rather than by any one open *excelize.File) since there's no
+	// concurrent sheet access anywhere in this project to guard against.
 	dateStyles := make(map[int]bool)
 
 	var wb model.Workbook
 	for _, name := range f.GetSheetList() {
-		sheet, err := readSheet(f, name, date1904, dateStyles)
-		if err != nil {
-			return model.Workbook{}, fmt.Errorf("read sheet %q of %q: %w", name, path, err)
-		}
-		wb.Sheets = append(wb.Sheets, sheet)
+		wb.Sheets = append(wb.Sheets, lazySheet(path, name, date1904, dateStyles))
 	}
 	return wb, nil
 }
@@ -77,48 +81,66 @@ func SheetNames(path string) ([]string, error) {
 	return f.GetSheetList(), nil
 }
 
-// readSheet still reads every row eagerly, exactly as before - this is
-// an intermediate step adapting to model.Sheet's new, lazy-shaped
-// Rows (docs/adr/0018-streaming-xlsx-reader.md) without yet making
-// this package's own reading genuinely lazy, which is its own,
-// separate change.
-func readSheet(f *excelize.File, name string, date1904 bool, dateStyles map[int]bool) (model.Sheet, error) {
-	rows, err := f.Rows(name)
-	if err != nil {
-		return model.Sheet{}, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var sheetRows []model.Row
-	// excelize's row iterator yields one iteration per row *number*
-	// (padding with an empty Columns() result for any row the sheet XML
-	// omits entirely, e.g. a wholly blank row 2 between rows 1 and 3),
-	// so this 0-based counter tracks the real row index correctly even
-	// across gaps.
-	for rowIndex := 0; rows.Next(); rowIndex++ {
-		cols, err := rows.Columns()
-		if err != nil {
-			return model.Sheet{}, err
-		}
-
-		var cells []model.Cell
-		for colIndex, display := range cols {
-			cell, ok, err := readCell(f, name, colIndex, rowIndex, display, date1904, dateStyles)
+// lazySheet returns a Sheet whose Rows never reads anything until
+// actually ranged over, and opens its own fresh *excelize.File - closed
+// again once that one pass finishes - every time it is: there's no way
+// to keep Read's own already-open file around for later use, since
+// Read returns (and so, today, already closed its file) before any
+// lazy consumer ever gets a chance to range over Rows. See
+// docs/adr/0018-streaming-xlsx-reader.md for why this, rather than
+// giving model.Workbook an explicit open/close lifetime of its own,
+// was chosen, and for the "N sheets reopen the file N times" trade-off
+// it accepts.
+func lazySheet(path, name string, date1904 bool, dateStyles map[int]bool) model.Sheet {
+	return model.Sheet{
+		Name: name,
+		Rows: func(yield func(model.Row, error) bool) {
+			f, err := excelize.OpenFile(path)
 			if err != nil {
-				return model.Sheet{}, err
+				yield(model.Row{}, fmt.Errorf("open %q: %w", path, err))
+				return
 			}
-			if ok {
-				cells = append(cells, cell)
+			defer func() { _ = f.Close() }()
+
+			rows, err := f.Rows(name)
+			if err != nil {
+				yield(model.Row{}, fmt.Errorf("read sheet %q of %q: %w", name, path, err))
+				return
 			}
-		}
-		if len(cells) > 0 {
-			sheetRows = append(sheetRows, model.Row{Index: rowIndex, Cells: cells})
-		}
+			defer func() { _ = rows.Close() }()
+
+			// excelize's row iterator yields one iteration per row
+			// *number* (padding with an empty Columns() result for any
+			// row the sheet XML omits entirely, e.g. a wholly blank row
+			// 2 between rows 1 and 3), so this 0-based counter tracks
+			// the real row index correctly even across gaps.
+			for rowIndex := 0; rows.Next(); rowIndex++ {
+				cols, err := rows.Columns()
+				if err != nil {
+					yield(model.Row{}, fmt.Errorf("read row %d of sheet %q of %q: %w", rowIndex+1, name, path, err))
+					return
+				}
+
+				var cells []model.Cell
+				for colIndex, display := range cols {
+					cell, ok, err := readCell(f, name, colIndex, rowIndex, display, date1904, dateStyles)
+					if err != nil {
+						yield(model.Row{}, err)
+						return
+					}
+					if ok {
+						cells = append(cells, cell)
+					}
+				}
+				if len(cells) > 0 && !yield(model.Row{Index: rowIndex, Cells: cells}, nil) {
+					return
+				}
+			}
+			if err := rows.Error(); err != nil {
+				yield(model.Row{}, fmt.Errorf("read sheet %q of %q: %w", name, path, err))
+			}
+		},
 	}
-	if err := rows.Error(); err != nil {
-		return model.Sheet{}, err
-	}
-	return model.NewSheet(name, sheetRows), nil
 }
 
 // readCell reads the cell at (colIndex, rowIndex) (both 0-based), given
