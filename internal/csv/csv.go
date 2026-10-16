@@ -58,7 +58,7 @@ func ReadWithDelimiter(path string, delim rune) (model.Workbook, error) {
 	r := stdcsv.NewReader(stripBOM(f))
 	r.Comma = delim
 
-	sheet := model.Sheet{Name: SheetName}
+	var rows []model.Row
 	for rowIndex := 0; ; rowIndex++ {
 		record, err := r.Read()
 		if err == io.EOF {
@@ -76,10 +76,10 @@ func ReadWithDelimiter(path string, delim rune) (model.Workbook, error) {
 			}
 			cells[col] = cell.At(col)
 		}
-		sheet.Rows = append(sheet.Rows, model.Row{Index: rowIndex, Cells: cells})
+		rows = append(rows, model.Row{Index: rowIndex, Cells: cells})
 	}
 
-	return model.Workbook{Sheets: []model.Sheet{sheet}}, nil
+	return model.Workbook{Sheets: []model.Sheet{model.NewSheet(SheetName, rows)}}, nil
 }
 
 var utf8BOM = []byte{0xEF, 0xBB, 0xBF}

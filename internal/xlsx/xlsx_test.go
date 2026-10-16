@@ -36,7 +36,7 @@ func cellAt(t *testing.T, wb model.Workbook, sheet string, rowIndex, colIndex in
 		if s.Name != sheet {
 			continue
 		}
-		for _, r := range s.Rows {
+		for _, r := range rowsOf(t, s) {
 			if r.Index != rowIndex {
 				continue
 			}
@@ -48,6 +48,36 @@ func cellAt(t *testing.T, wb model.Workbook, sheet string, rowIndex, colIndex in
 		}
 	}
 	return model.Cell{}, false
+}
+
+// rowsOf drains sheet's rows into a slice, failing the test on any
+// error.
+func rowsOf(t *testing.T, sheet model.Sheet) []model.Row {
+	t.Helper()
+	rows, err := model.CollectRows(sheet)
+	if err != nil {
+		t.Fatalf("CollectRows: %v", err)
+	}
+	return rows
+}
+
+// dimensions returns sheet's bounding box (one past the highest row
+// and column index present), replicating what model.Sheet.Dimensions
+// used to do directly - removed along with Sheet.Rows becoming lazy
+// (docs/adr/0018-streaming-xlsx-reader.md).
+func dimensions(t *testing.T, sheet model.Sheet) (rows, cols int) {
+	t.Helper()
+	for _, r := range rowsOf(t, sheet) {
+		if r.Index+1 > rows {
+			rows = r.Index + 1
+		}
+		for _, c := range r.Cells {
+			if c.Column+1 > cols {
+				cols = c.Column + 1
+			}
+		}
+	}
+	return rows, cols
 }
 
 func TestReadMissingFile(t *testing.T) {
@@ -312,16 +342,16 @@ func TestReadSparseSheet(t *testing.T) {
 	if len(wb.Sheets) != 1 {
 		t.Fatalf("len(wb.Sheets) = %d, want 1", len(wb.Sheets))
 	}
-	sheet := wb.Sheets[0]
-	if len(sheet.Rows) != 2 {
-		t.Fatalf("len(sheet.Rows) = %d, want 2 (rows 0 and 2 only)", len(sheet.Rows))
+	sheetRows := rowsOf(t, wb.Sheets[0])
+	if len(sheetRows) != 2 {
+		t.Fatalf("len(sheetRows) = %d, want 2 (rows 0 and 2 only)", len(sheetRows))
 	}
-	if sheet.Rows[0].Index != 0 || sheet.Rows[1].Index != 2 {
-		t.Errorf("row indices = [%d, %d], want [0, 2]", sheet.Rows[0].Index, sheet.Rows[1].Index)
+	if sheetRows[0].Index != 0 || sheetRows[1].Index != 2 {
+		t.Errorf("row indices = [%d, %d], want [0, 2]", sheetRows[0].Index, sheetRows[1].Index)
 	}
-	rows, cols := sheet.Dimensions()
+	rows, cols := dimensions(t, wb.Sheets[0])
 	if rows != 3 || cols != 3 {
-		t.Errorf("Dimensions() = (%d, %d), want (3, 3)", rows, cols)
+		t.Errorf("dimensions() = (%d, %d), want (3, 3)", rows, cols)
 	}
 }
 
