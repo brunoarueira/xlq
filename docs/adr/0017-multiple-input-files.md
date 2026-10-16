@@ -86,6 +86,20 @@ independent results; use JSON, or run xlq once per file"), matching
 ADR-0013's own precedent for rejecting a whole workbook's CSV output
 ("no single tabular shape") rather than guessing at a flattening.
 
+This checks each flag's *effective*, config-merged value
+(`GetBool`, after ADR-0015's `mergeConfigDefaults` has already run),
+not just what was explicitly typed - a user with `table: true` in
+their config file hits this guard on a plain multi-file invocation
+exactly as if they'd typed `--table` themselves, since from
+`runFilter`'s own position the two are indistinguishable (ADR-0015's
+entire point). `--table=false` (or `--csv=false`/`--tsv=false`) is the
+existing, already-designed escape hatch for that specific invocation:
+an explicit flag of any value marks it `Changed`, which
+`mergeConfigDefaults`'s own `mergeBool` already skips applying a
+config default onto - no new mechanism needed here, just worth
+calling out since it's the answer to "I have a table default, how do
+I diff two files in JSON just this once."
+
 ### `-c`/`-r` need no change
 
 `-c` (`compactJSON`, one-line JSON) only affects how the final value
@@ -112,10 +126,12 @@ No per-file override syntax - both flags already resolve to one
 value per invocation (an explicit override, or empty meaning
 "detect/default"), and that one value is used for every file's own
 `input.Read` call. A mix of formats across files (e.g. diffing an
-`.xlsx` against a `.csv`) works today already, in the sense that each
-file's format is detected independently from its own extension when
-neither flag is set - this ADR doesn't change that, just confirms it
-extends unchanged to N files instead of one.
+`.xlsx` against a `.csv`) is supported by this design: when neither
+flag is set, each file's format is still detected independently from
+its own extension, exactly as `input.Read` already does for the one
+file a single invocation can name today - this ADR doesn't change
+that per-file detection logic at all, just lets more than one file
+reach it in the same invocation.
 
 ### `sheets` is unaffected
 
