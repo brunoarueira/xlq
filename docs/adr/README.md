@@ -22,6 +22,7 @@ xlq, using the format described in
 | [0014](0014-in-place-editing.md) | In-place `.xlsx` editing: assignment grammar and the write path |
 | [0015](0015-config-file-for-default-flags.md) | Config file for default flags: location, format, precedence |
 | [0016](0016-homebrew-publishing.md) | Homebrew package publishing via GoReleaser (supersedes ADR-0006's "not yet") |
+| [0017](0017-multiple-input-files.md) | Multiple input files in one invocation: map, not slurp |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is

@@ -1,0 +1,154 @@
+# 17. Multiple input files in one invocation: map, not slurp
+
+## Status
+
+Accepted
+
+## Context
+
+Issue #33 asks for comparing two exports in one invocation (e.g.
+`xlq '.DISCOVERY' old.xlsx new.xlsx`) and names two candidate designs
+without choosing between them: accepting more than the current exactly
+two positional args, or a jq-style `--slurp` flag combining every
+file into one value the filter addresses as an array of workbooks.
+These aren't just two spellings of the same feature - `--slurp` needs
+new grammar (something has to let a filter say "workbook 0" vs
+"workbook 1," which nothing in ADR-0008's grammar does today, since
+every filter currently assumes it starts from exactly one workbook),
+while running the *same*, *unmodified* filter once per file and
+collecting the results doesn't touch the grammar at all. Asked the
+user directly given the real divergence between the two: map-the-
+filter-over-each-file was chosen, specifically because it needs zero
+grammar changes and directly serves the stated diff/compare use case
+(each file's result sits at its own array index, ready to compare).
+
+ADR-0004 fixed the CLI at exactly two positional args (`<filter>
+<file>`); this ADR is what changes that, the same way ADR-0014 and
+ADR-0016 each changed one piece of an earlier ADR's decision without
+editing it.
+
+## Decision
+
+### `xlq '<filter>' <file>...` - one or more files, same filter, one or more results
+
+`root.go`'s `Args` validator becomes `cobra.MinimumNArgs(2)` (filter
+plus at least one file), replacing `cobra.ExactArgs(2)`. For exactly
+one file, behavior is **completely unchanged** - the result is printed
+bare, exactly as today, not wrapped in a one-element array; every
+existing invocation, test, and README example keeps meaning exactly
+what it already means. For two or more files, `xlq` evaluates the
+same parsed filter against each file independently, in the order the
+files were given, and the top-level result becomes a JSON array of
+each file's own result: `[result_for_file_1, result_for_file_2, ...]`.
+This is a map, not a reduction or a diff - `xlq` doesn't compare the
+elements itself, it just puts each file's own answer at that file's
+own array index, ready for the user (or `jq` piped after it, or a
+script) to compare `.[0]` against `.[1]`.
+
+A file that fails to open or parse aborts the whole invocation
+immediately (fail-fast, consistent with today's single-file behavior)
+with an error naming which file and its position (`file 2 (new.xlsx):
+<underlying error>`) - no partial results, and no new shape (like a
+per-element error marker) for a caller to have to handle.
+
+### `--compact` compacts each file's result individually, before the array exists
+
+`output.Compact`'s existing `[]any` case treats a plain array as "a
+row or column of scalars, drop nil entries" - exactly correct for
+today's single-file row/column results, but wrong for a multi-file
+results array: dropping a nil result would shrink the array and break
+the one-to-one correspondence between array index and file argument
+that's the entire point of this feature. `output.Compact` itself isn't
+changed at all; `--compact`, when more than one file is given, is
+instead applied to *each file's own result* before that result goes
+into the array, not to the array afterward. The array's length and
+index-to-file correspondence are invariant under `--compact`,
+regardless of file count.
+
+### `--table`/`--csv`/`--tsv` are a clear error for more than one file
+
+Both `output.Table` and the CSV/TSV path already have a case for a
+plain `[]any` - "a single row or column," one line per element - and
+a multi-file results array is also, structurally, a plain `[]any` to
+Go: nothing distinguishes "the user's filter legitimately produced a
+column of scalars" from "this is N files' worth of arbitrary,
+possibly complex results" once code execution has moved on from
+printing the right JSON array. Without a guard, `--table` would
+silently flatten each file's entire result (even a large grid or
+records array) into one mangled table cell via JSON stringification,
+and `--csv`/`--tsv` would do the same per CSV field - wrong output
+with no error, not caught by any existing test because this shape
+never existed before. So the guard lives one level up, before
+`output.Table`/`CSV` is ever called: more than one file combined with
+any of `--table`/`--csv`/`--tsv` is a `runFilter`-level error ("these
+don't support multiple files - no single tabular shape for N
+independent results; use JSON, or run xlq once per file"), matching
+ADR-0013's own precedent for rejecting a whole workbook's CSV output
+("no single tabular shape") rather than guessing at a flattening.
+
+### `-c`/`-r` need no change
+
+`-c` (`compactJSON`, one-line JSON) only affects how the final value
+- scalar or array, one file or many - gets marshaled; nothing about it
+assumes a particular shape. `-r` (`rawOutput`) already only unwraps a
+result that's a bare string, printing anything else as JSON - for two
+or more files the top-level result is always an array, never a
+string, so `-r` naturally falls through to ordinary JSON printing, the
+same way it already does today for any single-file result that isn't
+a string (e.g. `-r '.Sheet1'` on a grid). No special-casing needed for
+either flag.
+
+### `-i`/`--in-place` stays exactly-one-file
+
+`-i` already requires `len(args) == 2` in spirit (filter + the one
+file it edits); made explicit now that more than two args is otherwise
+valid. Editing multiple files in one invocation - identically or
+otherwise - is new, real design work ADR-0014 never scoped and this
+ADR doesn't either; `-i` with more than one file is a clear error.
+
+### `--input-format`/`--delimiter` apply uniformly to every file
+
+No per-file override syntax - both flags already resolve to one
+value per invocation (an explicit override, or empty meaning
+"detect/default"), and that one value is used for every file's own
+`input.Read` call. A mix of formats across files (e.g. diffing an
+`.xlsx` against a `.csv`) works today already, in the sense that each
+file's format is detected independently from its own extension when
+neither flag is set - this ADR doesn't change that, just confirms it
+extends unchanged to N files instead of one.
+
+### `sheets` is unaffected
+
+`sheets <file>` keeps `cobra.ExactArgs(1)` - it already answers a
+different question (what sheets does *this* file have) that multiple
+files don't change the shape of; nothing in #33 asks for a multi-file
+`sheets`.
+
+### No new flag to opt in
+
+Passing more than one file is what triggers this, matching the
+issue's own example exactly - no `--slurp`-equivalent flag exists
+(there's nothing to slurp; see the grammar-vs-map distinction above),
+and no separate flag is needed to request "map over N files" instead
+of "read one file," since the file count itself already says which
+one the user means.
+
+## Consequences
+
+`xlq '.Sheet1 | records' old.xlsx new.xlsx` prints a two-element JSON
+array, each element that file's own records array - comparing them is
+exactly as easy as it would be for any other two JSON values, with no
+new xlq-specific diff mechanism to learn. Every single-file invocation
+that exists today, including every README example and existing test,
+keeps working identically - this ADR only adds behavior for a file
+count nothing could produce before (`cobra.ExactArgs(2)` made two-or-
+more files impossible to pass at all).
+
+Implementing this needs: `root.go`'s `Args` and `RunE` (the argument
+count check and threading `[]string` instead of one `path` through to
+`runFilter`/`runInPlace`), `runFilter` itself (the per-file
+read/eval/compact loop and the array-wrapping decision at N==1 vs
+N>1), and the new `--table`/`--csv`/`--tsv` guard - no changes needed
+to `internal/eval`, `internal/filter`, `internal/model`, or
+`internal/output` at all, since every one of those keeps operating on
+exactly one file's result at a time, the same way they do today.
