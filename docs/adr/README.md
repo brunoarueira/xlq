@@ -23,6 +23,7 @@ xlq, using the format described in
 | [0015](0015-config-file-for-default-flags.md) | Config file for default flags: location, format, precedence |
 | [0016](0016-homebrew-publishing.md) | Homebrew package publishing via GoReleaser (supersedes ADR-0006's "not yet") |
 | [0017](0017-multiple-input-files.md) | Multiple input files in one invocation: map, not slurp |
+| [0018](0018-streaming-xlsx-reader.md) | Streaming xlsx reader: lazy `Sheet.Rows` via Go iterators |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
