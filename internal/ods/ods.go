@@ -314,7 +314,7 @@ func (b *budget) spend(n int64) error {
 }
 
 func convertTable(t xmlTable, b *budget) (model.Sheet, error) {
-	sheet := model.Sheet{Name: t.Name}
+	var rows []model.Row
 	rowIndex := 0
 	for _, xr := range t.Rows {
 		repeat, err := repeatCount(xr.Repeat)
@@ -340,11 +340,11 @@ func convertTable(t xmlTable, b *budget) (model.Sheet, error) {
 			return model.Sheet{}, err
 		}
 		for i := 0; i < repeat; i++ {
-			sheet.Rows = append(sheet.Rows, model.Row{Index: rowIndex, Cells: cells})
+			rows = append(rows, model.Row{Index: rowIndex, Cells: cells})
 			rowIndex++
 		}
 	}
-	return sheet, nil
+	return model.NewSheet(t.Name, rows), nil
 }
 
 // convertRow converts one <table:table-row>'s cells, reporting whether

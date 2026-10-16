@@ -21,7 +21,8 @@ func writeFixture(t *testing.T, name, content string) string {
 
 func cellAt(t *testing.T, wb model.Workbook, rowIndex, colIndex int) (model.Cell, bool) {
 	t.Helper()
-	for _, r := range wb.Sheets[0].Rows {
+	rows := rowsOf(t, wb.Sheets[0])
+	for _, r := range rows {
 		if r.Index != rowIndex {
 			continue
 		}
@@ -32,6 +33,38 @@ func cellAt(t *testing.T, wb model.Workbook, rowIndex, colIndex int) (model.Cell
 		}
 	}
 	return model.Cell{}, false
+}
+
+// rowsOf drains sheet's rows into a slice, failing the test on any
+// error - internal/csv's own reader never produces one once Read has
+// already succeeded, so this is purely a convenience for assertions.
+func rowsOf(t *testing.T, sheet model.Sheet) []model.Row {
+	t.Helper()
+	rows, err := model.CollectRows(sheet)
+	if err != nil {
+		t.Fatalf("CollectRows: %v", err)
+	}
+	return rows
+}
+
+// dimensions returns sheet's bounding box (one past the highest row
+// and column index present), replicating what model.Sheet.Dimensions
+// used to do directly - removed along with Sheet.Rows becoming lazy,
+// since a caller that needs it can trivially derive it like this
+// (mirroring internal/eval's own per-operation accumulation, ADR-0018).
+func dimensions(t *testing.T, sheet model.Sheet) (rows, cols int) {
+	t.Helper()
+	for _, r := range rowsOf(t, sheet) {
+		if r.Index+1 > rows {
+			rows = r.Index + 1
+		}
+		for _, c := range r.Cells {
+			if c.Column+1 > cols {
+				cols = c.Column + 1
+			}
+		}
+	}
+	return rows, cols
 }
 
 func TestReadMissingFile(t *testing.T) {
@@ -53,8 +86,8 @@ func TestReadBasic(t *testing.T) {
 	if wb.Sheets[0].Name != "Sheet1" {
 		t.Errorf("sheet name = %q, want \"Sheet1\"", wb.Sheets[0].Name)
 	}
-	if len(wb.Sheets[0].Rows) != 3 {
-		t.Fatalf("len(Rows) = %d, want 3", len(wb.Sheets[0].Rows))
+	if got := rowsOf(t, wb.Sheets[0]); len(got) != 3 {
+		t.Fatalf("len(rows) = %d, want 3", len(got))
 	}
 
 	c, ok := cellAt(t, wb, 1, 0)
@@ -65,9 +98,9 @@ func TestReadBasic(t *testing.T) {
 		t.Errorf("StringValue() = (%q, %v), want (\"Ada\", true)", v, ok)
 	}
 
-	rows, cols := wb.Sheets[0].Dimensions()
+	rows, cols := dimensions(t, wb.Sheets[0])
 	if rows != 3 || cols != 2 {
-		t.Errorf("Dimensions() = (%d, %d), want (3, 2)", rows, cols)
+		t.Errorf("dimensions() = (%d, %d), want (3, 2)", rows, cols)
 	}
 }
 
@@ -94,11 +127,12 @@ func TestReadAllEmptyRowIsNotSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if len(wb.Sheets[0].Rows) != 3 {
-		t.Fatalf("len(Rows) = %d, want 3", len(wb.Sheets[0].Rows))
+	rows := rowsOf(t, wb.Sheets[0])
+	if len(rows) != 3 {
+		t.Fatalf("len(rows) = %d, want 3", len(rows))
 	}
-	if wb.Sheets[0].Rows[1].Index != 1 {
-		t.Errorf("Rows[1].Index = %d, want 1", wb.Sheets[0].Rows[1].Index)
+	if rows[1].Index != 1 {
+		t.Errorf("rows[1].Index = %d, want 1", rows[1].Index)
 	}
 	c, ok := cellAt(t, wb, 1, 0)
 	if !ok {
@@ -118,13 +152,14 @@ func TestReadBlankLineIsSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if len(wb.Sheets[0].Rows) != 3 {
-		t.Fatalf("len(Rows) = %d, want 3", len(wb.Sheets[0].Rows))
+	rows := rowsOf(t, wb.Sheets[0])
+	if len(rows) != 3 {
+		t.Fatalf("len(rows) = %d, want 3", len(rows))
 	}
 	want := []int{0, 1, 2}
-	for i, r := range wb.Sheets[0].Rows {
+	for i, r := range rows {
 		if r.Index != want[i] {
-			t.Errorf("Rows[%d].Index = %d, want %d", i, r.Index, want[i])
+			t.Errorf("rows[%d].Index = %d, want %d", i, r.Index, want[i])
 		}
 	}
 	c, ok := cellAt(t, wb, 2, 0)

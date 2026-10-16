@@ -5,7 +5,10 @@
 // docs/adr/0007-spreadsheet-data-model.md for the design rationale.
 package model
 
-import "time"
+import (
+	"iter"
+	"time"
+)
 
 // CellKind identifies which of a Cell's typed values is meaningful.
 type CellKind int
@@ -135,29 +138,66 @@ type Row struct {
 
 // Sheet is one sparse sheet in a Workbook: only rows containing at
 // least one cell are present, ordered ascending by Index.
+//
+// Rows is lazy (docs/adr/0018-streaming-xlsx-reader.md): ranging over
+// it may read from disk, and may fail mid-stream, which is why it
+// yields an error alongside each Row rather than being a plain slice.
+// internal/xlsx's reader is the only producer that's genuinely
+// backed by a live file; every other producer (internal/csv,
+// internal/ods, a range reference, every test) already has its rows
+// as a plain slice and should use NewSheet below rather than build
+// this field by hand.
+//
+// There is deliberately no Dimensions method: every operation that
+// used to call one now tracks whatever bound it needs - a row count,
+// a column count, both - while making its own single pass over Rows,
+// since a (rows, cols int) return with no error has no way to report
+// a cursor failure partway through, and every caller needed an
+// error-aware rewrite anyway once Rows itself could fail.
 type Sheet struct {
 	Name string
-	Rows []Row
+	Rows iter.Seq2[Row, error]
 }
 
-// Dimensions returns the sheet's bounding box as one past the highest
-// row and column index present (0, 0 for an empty sheet). Sheet is
-// sparse, so this does not imply every cell within the box exists.
-func (s Sheet) Dimensions() (rows, cols int) {
-	for _, r := range s.Rows {
-		if r.Index+1 > rows {
-			rows = r.Index + 1
-		}
-		for _, c := range r.Cells {
-			if c.Column+1 > cols {
-				cols = c.Column + 1
+// NewSheet wraps an already-materialized, in-memory slice of rows as
+// a Sheet. This is the on-ramp for every producer that isn't
+// internal/xlsx's own lazy reader: the slice is still built exactly
+// as before, this only adapts its *type* to Sheet.Rows' lazy shape,
+// never yielding an error of its own (ranging over an in-memory slice
+// cannot fail).
+func NewSheet(name string, rows []Row) Sheet {
+	return Sheet{
+		Name: name,
+		Rows: func(yield func(Row, error) bool) {
+			for _, r := range rows {
+				if !yield(r, nil) {
+					return
+				}
 			}
-		}
+		},
 	}
-	return rows, cols
 }
 
 // Workbook is the top-level container: an ordered list of Sheets.
 type Workbook struct {
 	Sheets []Sheet
+}
+
+// CollectRows drains s.Rows into a plain slice, stopping at - and
+// returning - the first error the iterator yields. Only ever needed
+// for a Sheet whose Rows is actually backed by something that can
+// fail (internal/xlsx's own reader); a NewSheet-wrapped Sheet never
+// yields an error, but still has the same call shape, which is what
+// keeps this useful as a single, shared way to materialize a Sheet's
+// rows regardless of which package produced it - every reader's own
+// tests use this rather than duplicating the same drain loop.
+func CollectRows(s Sheet) ([]Row, error) {
+	var rows []Row
+	for r, err := range s.Rows {
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, r)
+	}
+	return rows, nil
 }
