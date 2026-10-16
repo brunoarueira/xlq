@@ -147,6 +147,27 @@ func TestRootWrongArgCount(t *testing.T) {
 	}
 }
 
+// TestHelpNeverReferencesABareLocalDocsPath guards #26: anyone who
+// installed xlq via `go install`, a release tarball, or Homebrew has
+// no docs/ directory alongside the binary at all, so --help (and
+// every flag's own description, which this also covers - cobra prints
+// both together) must never point at one as if it'll be there. Every
+// ADR reference must be a full, resolvable adrURL instead.
+func TestHelpNeverReferencesABareLocalDocsPath(t *testing.T) {
+	out, err := run(t, "--help")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	withoutURLs := strings.ReplaceAll(out, adrURL, "")
+	if strings.Contains(withoutURLs, "docs/adr") {
+		t.Errorf("--help still references a bare local docs/adr path once every %s URL is stripped out:\n%s", adrURL, withoutURLs)
+	}
+	if !strings.Contains(out, adrURL) {
+		t.Error("--help doesn't reference any ADR URL at all - expected at least one")
+	}
+}
+
 func TestRootSheetsSubcommandStillWorks(t *testing.T) {
 	path := buildFixture(t, func(*excelize.File) {})
 	out, err := run(t, "sheets", path)
