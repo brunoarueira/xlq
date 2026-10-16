@@ -116,8 +116,28 @@ A single file's result is completely unaffected by this - still
 printed bare, never wrapped in a one-element array. `--table`/`--csv`/
 `--tsv` and `-i` don't support more than one file (no single tabular
 shape to flatten N results into, and an in-place edit of more than one
-file is out of scope); a read/parse error names which file (by
-position and path) failed.
+file is out of scope) - this includes a config-file default
+(`table: true`, etc., see below): it hits the same rejection a typed
+`--table` would, since there's no way to tell them apart by the time
+this check runs, so `--table=false` (or `--csv=false`/`--tsv=false`)
+is how to get plain JSON for one multi-file invocation despite that
+default. A read/parse error names which file (by position and path)
+failed.
+
+`--input-format`/`--delimiter` (typed or from a config default) apply
+to *every* file uniformly, not per-file - mixing formats across files
+(e.g. diffing an `.xlsx` against a `.csv`) only auto-detects correctly
+when neither resolves to a value, letting each file's own extension
+decide its format as usual. A config `input-format` default forces
+every file to that one format (misreading whichever file isn't
+actually that format); a config `delimiter` default fails outright the
+moment it reaches any `.xlsx`/`.ods` file in the set, since those have
+no delimiter concept to override. `--input-format ""` clears a config
+default for one invocation the same way `--table=false` does;
+`--delimiter ""` has no equivalent (an explicit empty delimiter is
+already its own error, not a reset) - a persistent `delimiter` default
+and mixing in an `.xlsx`/`.ods` file are simply incompatible short of
+editing the config file.
 
 ## Install
 

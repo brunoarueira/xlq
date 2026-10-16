@@ -127,9 +127,39 @@ func TestRootMultiFileCompactAppliesPerFileNotToTheArray(t *testing.T) {
 	}
 }
 
+// TestRootMultiFileArrayKeepsANullElement specifically exercises a
+// per-file result that's Go nil (not merely an empty slice, which
+// marshals to "[]" and would pass even if the array-wrapping step
+// wrongly dropped nil entries the way output.Compact's own []any case
+// already does for an ordinary row/column). A result array index
+// must survive being null exactly as readily as any other value -
+// dropping it would both shrink the array and break its
+// correspondence to the file list.
+func TestRootMultiFileArrayKeepsANullElement(t *testing.T) {
+	withValue := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "x"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+	withoutValue := buildFixture(t, func(*excelize.File) {}) // A1 genuinely absent -> null
+
+	out, err := run(t, "-c", ".Sheet1.A1", withValue, withoutValue)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := `["x",null]` + "\n"; out != want {
+		t.Errorf("output = %q, want %q (the null element must still be present)", out, want)
+	}
+}
+
 func TestRootMultiFileReadErrorNamesFileAndPosition(t *testing.T) {
 	good := buildFixture(t, func(*excelize.File) {})
-	missing := good + ".does-not-exist"
+	// A supported (.xlsx) extension, so this actually exercises a
+	// missing-file failure inside input.Read itself - an unsupported
+	// extension would instead fail format detection before ever
+	// attempting to open the file, a different failure path entirely
+	// that happens to produce a similarly-shaped error message.
+	missing := good + ".does-not-exist.xlsx"
 
 	_, err := run(t, ".Sheet1", good, missing)
 	if err == nil {
