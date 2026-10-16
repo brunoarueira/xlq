@@ -1,6 +1,7 @@
 package model
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -136,8 +137,8 @@ func TestNewSheetReproducesItsRowsInOrder(t *testing.T) {
 		t.Fatalf("drainRows() returned %d rows, want %d", len(got), len(want))
 	}
 	for i := range want {
-		if got[i].Index != want[i].Index {
-			t.Errorf("row %d: Index = %d, want %d", i, got[i].Index, want[i].Index)
+		if !reflect.DeepEqual(got[i], want[i]) {
+			t.Errorf("row %d = %+v, want %+v", i, got[i], want[i])
 		}
 	}
 }

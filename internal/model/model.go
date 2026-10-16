@@ -139,14 +139,16 @@ type Row struct {
 // Sheet is one sparse sheet in a Workbook: only rows containing at
 // least one cell are present, ordered ascending by Index.
 //
-// Rows is lazy (docs/adr/0018-streaming-xlsx-reader.md): ranging over
-// it may read from disk, and may fail mid-stream, which is why it
-// yields an error alongside each Row rather than being a plain slice.
-// internal/xlsx's reader is the only producer that's genuinely
-// backed by a live file; every other producer (internal/csv,
-// internal/ods, a range reference, every test) already has its rows
-// as a plain slice and should use NewSheet below rather than build
-// this field by hand.
+// Rows is shaped for laziness (docs/adr/0018-streaming-xlsx-reader.md):
+// ranging over it may one day read from disk and fail mid-stream,
+// which is why it yields an error alongside each Row rather than
+// being a plain slice. internal/xlsx's reader is the intended,
+// eventual producer that's genuinely backed by a live file and can
+// fail mid-stream; for now it still reads every row eagerly before
+// returning, same as every other producer (internal/csv, internal/ods,
+// a range reference, every test), all of which build from an
+// already-materialized slice and should use NewSheet below rather
+// than build this field by hand.
 //
 // There is deliberately no Dimensions method: every operation that
 // used to call one now tracks whatever bound it needs - a row count,
@@ -154,9 +156,23 @@ type Row struct {
 // since a (rows, cols int) return with no error has no way to report
 // a cursor failure partway through, and every caller needed an
 // error-aware rewrite anyway once Rows itself could fail.
+//
+// A nil Rows - the zero value Sheet{} is the common case - is never
+// ranged over directly: every consumer iterates via All, which treats
+// nil the same as an already-exhausted iterator, so a zero-value
+// Sheet is safe to use rather than panicking on range.
 type Sheet struct {
 	Name string
 	Rows iter.Seq2[Row, error]
+}
+
+// All returns s.Rows, or a no-op iterator if it is nil, so ranging
+// over any Sheet - including its zero value - never panics.
+func (s Sheet) All() iter.Seq2[Row, error] {
+	if s.Rows == nil {
+		return func(func(Row, error) bool) {}
+	}
+	return s.Rows
 }
 
 // NewSheet wraps an already-materialized, in-memory slice of rows as
@@ -193,7 +209,7 @@ type Workbook struct {
 // tests use this rather than duplicating the same drain loop.
 func CollectRows(s Sheet) ([]Row, error) {
 	var rows []Row
-	for r, err := range s.Rows {
+	for r, err := range s.All() {
 		if err != nil {
 			return nil, err
 		}

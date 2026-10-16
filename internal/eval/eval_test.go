@@ -138,6 +138,41 @@ func TestEvalIdentityReturnsWholeWorkbook(t *testing.T) {
 	}
 }
 
+// TestEvalEmptySheetShapesAreEmptyArraysNotNull guards against the
+// dense accumulators (sheetGrid, wholeColumn, wholeRow) reverting to a
+// nil slice for a sheet with no rows at all, which would marshal to
+// JSON null instead of the empty-array shape these operators have
+// always produced.
+func TestEvalEmptySheetShapesAreEmptyArraysNotNull(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Empty", nil)}}
+
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"bare empty sheet is an empty grid", ".Empty", [][]any{}},
+		{"whole column of an empty sheet is an empty array", ".Empty.A", []any{}},
+		{"whole row of an empty sheet is an empty array", ".Empty[1]", []any{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestEvalInvalid(t *testing.T) {
 	cases := []struct {
 		name  string

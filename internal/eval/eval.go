@@ -205,7 +205,7 @@ func sheetRecords(sheet model.Sheet) ([]map[string]any, error) {
 	var dataRows []model.Row
 	var cols int
 
-	for r, err := range sheet.Rows {
+	for r, err := range sheet.All() {
 		if err != nil {
 			return nil, err
 		}
@@ -349,8 +349,8 @@ func findSheet(wb model.Workbook, name string) (model.Sheet, bool) {
 // pass, not two.
 func wholeColumn(sheet model.Sheet, letters string) ([]any, error) {
 	col := columnIndex(letters)
-	var result []any
-	for r, err := range sheet.Rows {
+	result := make([]any, 0)
+	for r, err := range sheet.All() {
 		if err != nil {
 			return nil, err
 		}
@@ -379,8 +379,8 @@ func wholeColumn(sheet model.Sheet, letters string) ([]any, error) {
 // scan.
 func wholeRow(sheet model.Sheet, n int) ([]any, error) {
 	rowIndex := n - 1
-	var result []any
-	for r, err := range sheet.Rows {
+	result := make([]any, 0)
+	for r, err := range sheet.All() {
 		if err != nil {
 			return nil, err
 		}
@@ -440,7 +440,7 @@ func sheetRange(sheet model.Sheet, ref string) (model.Sheet, error) {
 	}
 
 	var outRows []model.Row
-	for row, err := range sheet.Rows {
+	for row, err := range sheet.All() {
 		if err != nil {
 			return model.Sheet{}, err
 		}
@@ -485,7 +485,7 @@ func cellScalar(sheet model.Sheet, ref string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	for r, err := range sheet.Rows {
+	for r, err := range sheet.All() {
 		if err != nil {
 			return nil, err
 		}
@@ -663,9 +663,9 @@ const maxDenseCells = 10_000_000
 // column count in a second pass once that's known - over the
 // already-materialized grid, not another pass over sheet.Rows itself.
 func sheetGrid(sheet model.Sheet) ([][]any, error) {
-	var grid [][]any
+	grid := make([][]any, 0)
 	var cols int
-	for r, err := range sheet.Rows {
+	for r, err := range sheet.All() {
 		if err != nil {
 			return nil, err
 		}
