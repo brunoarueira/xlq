@@ -125,7 +125,7 @@ func lazySheet(path, name string, date1904 bool, dateStyles map[int]bool) model.
 				for colIndex, display := range cols {
 					cell, ok, err := readCell(f, name, colIndex, rowIndex, display, date1904, dateStyles)
 					if err != nil {
-						yield(model.Row{}, err)
+						yield(model.Row{}, fmt.Errorf("%q: %w", path, err))
 						return
 					}
 					if ok {
