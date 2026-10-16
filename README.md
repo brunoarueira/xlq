@@ -31,6 +31,7 @@ xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
 xlq --table '.Sheet1 | records' path/to/book.xlsx  # aligned table, not JSON
 xlq --csv '.Sheet1 | records' path/to/book.xlsx  # with a header row
 xlq --tsv '.Sheet1' path/to/book.xlsx            # positional, no header
+xlq '.Sheet1.A1' old.xlsx new.xlsx   # same filter on each file, results as an array
 xlq -i '.Sheet1.A1 = "done"' path/to/book.xlsx   # edit a cell in place (.xlsx only)
 xlq --version
 ```
@@ -99,6 +100,24 @@ instead of reading it: `<filter>` must be an assignment
 exactly one cell), not a pipeline. It prints nothing on success,
 matching `yq -i`'s own silence - the edit is the result. csv/tsv/ods
 have no writer yet, so `-i` only supports xlsx.
+
+Passing more than one `<file>` (see
+[ADR-0017](docs/adr/0017-multiple-input-files.md)) maps the *same*
+`<filter>` over each file independently - not a diff, just each file's
+own result placed at that file's own index - collecting them into a
+JSON array in file order:
+
+```sh
+xlq '.Sheet1 | records' old.xlsx new.xlsx
+# [ [ {old file's records...} ], [ {new file's records...} ] ]
+```
+
+A single file's result is completely unaffected by this - still
+printed bare, never wrapped in a one-element array. `--table`/`--csv`/
+`--tsv` and `-i` don't support more than one file (no single tabular
+shape to flatten N results into, and an in-place edit of more than one
+file is out of scope); a read/parse error names which file (by
+position and path) failed.
 
 ## Install
 
