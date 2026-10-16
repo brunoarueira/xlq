@@ -129,12 +129,17 @@ to *every* file uniformly, not per-file - mixing formats across files
 (e.g. diffing an `.xlsx` against a `.csv`) only auto-detects correctly
 when neither resolves to a value, letting each file's own extension
 decide its format as usual. A config `input-format` default forces
-every file to that one format (misreading whichever file isn't
-actually that format); a config `delimiter` default fails outright the
-moment it reaches any `.xlsx`/`.ods` file in the set, since those have
-no delimiter concept to override. `--input-format ""` clears a config
-default for one invocation the same way `--table=false` does;
-`--delimiter ""` has no equivalent (an explicit empty delimiter is
+every file to that one *resolved* format regardless of its own
+extension - a file that isn't actually that format might get silently
+misread, or might fail outright with a read/parse error, depending on
+its actual content. A config `delimiter` default fails the moment any
+file *resolves* to `xlsx`/`ods` (whether from its own extension or
+from an `input-format` override putting it there), since those have no
+delimiter concept to override - pairing a delimiter default with an
+`input-format` override of `csv`/`tsv` avoids that conflict entirely,
+since nothing resolves to `xlsx`/`ods` either way. `--input-format ""`
+clears a config default for one invocation the same way `--table=false`
+does; `--delimiter ""` has no equivalent (an explicit empty delimiter is
 already its own error, not a reset) - a persistent `delimiter` default
 and mixing in an `.xlsx`/`.ods` file are simply incompatible short of
 editing the config file.

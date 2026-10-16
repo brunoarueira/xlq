@@ -22,10 +22,14 @@ filter-over-each-file was chosen, specifically because it needs zero
 grammar changes and directly serves the stated diff/compare use case
 (each file's result sits at its own array index, ready to compare).
 
-ADR-0004 fixed the CLI at exactly two positional args (`<filter>
-<file>`); this ADR is what changes that, the same way ADR-0014 and
-ADR-0016 each changed one piece of an earlier ADR's decision without
-editing it.
+The exactly-two-positional-args shape itself was never an ADR
+decision to begin with - ADR-0004 explicitly deferred the whole `xlq
+'<filter>' <file>` invocation to a later ADR once the grammar existed,
+and no ADR since has pinned the argument *count*; `cobra.ExactArgs(2)`
+is simply how the root command's `RunE` was implemented once ADR-0008
+gave it a grammar to invoke. This ADR is the first to actually decide
+the argument-count question, rather than changing a prior ADR's
+decision the way ADR-0014 and ADR-0016 each did.
 
 ## Decision
 
@@ -137,22 +141,30 @@ That "neither flag set" qualifier matters in exactly the same way the
 table/csv/tsv guard's does: these two also resolve to their
 config-merged, effective value, not just what was explicitly typed. A
 persistent config `input-format` default forces *every* file in the
-set to that one format regardless of its own extension - misreading
-whichever file genuinely isn't that format, not an error, since
-`input.Read` has no way to tell "this came from a default" from "the
-user meant this file specifically." A persistent config `delimiter`
-default is worse: `input.validateDelimiter` already rejects a
-non-zero delimiter outright for `xlsx`/`ods` (no delimiter concept to
-override there), so it fails the whole invocation the moment it
-reaches whichever file in the set isn't `csv`/`tsv`. `--input-format
-""`, explicitly passed, clears an `input-format` default for one
-invocation (the same `Changed`-based escape hatch as `--table=false`);
-`delimiter` has no equivalent - `inputDelimiter` already treats an
-explicit empty value as a distinct, deliberately-rejected error case
-(ADR established back when `--delimiter` first shipped, #28), not a
-reset signal. A persistent `delimiter` default and a multi-file
-invocation that includes any `xlsx`/`ods` file are simply incompatible
-unless the config file itself is edited first.
+set to that one resolved format regardless of its own extension - what
+happens to a file that genuinely isn't that format then depends on its
+actual bytes, not on this ADR: it might be silently misread as
+something plausible-looking but wrong, or the chosen format's own
+reader might reject it outright with a read/parse error, since
+`input.Read` has no way to tell "this format came from a default" from
+"the user meant this file specifically" either way. A persistent
+config `delimiter` default interacts with whichever format each file
+*resolves* to, not its extension - `input.validateDelimiter` already
+rejects a non-zero delimiter outright for a file that resolves to
+`xlsx`/`ods` (no delimiter concept to override there), whether that
+resolution came from the file's own extension or from an `input-format`
+override forcing it there; a delimiter default and an `input-format`
+override of `csv`/`tsv` together face no such conflict, since nothing
+then resolves to `xlsx`/`ods` at all, regardless of a file's actual
+extension. `--input-format ""`, explicitly passed, clears an
+`input-format` default for one invocation (the same `Changed`-based
+escape hatch as `--table=false`); `delimiter` has no equivalent -
+`inputDelimiter` already treats an explicit empty value as a distinct,
+deliberately-rejected error case (established back when `--delimiter`
+first shipped, #28), not a reset signal. A persistent `delimiter`
+default and a multi-file invocation that includes any file resolving
+to `xlsx`/`ods` are simply incompatible unless the config file itself
+is edited first.
 
 ### `sheets` is unaffected
 
