@@ -151,8 +151,10 @@ func TestRootWrongArgCount(t *testing.T) {
 // installed xlq via `go install`, a release tarball, or Homebrew has
 // no docs/ directory alongside the binary at all, so --help (and
 // every flag's own description, which this also covers - cobra prints
-// both together) must never point at one as if it'll be there. Every
-// ADR reference must be a full, resolvable adrURL instead.
+// both together) must never point at one as if it'll be there, and
+// must never mention a bare "ADR-NNNN" either - that was just as
+// unresolvable without a path or URL at all. Every ADR reference must
+// be a full, resolvable adrURL instead.
 func TestHelpNeverReferencesABareLocalDocsPath(t *testing.T) {
 	out, err := run(t, "--help")
 	if err != nil {
@@ -160,8 +162,8 @@ func TestHelpNeverReferencesABareLocalDocsPath(t *testing.T) {
 	}
 
 	withoutURLs := strings.ReplaceAll(out, adrURL, "")
-	if strings.Contains(withoutURLs, "docs/adr") {
-		t.Errorf("--help still references a bare local docs/adr path once every %s URL is stripped out:\n%s", adrURL, withoutURLs)
+	if strings.Contains(withoutURLs, "docs/adr") || strings.Contains(withoutURLs, "ADR-") {
+		t.Errorf("--help still references a bare local docs/adr path or ADR-NNNN mention once every %s URL is stripped out:\n%s", adrURL, withoutURLs)
 	}
 	if !strings.Contains(out, adrURL) {
 		t.Error("--help doesn't reference any ADR URL at all - expected at least one")

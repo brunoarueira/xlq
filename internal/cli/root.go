@@ -34,9 +34,9 @@ func NewRootCommand() *cobra.Command {
 		Long: "xlq is a jq/yq-style command-line processor for spreadsheet files.\n\n" +
 			"<filter> is evaluated against <file> - see\n" +
 			adrURL + "0008-filter-grammar-v1.md\n" +
-			"(and the grammar correction in\n" +
-			adrURL + "0009-correct-filter-grammar-ebnf.md)\n" +
-			"for the v1 grammar - and the result is printed as JSON, unless\n" +
+			"- and the grammar correction in\n" +
+			adrURL + "0009-correct-filter-grammar-ebnf.md\n" +
+			"- for the v1 grammar. The result is printed as JSON, unless\n" +
 			"--table, --csv, or --tsv asks for something else instead.\n\n" +
 			"<file>'s format (xlsx, csv, tsv, ods) is picked from its extension;\n" +
 			"use --input-format to override that for a misnamed file, and\n" +
@@ -45,13 +45,13 @@ func NewRootCommand() *cobra.Command {
 			"independently, collecting the results into a JSON array in file\n" +
 			"order - useful for diffing two exports; --table/--csv/--tsv and\n" +
 			"-i don't support more than one file - see\n" +
-			adrURL + "0017-multiple-input-files.md.\n\n" +
+			adrURL + "0017-multiple-input-files.md\n\n" +
 			"-i/--in-place edits <file> instead of reading it: <filter> must be\n" +
 			"an assignment (\"path = value\"), and only .xlsx is supported - see\n" +
-			adrURL + "0014-in-place-editing.md.\n\n" +
+			adrURL + "0014-in-place-editing.md\n\n" +
 			"A config file (default: os.UserConfigDir()/xlq/config.yaml, override\n" +
 			"with --config) can set defaults for any flag above except -i - see\n" +
-			adrURL + "0015-config-file-for-default-flags.md.",
+			adrURL + "0015-config-file-for-default-flags.md",
 		Example: "  xlq '.Sheet1.A1' report.xlsx\n" +
 			"  xlq '.Sheet1' report.xlsx\n" +
 			"  xlq --compact '.Sheet1' report.xlsx\n" +
