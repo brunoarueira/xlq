@@ -700,7 +700,7 @@ func sheetGrid(sheet model.Sheet) ([][]any, error) {
 		grid[r.Index] = row
 	}
 	for i, row := range grid {
-		if len(row) == cols {
+		if row != nil && len(row) == cols {
 			continue
 		}
 		widened := make([]any, cols)

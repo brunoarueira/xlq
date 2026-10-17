@@ -197,13 +197,15 @@ type Workbook struct {
 }
 
 // CollectRows drains s.Rows into a plain slice, stopping at - and
-// returning - the first error the iterator yields. Only ever needed
-// for a Sheet whose Rows is actually backed by something that can
-// fail (internal/xlsx's own reader); a NewSheet-wrapped Sheet never
-// yields an error, but still has the same call shape, which is what
-// keeps this useful as a single, shared way to materialize a Sheet's
-// rows regardless of which package produced it - every reader's own
-// tests use this rather than duplicating the same drain loop.
+// returning - the first error the iterator yields. Error handling
+// only actually matters for a Sheet whose Rows is backed by something
+// that can fail (internal/xlsx's own reader) - a NewSheet-wrapped
+// Sheet never yields one - but every Sheet has the same call shape
+// either way, which is what keeps this useful as a single, shared way
+// to materialize a Sheet's rows regardless of which package produced
+// it: csv's, ods's, xlsx's, and internal/input's own tests all use
+// this rather than duplicating the same drain loop, whether or not
+// their particular Sheet can actually fail.
 func CollectRows(s Sheet) ([]Row, error) {
 	var rows []Row
 	for r, err := range s.All() {

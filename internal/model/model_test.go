@@ -125,6 +125,18 @@ func TestNewSheetEmpty(t *testing.T) {
 	}
 }
 
+// TestZeroValueSheetRangesAsEmpty guards the nil-Rows branch All()
+// takes that NewSheet's own closure never exercises (NewSheet always
+// sets Rows to a non-nil closure, even for a nil rows slice) - a
+// Sheet{} built directly, without NewSheet, must still be safe to
+// range over rather than panicking on a nil iter.Seq2.
+func TestZeroValueSheetRangesAsEmpty(t *testing.T) {
+	var s Sheet
+	if got := drainRows(t, s); got != nil {
+		t.Errorf("drainRows() = %v, want nil", got)
+	}
+}
+
 func TestNewSheetReproducesItsRowsInOrder(t *testing.T) {
 	want := []Row{
 		{Index: 0, Cells: []Cell{NewStringCell("h").At(0)}},

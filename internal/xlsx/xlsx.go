@@ -89,8 +89,10 @@ func SheetNames(path string) ([]string, error) {
 // lazy consumer ever gets a chance to range over Rows. See
 // docs/adr/0018-streaming-xlsx-reader.md for why this, rather than
 // giving model.Workbook an explicit open/close lifetime of its own,
-// was chosen, and for the "N sheets reopen the file N times" trade-off
-// it accepts.
+// was chosen, and for the trade-off it accepts: Read's own upfront
+// open (for the sheet list and workbook properties) plus one more per
+// sheet actually ranged over, so a query touching N sheets opens the
+// file N+1 times in total, not N.
 func lazySheet(path, name string, date1904 bool, dateStyles map[int]bool) model.Sheet {
 	return model.Sheet{
 		Name: name,

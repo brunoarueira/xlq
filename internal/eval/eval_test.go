@@ -173,6 +173,41 @@ func TestEvalEmptySheetShapesAreEmptyArraysNotNull(t *testing.T) {
 	}
 }
 
+// TestEvalGridOfCellLessRowsIsEmptyArraysNotNull guards a narrower case
+// than TestEvalEmptySheetShapesAreEmptyArraysNotNull: a sheet whose
+// rows are all *present but cell-less* (e.g. internal/csv's own
+// handling of a blank line, which yields Row{Cells: []model.Cell{}},
+// not an absent row). sheetGrid's per-row widening used to key off
+// len(row) == cols alone, which treated a nil placeholder row as
+// already correctly sized whenever cols was itself 0 (true here, since
+// no cell anywhere ever grows it past 0) and left it nil - serializing
+// as null instead of the same empty-array shape every other present
+// row gets.
+func TestEvalGridOfCellLessRowsIsEmptyArraysNotNull(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Blanks", []model.Row{
+		{Index: 0, Cells: []model.Cell{}},
+		{Index: 1, Cells: []model.Cell{}},
+	})}}
+
+	got, err := Eval(mustParse(t, ".Blanks"), wb)
+	if err != nil {
+		t.Fatalf("Eval(\".Blanks\") returned error: %v", err)
+	}
+	want := [][]any{{}, {}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Eval(\".Blanks\") = %#v, want %#v", got, want)
+	}
+}
+
+func mustParse(t *testing.T, input string) filter.Expr {
+	t.Helper()
+	expr, err := filter.Parse(input)
+	if err != nil {
+		t.Fatalf("filter.Parse(%q): %v", input, err)
+	}
+	return expr
+}
+
 func TestEvalInvalid(t *testing.T) {
 	cases := []struct {
 		name  string
