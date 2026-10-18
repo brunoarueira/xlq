@@ -1,6 +1,7 @@
 package model
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -101,37 +102,86 @@ func TestCellFormula(t *testing.T) {
 	}
 }
 
-func TestSheetDimensionsEmpty(t *testing.T) {
-	var s Sheet
-	rows, cols := s.Dimensions()
-	if rows != 0 || cols != 0 {
-		t.Errorf("Dimensions() = (%d, %d), want (0, 0)", rows, cols)
+// drainRows is CollectRows, failing the test immediately on an error
+// instead of returning one (NewSheet's own iterator never actually
+// produces one, since ranging over an in-memory slice can't fail -
+// this is just the straightforward way to assert its content).
+func drainRows(t *testing.T, s Sheet) []Row {
+	t.Helper()
+	got, err := CollectRows(s)
+	if err != nil {
+		t.Fatalf("unexpected error ranging over Sheet.Rows: %v", err)
+	}
+	return got
+}
+
+func TestNewSheetEmpty(t *testing.T) {
+	s := NewSheet("Sheet1", nil)
+	if s.Name != "Sheet1" {
+		t.Errorf("Name = %q, want %q", s.Name, "Sheet1")
+	}
+	if got := drainRows(t, s); got != nil {
+		t.Errorf("drainRows() = %v, want nil", got)
 	}
 }
 
-func TestSheetDimensionsSparse(t *testing.T) {
-	// A sheet with a single cell far from the origin: dimensions
-	// should reflect the bounding box, not a dense allocation.
-	s := Sheet{
-		Name: "Sheet1",
-		Rows: []Row{
-			{Index: 0, Cells: []Cell{NewStringCell("h").At(0)}},
-			{Index: 999, Cells: []Cell{NewNumberCell(42).At(7)}},
-		},
+// TestZeroValueSheetRangesAsEmpty guards the nil-Rows branch All()
+// takes that NewSheet's own closure never exercises (NewSheet always
+// sets Rows to a non-nil closure, even for a nil rows slice) - a
+// Sheet{} built directly, without NewSheet, must still be safe to
+// range over rather than panicking on a nil iter.Seq2.
+func TestZeroValueSheetRangesAsEmpty(t *testing.T) {
+	var s Sheet
+	if got := drainRows(t, s); got != nil {
+		t.Errorf("drainRows() = %v, want nil", got)
 	}
-	rows, cols := s.Dimensions()
-	if rows != 1000 {
-		t.Errorf("rows = %d, want 1000", rows)
+}
+
+func TestNewSheetReproducesItsRowsInOrder(t *testing.T) {
+	want := []Row{
+		{Index: 0, Cells: []Cell{NewStringCell("h").At(0)}},
+		{Index: 999, Cells: []Cell{NewNumberCell(42).At(7)}},
 	}
-	if cols != 8 {
-		t.Errorf("cols = %d, want 8", cols)
+	s := NewSheet("Sheet1", want)
+
+	got := drainRows(t, s)
+	if len(got) != len(want) {
+		t.Fatalf("drainRows() returned %d rows, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if !reflect.DeepEqual(got[i], want[i]) {
+			t.Errorf("row %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestNewSheetStopsOnBreak guards the same "an early break must
+// actually stop the iterator" contract NewSheet's own doc comment
+// relies on - ranging over it and breaking partway through must not
+// panic or keep yielding.
+func TestNewSheetStopsOnBreak(t *testing.T) {
+	s := NewSheet("Sheet1", []Row{
+		{Index: 0}, {Index: 1}, {Index: 2},
+	})
+	var seen []int
+	for r, err := range s.Rows {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		seen = append(seen, r.Index)
+		if r.Index == 1 {
+			break
+		}
+	}
+	if want := []int{0, 1}; len(seen) != len(want) || seen[0] != want[0] || seen[1] != want[1] {
+		t.Errorf("seen = %v, want %v", seen, want)
 	}
 }
 
 func TestWorkbook(t *testing.T) {
 	wb := Workbook{
 		Sheets: []Sheet{
-			{Name: "Sheet1", Rows: []Row{{Index: 0, Cells: []Cell{NewStringCell("a")}}}},
+			NewSheet("Sheet1", []Row{{Index: 0, Cells: []Cell{NewStringCell("a")}}}),
 		},
 	}
 	if len(wb.Sheets) != 1 {

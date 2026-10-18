@@ -8,10 +8,10 @@
 // indexing into a Workbook or a Sheet produces: what a *bare* Sheet
 // value (".Sheet1", with no further Field/Index) serializes to on its
 // own. This package treats it as a dense 2D array ([row][col], sized to
-// Sheet.Dimensions()) - the natural extension of "a whole row" and "a
-// whole column" already being dense 1D arrays, and it's what gives the
-// whole-workbook object (keyed by sheet name) a well-defined value to
-// put under each key.
+// the sheet's own highest row and column index present) - the natural
+// extension of "a whole row" and "a whole column" already being dense
+// 1D arrays, and it's what gives the whole-workbook object (keyed by
+// sheet name) a well-defined value to put under each key.
 //
 // filter.Records (the "records" builtin, ADR-0011) adds two more
 // result shapes: a []map[string]any (the records array itself) and a
@@ -113,7 +113,7 @@ func applyField(base any, name string) (any, error) {
 	case model.Sheet:
 		switch {
 		case columnLetters.MatchString(name):
-			return wholeColumn(v, name), nil
+			return wholeColumn(v, name)
 		case cellReference.MatchString(name):
 			return cellScalar(v, name)
 		case rangeReference.MatchString(name):
@@ -144,7 +144,7 @@ func applyIndex(base any, n int) (any, error) {
 		if n < 1 {
 			return nil, fmt.Errorf("eval: row number must be >= 1 (spreadsheet rows are 1-based), got %d", n)
 		}
-		return wholeRow(v, n), nil
+		return wholeRow(v, n)
 	case []map[string]any:
 		// Indexing into an array produced by filter.Records (ADR-0011):
 		// 0-based, jq-style, per ADR-0008's own deferred note that
@@ -188,23 +188,58 @@ func applyRecords(cur any) (any, error) {
 // still blank (e.g. a formula that evaluated to blank, model.Empty):
 // both produce an all-null record, which is exactly the noise a
 // sheet's sparse representation already omits everywhere else.
+//
+// Every record needs every column's header key, nil-filled where that
+// row has no cell, which means the full column count must be known
+// before any record can be finalized - a later row can still introduce
+// a wider column than every row seen so far. So this makes one pass
+// over sheet.Rows, collecting header info (from row 0, if present),
+// checking the maxDenseCells budget incrementally (on prospective,
+// not-yet-allocated bounds - see sheetGrid's identical reasoning), and
+// buffering every data row; building the actual record objects, keyed
+// by the now-fully-known headers, happens afterward over that
+// in-memory buffer, not a second pass over sheet.Rows itself.
 func sheetRecords(sheet model.Sheet) ([]map[string]any, error) {
-	rows, cols := sheet.Dimensions()
-	cells := int64(rows) * int64(cols)
-	if cells > maxDenseCells {
-		return nil, fmt.Errorf("eval: sheet %q is %d x %d (%d cells), over the %d-cell limit for records; index a specific cell, row, or column instead", sheet.Name, rows, cols, cells, maxDenseCells)
+	headerCells := make(map[int]string) // column index -> header row's own value
+	headerSeen := false
+	var dataRows []model.Row
+	var cols int
+
+	for r, err := range sheet.All() {
+		if err != nil {
+			return nil, err
+		}
+		rowCount := r.Index + 1
+		rowCols := cols
+		for _, c := range r.Cells {
+			if c.Column+1 > rowCols {
+				rowCols = c.Column + 1
+			}
+		}
+		if cells := int64(rowCount) * int64(rowCols); cells > maxDenseCells {
+			return nil, fmt.Errorf("eval: sheet %q is at least %d x %d (%d cells), over the %d-cell limit for records; index a specific cell, row, or column instead", sheet.Name, rowCount, rowCols, cells, maxDenseCells)
+		}
+		cols = rowCols
+
+		if !headerSeen && r.Index == 0 {
+			headerSeen = true
+			for _, c := range r.Cells {
+				if name, ok := headerString(cellValue(c)); ok {
+					headerCells[c.Column] = name
+				}
+			}
+			continue // the header row itself, not a data row
+		}
+		dataRows = append(dataRows, r)
 	}
 
-	headers, err := sheetHeaders(sheet, cols)
+	headers, err := sheetHeaders(headerCells, cols)
 	if err != nil {
 		return nil, err
 	}
 
-	records := make([]map[string]any, 0, len(sheet.Rows))
-	for _, r := range sheet.Rows {
-		if r.Index == 0 {
-			continue // the header row itself, not a data row
-		}
+	records := make([]map[string]any, 0, len(dataRows))
+	for _, r := range dataRows {
 		record := make(map[string]any, cols)
 		for _, h := range headers {
 			record[h] = nil
@@ -226,23 +261,19 @@ func sheetRecords(sheet model.Sheet) ([]map[string]any, error) {
 }
 
 // sheetHeaders returns one header name per column (0..cols-1), per
-// ADR-0011: a non-blank header cell's own cellValue(), stringified -
-// or that column's own A1 letter if the header cell is blank or
-// absent, including when the header row itself doesn't exist at all
-// (sheet.Rows has no Row with Index 0). Two columns resolving to the
-// same rendered name is an error, naming both.
-func sheetHeaders(sheet model.Sheet, cols int) ([]string, error) {
+// ADR-0011: headerCells' own value for a column the header row set
+// (sheetRecords' row-0 pass) - or that column's own A1 letter if the
+// header row left it blank, never set it at all, or doesn't exist in
+// the first place (an empty headerCells covers all three). Two
+// columns resolving to the same rendered name is an error, naming
+// both.
+func sheetHeaders(headerCells map[int]string, cols int) ([]string, error) {
 	headers := make([]string, cols)
 	for j := range headers {
-		headers[j] = columnLetter(j)
-	}
-	// sheet.Rows is ordered ascending by Index, so the header row, if
-	// present, is always sheet.Rows[0].
-	if len(sheet.Rows) > 0 && sheet.Rows[0].Index == 0 {
-		for _, c := range sheet.Rows[0].Cells {
-			if name, ok := headerString(cellValue(c)); ok {
-				headers[c.Column] = name
-			}
+		if name, ok := headerCells[j]; ok {
+			headers[j] = name
+		} else {
+			headers[j] = columnLetter(j)
 		}
 	}
 
@@ -310,36 +341,65 @@ func findSheet(wb model.Workbook, name string) (model.Sheet, bool) {
 
 // wholeColumn returns the column identified by letters (case-insensitive)
 // as a dense array of scalars, one per row from row 1 through the
-// sheet's last row.
-func wholeColumn(sheet model.Sheet, letters string) []any {
+// sheet's last row. It grows the result as rows stream by - sized to
+// the highest row index actually seen - rather than pre-sizing from a
+// separate Sheet.Dimensions() scan (removed, docs/adr/0018): a single
+// pass over the whole sheet is still required (the column's own last
+// row isn't known until iteration ends), but this way it's exactly one
+// pass, not two.
+func wholeColumn(sheet model.Sheet, letters string) ([]any, error) {
 	col := columnIndex(letters)
-	rows, _ := sheet.Dimensions()
-	result := make([]any, rows)
-	for _, r := range sheet.Rows {
+	result := make([]any, 0)
+	for r, err := range sheet.All() {
+		if err != nil {
+			return nil, err
+		}
+		for len(result) <= r.Index {
+			result = append(result, nil)
+		}
 		for _, c := range r.Cells {
 			if c.Column == col {
 				result[r.Index] = cellValue(c)
 			}
 		}
 	}
-	return result
+	return result, nil
 }
 
 // wholeRow returns row n (1-based) as a dense array of scalars, one per
 // column from column 1 through the sheet's last column.
-func wholeRow(sheet model.Sheet, n int) []any {
+//
+// Unlike every other operation in this file, this one genuinely can't
+// early-exit: it's sized to the *sheet's* overall column count, not
+// row n's own width (an existing, deliberately-unchanged behavior -
+// see docs/adr/0018-streaming-xlsx-reader.md), so every row must still
+// be scanned to find the true column bound even once row n itself has
+// been seen. Memory still improves (nothing but the current row's
+// cells is ever resident at once), but time complexity stays a full
+// scan.
+func wholeRow(sheet model.Sheet, n int) ([]any, error) {
 	rowIndex := n - 1
-	_, cols := sheet.Dimensions()
-	result := make([]any, cols)
-	for _, r := range sheet.Rows {
+	result := make([]any, 0)
+	for r, err := range sheet.All() {
+		if err != nil {
+			return nil, err
+		}
+		maxCol := 0
+		for _, c := range r.Cells {
+			if c.Column+1 > maxCol {
+				maxCol = c.Column + 1
+			}
+		}
+		for len(result) < maxCol {
+			result = append(result, nil)
+		}
 		if r.Index == rowIndex {
 			for _, c := range r.Cells {
 				result[c.Column] = cellValue(c)
 			}
-			break
 		}
 	}
-	return result
+	return result, nil
 }
 
 // sheetRange implements the range pattern of applyField's Sheet
@@ -379,9 +439,18 @@ func sheetRange(sheet model.Sheet, ref string) (model.Sheet, error) {
 		c1, c2 = c2, c1
 	}
 
-	out := model.Sheet{Name: fmt.Sprintf("%s!%s", sheet.Name, ref)}
-	for _, row := range sheet.Rows {
-		if row.Index < r1 || row.Index > r2 {
+	var outRows []model.Row
+	for row, err := range sheet.All() {
+		if err != nil {
+			return model.Sheet{}, err
+		}
+		// sheet.Rows is ascending by Index: once a row past the
+		// range's bottom edge has been seen, nothing further in the
+		// sheet can still fall inside it.
+		if row.Index > r2 {
+			break
+		}
+		if row.Index < r1 {
 			continue
 		}
 		var cells []model.Cell
@@ -392,21 +461,21 @@ func sheetRange(sheet model.Sheet, ref string) (model.Sheet, error) {
 			cells = append(cells, c.At(c.Column-c1))
 		}
 		if len(cells) > 0 {
-			out.Rows = append(out.Rows, model.Row{Index: row.Index - r1, Cells: cells})
+			outRows = append(outRows, model.Row{Index: row.Index - r1, Cells: cells})
 		}
 	}
 
-	// Rows (and each row's Cells) were only ever appended in the
+	// outRows (and each row's Cells) were only ever appended in the
 	// ascending order sheet.Rows/row.Cells already guarantee, and the
 	// anchor position is this range's maximum possible row/column, so
 	// it can only ever need appending at the very end to stay sorted.
 	anchorRow, anchorCol := r2-r1, c2-c1
-	if n := len(out.Rows); n == 0 || out.Rows[n-1].Index != anchorRow {
-		out.Rows = append(out.Rows, model.Row{Index: anchorRow, Cells: []model.Cell{model.NewEmptyCell().At(anchorCol)}})
-	} else if last := &out.Rows[n-1]; len(last.Cells) == 0 || last.Cells[len(last.Cells)-1].Column != anchorCol {
+	if n := len(outRows); n == 0 || outRows[n-1].Index != anchorRow {
+		outRows = append(outRows, model.Row{Index: anchorRow, Cells: []model.Cell{model.NewEmptyCell().At(anchorCol)}})
+	} else if last := &outRows[n-1]; len(last.Cells) == 0 || last.Cells[len(last.Cells)-1].Column != anchorCol {
 		last.Cells = append(last.Cells, model.NewEmptyCell().At(anchorCol))
 	}
-	return out, nil
+	return model.NewSheet(fmt.Sprintf("%s!%s", sheet.Name, ref), outRows), nil
 }
 
 // cellScalar returns the scalar value of the cell at the A1 reference
@@ -416,7 +485,10 @@ func cellScalar(sheet model.Sheet, ref string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range sheet.Rows {
+	for r, err := range sheet.All() {
+		if err != nil {
+			return nil, err
+		}
 		if r.Index == row {
 			for _, c := range r.Cells {
 				if c.Column == col {
@@ -425,6 +497,13 @@ func cellScalar(sheet model.Sheet, ref string) (any, error) {
 			}
 			return nil, nil
 		}
+		// sheet.Rows is ascending by Index, so once a row beyond the
+		// target has been seen, the target is absent and the rest of
+		// the sheet - potentially the vast majority of it - never
+		// needs to be read.
+		if r.Index > row {
+			break
+		}
 	}
 	return nil, nil
 }
@@ -432,15 +511,15 @@ func cellScalar(sheet model.Sheet, ref string) (any, error) {
 // maxExcelRow and maxExcelCol are Excel's own real limits (the
 // maximum valid cell address is XFD1048576). A real file can never
 // declare a cell beyond them, which is what ADR-0008 relies on when
-// it calls wholeColumn/wholeRow - each allocates a slice sized from
-// model.Sheet.Dimensions(), with no maxDenseCells check of their own -
-// "never this dangerous": Excel's own limits already bound a full row
-// or column to a few tens of megabytes at most. A range reference
-// (ADR-0012) can state a row or column number straight from filter
-// text, with nothing tying it to any real file's content, so without
-// this check here a range like ".Sheet1[\"A1:A1000000000\"]" could
-// make Dimensions() report a billion rows, and ".A" on it would then
-// try to allocate a slice that size with nothing to stop it.
+// it calls wholeColumn/wholeRow - each grows its result to the highest
+// row/column index actually seen, with no maxDenseCells check of their
+// own - "never this dangerous": Excel's own limits already bound a
+// full row or column to a few tens of megabytes at most. A range
+// reference (ADR-0012) can state a row or column number straight from
+// filter text, with nothing tying it to any real file's content, so
+// without this check here a range like ".Sheet1[\"A1:A1000000000\"]"
+// could make sheetRange report a billion rows, and ".A" on it would
+// then try to grow a slice that size with nothing to stop it.
 const (
 	maxExcelRow = 1_048_576
 	maxExcelCol = 16_384 // column XFD
@@ -521,17 +600,31 @@ func cellValue(c model.Cell) any {
 func toJSON(v any) (any, error) {
 	switch val := v.(type) {
 	case model.Workbook:
+		// sheetGrid already enforces maxDenseCells within one sheet;
+		// this tracks the same budget cumulatively *across* sheets
+		// (PR #24), since many individually-fine sheets can still add
+		// up to too much for a single whole-workbook result. Each
+		// sheet's own grid is still built in full before its
+		// contribution can be added to the running total - its true
+		// (rows, cols) aren't known any earlier than that, now that
+		// Sheet.Dimensions() is gone (docs/adr/0018) - bounded by
+		// sheetGrid's own per-sheet budget check, so this can only
+		// ever over-build by at most one sheet's worth before
+		// rejecting.
 		obj := make(map[string]any, len(val.Sheets))
 		var total int64
 		for _, s := range val.Sheets {
-			rows, cols := s.Dimensions()
-			total += int64(rows) * int64(cols)
-			if total > maxDenseCells {
-				return nil, fmt.Errorf("eval: the workbook's sheets together would need over %d cells for a dense whole-workbook result (%q alone is %d x %d); index a specific sheet, cell, row, or column instead", maxDenseCells, s.Name, rows, cols)
-			}
 			grid, err := sheetGrid(s)
 			if err != nil {
 				return nil, err
+			}
+			var cols int
+			if len(grid) > 0 {
+				cols = len(grid[0])
+			}
+			total += int64(len(grid)) * int64(cols)
+			if total > maxDenseCells {
+				return nil, fmt.Errorf("eval: the workbook's sheets together would need over %d cells for a dense whole-workbook result (%q alone is %d x %d); index a specific sheet, cell, row, or column instead", maxDenseCells, s.Name, len(grid), cols)
 			}
 			obj[s.Name] = grid
 		}
@@ -557,22 +650,62 @@ func toJSON(v any) (any, error) {
 // either one to a few tens of megabytes at most.
 const maxDenseCells = 10_000_000
 
-// sheetGrid returns sheet as a dense 2D array, [row][col], sized to
-// Sheet.Dimensions().
+// sheetGrid returns sheet as a dense 2D array, [row][col]. Rows and
+// the overall column count both grow as sheet.Rows streams by -
+// Sheet.Dimensions() is gone (docs/adr/0018) - with the maxDenseCells
+// budget checked against the running (rows so far) x (cols so far)
+// product on every row: since both factors only ever grow, a running
+// product already over budget can only still be over budget once the
+// sheet's true dimensions are known, so this rejects a huge sheet as
+// soon as that's detectable rather than after scanning all of it -
+// the same accept/reject outcome as the old two-pass check, reached
+// sooner. Every row's own slice is widened to the sheet's final
+// column count in a second pass once that's known - over the
+// already-materialized grid, not another pass over sheet.Rows itself.
 func sheetGrid(sheet model.Sheet) ([][]any, error) {
-	rows, cols := sheet.Dimensions()
-	cells := int64(rows) * int64(cols)
-	if cells > maxDenseCells {
-		return nil, fmt.Errorf("eval: sheet %q is %d x %d (%d cells), over the %d-cell limit for a dense result; index a specific cell, row, or column instead", sheet.Name, rows, cols, cells, maxDenseCells)
-	}
-	grid := make([][]any, rows)
-	for i := range grid {
-		grid[i] = make([]any, cols)
-	}
-	for _, r := range sheet.Rows {
-		for _, c := range r.Cells {
-			grid[r.Index][c.Column] = cellValue(c)
+	grid := make([][]any, 0)
+	var cols int
+	for r, err := range sheet.All() {
+		if err != nil {
+			return nil, err
 		}
+		// Compute this row's prospective contribution to the running
+		// (rows so far) x (cols so far) bound, and check budget on
+		// those prospective values, *before* growing grid to
+		// accommodate r.Index - a single sparse row far out (e.g. one
+		// cell at Excel's real maximum address) must be rejected
+		// without ever allocating a slice sized to get there.
+		rowCount := r.Index + 1
+		rowCols := cols
+		for _, c := range r.Cells {
+			if c.Column+1 > rowCols {
+				rowCols = c.Column + 1
+			}
+		}
+		if cells := int64(rowCount) * int64(rowCols); cells > maxDenseCells {
+			return nil, fmt.Errorf("eval: sheet %q is at least %d x %d (%d cells), over the %d-cell limit for a dense result; index a specific cell, row, or column instead", sheet.Name, rowCount, rowCols, cells, maxDenseCells)
+		}
+		cols = rowCols
+
+		for len(grid) <= r.Index {
+			grid = append(grid, nil)
+		}
+		row := grid[r.Index]
+		for _, c := range r.Cells {
+			for len(row) <= c.Column {
+				row = append(row, nil)
+			}
+			row[c.Column] = cellValue(c)
+		}
+		grid[r.Index] = row
+	}
+	for i, row := range grid {
+		if row != nil && len(row) == cols {
+			continue
+		}
+		widened := make([]any, cols)
+		copy(widened, row)
+		grid[i] = widened
 	}
 	return grid, nil
 }

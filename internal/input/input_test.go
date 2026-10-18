@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/xuri/excelize/v2"
+
+	"github.com/brunoarueira/xlq/internal/model"
 )
 
 func TestParseFormatValid(t *testing.T) {
@@ -189,7 +191,11 @@ func TestReadDelimiterOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read(%q, \"\", ';'): %v", path, err)
 	}
-	if len(wb.Sheets) != 1 || len(wb.Sheets[0].Rows) != 2 {
+	rows, err := model.CollectRows(wb.Sheets[0])
+	if err != nil {
+		t.Fatalf("CollectRows: %v", err)
+	}
+	if len(wb.Sheets) != 1 || len(rows) != 2 {
 		t.Fatalf("Read(%q, \"\", ';') = %+v, want 2 rows", path, wb)
 	}
 }
@@ -206,7 +212,11 @@ func TestReadDelimiterOverridesTSVDefaultToo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read(%q, \"\", ';'): %v", path, err)
 	}
-	if len(wb.Sheets) != 1 || len(wb.Sheets[0].Rows) != 2 {
+	rows, err := model.CollectRows(wb.Sheets[0])
+	if err != nil {
+		t.Fatalf("CollectRows: %v", err)
+	}
+	if len(wb.Sheets) != 1 || len(rows) != 2 {
 		t.Fatalf("Read(%q, \"\", ';') = %+v, want 2 rows", path, wb)
 	}
 }
