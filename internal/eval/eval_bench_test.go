@@ -33,16 +33,22 @@ const (
 )
 
 // genSheet builds a synthetic, dense sheet: every row has a string in
-// column 0 and a number in every other column, so records (ADR-0011)
-// has a real header name to find in column 0 and a realistic
-// fallback-to-letters case in every other column.
+// column 0 and a number in every other column - except row 0, which
+// only has its column-0 string. sheetRecords (ADR-0011) treats row 0
+// as the header row, so this gives records a real header name to find
+// in column 0 and, for every other column, a genuinely absent header
+// cell - the actual fallback-to-letters case, not a numeric header
+// value (which headerString renders as its own JSON text, not a
+// letter fallback, confirmed by a cubic-dev-ai review round on this
+// same PR).
 func genSheet(name string, rows, cols int) model.Sheet {
 	rs := make([]model.Row, rows)
 	for r := 0; r < rows; r++ {
-		cells := make([]model.Cell, cols)
-		cells[0] = model.NewStringCell(fmt.Sprintf("row-%d", r)).At(0)
-		for c := 1; c < cols; c++ {
-			cells[c] = model.NewNumberCell(float64(r*cols + c)).At(c)
+		cells := []model.Cell{model.NewStringCell(fmt.Sprintf("row-%d", r)).At(0)}
+		if r > 0 {
+			for c := 1; c < cols; c++ {
+				cells = append(cells, model.NewNumberCell(float64(r*cols+c)).At(c))
+			}
 		}
 		rs[r] = model.Row{Index: r, Cells: cells}
 	}
