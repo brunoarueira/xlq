@@ -39,6 +39,16 @@ type Index struct {
 
 func (Index) exprNode() {}
 
+// Slice is "[START:END]" (ADR-0020): jq-style positional slicing on
+// Base. Either bound may be omitted (nil, distinct from an explicit
+// 0): ".[1:]", ".[:10]", ".[:]".
+type Slice struct {
+	Base       Expr
+	Start, End *int
+}
+
+func (Slice) exprNode() {}
+
 // Pipe is "Left | Right": evaluates Left, then evaluates Right with its
 // input rebound to Left's result.
 type Pipe struct {

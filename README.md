@@ -25,6 +25,7 @@ xlq -c '.Sheet1' path/to/book.xlsx         # compact JSON, one line
 xlq -r '.Sheet1.A1' path/to/book.xlsx      # a string result, unquoted
 xlq '.Sheet1 | records | .[0].SomeHeader' path/to/book.xlsx  # by header name
 xlq '.Sheet1["A3:C9"]' path/to/book.xlsx  # a rectangular range
+xlq '.Sheet1 | records | .[0:10]' path/to/book.xlsx  # the first 10 records
 xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
 xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
 xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
@@ -74,6 +75,22 @@ sheet's `C3`, not its actual `A1`. This is what makes a sheet with two
 tables side by side addressable at all - narrow a range to one
 table's rows *and* columns before piping into `records`, so the other
 table's columns were never part of the slice to begin with.
+
+Once a value is an ordinary array - a `records` result, or a whole
+column/row (`.Sheet1.B`, `.Sheet1[5]`) - it can be indexed (`.[0]`) or
+sliced (`.[1:10]`, jq-style: 0-based, end-exclusive, a negative bound
+counts from the end, and an out-of-range bound clamps rather than
+erroring) the same way a `jq` array would. This is unrelated to - and
+can't be combined with - the A1-style range above: a range picks a
+rectangular block of a *sheet* by cell address, 1-based, before the
+sheet is ever turned into an array of anything; `[START:END]` slices
+an *already-produced array* by position, 0-based, same as `records`'
+own `.[N]` convention. See
+[ADR-0020](docs/adr/0020-array-slicing.md) for why the two don't mix:
+`.Sheet1[5]` already means "spreadsheet row 5", so `.Sheet1[5:10]`
+meaning "array positions 5 through 9" on that same sheet value would
+silently disagree with it - slice an array you've already produced
+instead, e.g. `.Sheet1 | records | .[0:10]` for the top 10 rows.
 
 `--table` prints a human-readable, column-aligned table instead of
 JSON - particularly useful piped from `records`, where it renders one
