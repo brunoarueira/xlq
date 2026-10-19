@@ -49,15 +49,38 @@ call the existing one from.
 
 ## Decision
 
-### Syntax: a bare name for zero arguments, `name(arg, ...)` otherwise - matching jq exactly
+### Syntax: a bare name for zero arguments, `name(arg, ...)` otherwise - jq-inspired, not identical
 
 jq itself writes a niladic builtin bare, with no empty parens
-(`tonumber`, `length`, `keys`), and a builtin that takes arguments with
-a parenthesized, comma-separated list. This project already follows jq
-syntax wherever the shape already exists (ADR-0020's slice bounds,
-ADR-0021's letter-fallback semantics); the same reasoning applies
-here, which also means `records` needs no syntax change at all to move
-onto this mechanism:
+(`tonumber`, `length`, `keys` - confirmed: `jq 'def foo(): 1; foo()'`
+is a jq syntax error, "expecting IDENT or BINDING"), and separates a
+builtin's own multiple arguments with `;`, not `,` (confirmed: `jq
+'def foo(a, b): a+b; foo(1, 2)'` errors "unexpected ',', expecting
+';' or ')'"). This project deliberately diverges on both points rather
+than matching jq verbatim:
+
+- **`,` as the argument separator**, not `;`: jq's own comma is already
+  a general filter operator meaning "evaluate both sides, emit every
+  result from each" (`1, 2` is itself a two-element stream) - `;`
+  exists specifically so a literal argument list isn't ambiguous with
+  that operator. This grammar has no comma-as-stream-operator meaning
+  at all (map/select, the one feature that might eventually want it,
+  is explicitly out of scope, #86), so the ambiguity `;` solves in jq
+  doesn't exist here - `,` is the unambiguous, more immediately
+  familiar choice (every C-like language's own call syntax) with
+  nothing to lose by diverging.
+- **Empty parens (`name()`) are accepted as an alternative, equivalent
+  zero-argument form**, not rejected: a deliberate, forgiving
+  convenience (symmetric with the bare form, not a functional need),
+  consistent with this project's general preference for accepting a
+  reasonable alternative spelling over erroring on it.
+
+This project already follows jq syntax wherever the shape already
+exists and there's no reason to diverge (ADR-0020's slice bounds,
+ADR-0021's letter-fallback semantics); here, the bare-name-for-niladic
+shape is kept (so `records` needs no syntax change to move onto this
+mechanism), while the argument-list punctuation is consciously
+jq-inspired rather than copied:
 
 ```
 step     = path | builtin
@@ -108,18 +131,44 @@ would mean two ways to represent the exact same thing. `filter.Records`
 is removed; `internal/eval`'s `case filter.Records:` becomes a `"records"`
 case inside the new builtin dispatch (below).
 
-### Parsing: any bare `IDENT` reaching `parseStep` is unambiguously a builtin reference
+### Parsing: a small, static name list, checked in the parser - not full validation deferred to eval
 
-`parseStep` is only ever called for a pipeline step after a `|`
-(`Parse`'s own first segment always goes through `parsePath`, which
-requires a leading `.`). An identifier with no leading dot can
-therefore never be a valid path start - so seeing one here already
-means "builtin," with no lookahead or special-casing needed to tell it
-apart from anything else:
+A first draft of this had `parseStep` treat *any* bare `tokIdent` as a
+builtin reference unconditionally - true that it can never be a valid
+path start (`parsePath` requires a leading `.`), but caught in review:
+today, *before* this ADR, a misspelled `.Sheet1 | recrods` already
+fails at parse time with a precise position (`parsePath`'s own
+`expected "." at position N` - "records" is the only string
+`parseStep` recognizes, so anything else falls through to `parsePath`
+and fails there). Accepting every identifier unconditionally would
+quietly regress that to a vaguer, **position-less** eval-time error
+("eval: unknown builtin %q") for exactly this case - this AST, like
+`Field`/`Index`/`Slice`, carries no source position at all, matching
+how every other eval-time error in this package already reads, so
+there's nowhere to attach one after the fact.
+
+Keeping a small, static set of recognized names *in the parser* avoids
+that regression without pulling `internal/eval`'s actual
+implementations (or their argument semantics) into `internal/filter` -
+the package doc comment's own separation of concerns ("this one only
+covers syntax") still holds, since the set is just names, nothing
+about what a name does or what arguments it needs:
 
 ```go
+// builtinNames are the identifiers parseStep recognizes as a builtin
+// reference rather than a malformed path - checked here so a
+// misspelled name still fails at parse time, with a precise position,
+// the same as it would have before this existed as a general
+// mechanism (when "records" was the only name parseStep knew at all).
+// internal/eval's own applyBuiltin is still where each name's actual
+// argument count/types are validated - this set exists only to keep
+// typo-detection at parse time, not to duplicate that validation.
+var builtinNames = map[string]bool{
+	"records": true,
+}
+
 func (p *parser) parseStep() (Expr, error) {
-	if p.peek().kind == tokIdent {
+	if p.peek().kind == tokIdent && builtinNames[p.peek().text] {
 		name := p.advance().text
 		args, err := p.parseBuiltinArgs()
 		if err != nil {
@@ -210,13 +259,16 @@ already-numeric value is a no-op pass-through, also matching jq.
 ## Consequences
 
 `internal/filter` gains three lexer tokens, one AST node (`Builtin`,
-replacing `Records` entirely), and a small parser addition
-(`parseBuiltinArgs`, reusing `parseValue` unchanged); every existing
-filter - including every use of `records` - parses to the same
-evaluated result as before, just via `Builtin{Name: "records"}`
-instead of `Records{}`. `internal/eval` gains `applyBuiltin` as the one
-dispatch point every future literal-argument builtin is added to,
-replacing what would otherwise be a new hard-coded AST case per
-builtin. `map`/`select`/`group_by` (#86) are explicitly not unblocked
-by this - they need a filter-expression argument this mechanism
-doesn't parse at all, and stay on their own, separate design.
+replacing `Records` entirely), a small parser addition
+(`parseBuiltinArgs`, reusing `parseValue` unchanged), and the
+`builtinNames` set; every existing filter - including every use of
+`records` - parses to the same evaluated result as before, just via
+`Builtin{Name: "records"}` instead of `Records{}`. `internal/eval`
+gains `applyBuiltin` as the one dispatch point every future
+literal-argument builtin is added to. Adding a new builtin is now two
+small, explicit additions - one name in `builtinNames`, one `case` in
+`applyBuiltin` - replacing what used to be a new hard-coded AST type
+plus a new special-cased parser branch per builtin. `map`/`select`/
+`group_by` (#86) are explicitly not unblocked by this - they need a
+filter-expression argument this mechanism doesn't parse at all, and
+stay on their own, separate design.
