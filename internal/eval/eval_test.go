@@ -383,6 +383,21 @@ func TestEvalRecordsIndexAndFieldAccess(t *testing.T) {
 	}{
 		{"field by header name", `.Sheet1 | records | .[0].hello`, true},
 		{"field by fallback column-letter header", `.Sheet1 | records | .[1].C`, testDate.Format(time.RFC3339)},
+		{
+			"column letter access falls back to position when the header is a real, different name (ADR-0021)",
+			`.Sheet1 | records | .[0].A`,
+			true, // column A's own value; its header is "hello", not "A"
+		},
+		{
+			"column letter beyond the record's own width is null, not an error",
+			`.Sheet1 | records | .[0].ZZZ`,
+			nil,
+		},
+		{
+			"an overlong column letter is rejected before it could overflow, not treated as a field name match either",
+			`.Sheet1 | records | .[0].ZZZZZZZZZZZZZZZZZZZZZZZZ`,
+			nil,
+		},
 		{"missing field on a record is null, not an error", `.Sheet1 | records | .[0].NoSuchHeader`, nil},
 		{"out-of-range index is null, not an error", `.Sheet1 | records | .[99]`, nil},
 		{
