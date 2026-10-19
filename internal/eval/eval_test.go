@@ -103,6 +103,45 @@ func TestEvalValid(t *testing.T) {
 		},
 		{"pipe is a no-op when followed by identity", ".Sheet1.A1 | .", "hello"},
 		{"pipe rebinds identity to the left result", ".Sheet1 | .A1", "hello"},
+		{"index into a column array (ADR-0020)", ".Sheet1.B[0]", 42.0},
+		{"negative index into a column array counts from the end", ".Sheet1.B[-3]", 42.0},
+		{"out-of-range index into a column array is null", ".Sheet1.B[99]", nil},
+		{"index into a row array", ".Sheet1[1][1]", 42.0},
+		{
+			"slice a column array",
+			".Sheet1.B[0:2]",
+			[]any{42.0, nil},
+		},
+		{
+			"slice with an omitted start",
+			".Sheet1.B[:2]",
+			[]any{42.0, nil},
+		},
+		{
+			"slice with an omitted end",
+			".Sheet1.B[1:]",
+			[]any{nil, nil},
+		},
+		{
+			"slice with both bounds omitted is the whole array",
+			".Sheet1.B[:]",
+			[]any{42.0, nil, nil},
+		},
+		{
+			"slice with negative bounds counts from the end",
+			".Sheet1.B[-2:-1]",
+			[]any{nil},
+		},
+		{
+			"slice clamps an out-of-range end rather than erroring",
+			".Sheet1.B[0:1000]",
+			[]any{42.0, nil, nil},
+		},
+		{
+			"slice with end before start is an empty array, not an error",
+			".Sheet1.B[2:0]",
+			[]any{},
+		},
 	}
 
 	for _, tc := range cases {
@@ -221,8 +260,10 @@ func TestEvalInvalid(t *testing.T) {
 		{"field on a scalar", ".Sheet1.A1.foo"},
 		{"index on a scalar", ".Sheet1.A1[0]"},
 		{"field on a row array", ".Sheet1[1].A1"},
-		{"index on a column array", ".Sheet1.B[0]"},
 		{"an assignment filter requires --in-place, not Eval", `.Sheet1.A1 = "x"`},
+		{"slicing a sheet directly", `.Sheet1[1:3]`},
+		{"slicing a workbook", `.[1:3]`},
+		{"slicing a scalar", ".Sheet1.A1[0:1]"},
 	}
 
 	for _, tc := range cases {
@@ -351,6 +392,37 @@ func TestEvalRecordsIndexAndFieldAccess(t *testing.T) {
 		},
 		{"negative index too far back is null, not an error", `.Sheet1 | records | .[-99]`, nil},
 		{"records on a missing sheet propagates null", `.NoSuchSheet | records`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := evalString(t, tc.input)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEvalRecordsSlicing exercises ADR-0020's own motivating case:
+// slicing a records array, e.g. "give me the top N rows".
+func TestEvalRecordsSlicing(t *testing.T) {
+	record0 := map[string]any{"hello": true, "42": nil, "C": nil}
+	record1 := map[string]any{"hello": nil, "42": nil, "C": testDate.Format(time.RFC3339)}
+
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"first record via a slice", `.Sheet1 | records | .[0:1]`, []map[string]any{record0}},
+		{"whole array via an open slice", `.Sheet1 | records | .[0:]`, []map[string]any{record0, record1}},
+		{"out-of-range end clamps instead of erroring", `.Sheet1 | records | .[0:100]`, []map[string]any{record0, record1}},
+		{"negative start counts from the end", `.Sheet1 | records | .[-1:]`, []map[string]any{record1}},
+		{"end before start is an empty array, not an error", `.Sheet1 | records | .[1:0]`, []map[string]any{}},
+		{"a slice still composes with further field access", `.Sheet1 | records | .[0:1][0].hello`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

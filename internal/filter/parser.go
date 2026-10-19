@@ -9,16 +9,18 @@ import (
 // pipeline or an in-place assignment - per
 // docs/adr/0008-filter-grammar-v1.md, the grammar correction in
 // docs/adr/0009-correct-filter-grammar-ebnf.md, the builtin-step
-// addition in docs/adr/0011-header-aware-record-output.md, and the
-// assignment form added by docs/adr/0014-in-place-editing.md:
+// addition in docs/adr/0011-header-aware-record-output.md, the
+// assignment form added by docs/adr/0014-in-place-editing.md, and the
+// slice form added by docs/adr/0020-array-slicing.md:
 //
 //	filter     = pipeline | assignment
 //	pipeline   = path ( "|" step )*
 //	step       = path | builtin
 //	builtin    = "records"
 //	path       = "." ( head tail* )?
-//	head       = IDENT | "[" STRING "]" | "[" INT "]"
-//	tail       = "." IDENT | "[" STRING "]" | "[" INT "]"
+//	head       = IDENT | "[" STRING "]" | "[" INT "]" | "[" slice "]"
+//	tail       = "." IDENT | "[" STRING "]" | "[" INT "]" | "[" slice "]"
+//	slice      = INT? ":" INT?
 //	assignment = path "=" value
 //	value      = STRING | NUMBER | INT | "true" | "false" | "null"
 //
@@ -148,10 +150,17 @@ func (p *parser) parsePath() (Expr, error) {
 	}
 }
 
-// parseBracketSuffix parses the STRING or INT and closing "]" of a
-// "[" STRING "]" | "[" INT "]" suffix; the opening "[" has already been
-// consumed.
+// parseBracketSuffix parses the STRING, INT, or slice and closing "]"
+// of a "[" STRING "]" | "[" INT "]" | "[" slice "]" suffix (ADR-0020
+// adds the slice form; the opening "[" has already been consumed.
+// Telling a slice from a plain index needs only one token of
+// lookahead: an INT immediately followed by "]" is Index, the same as
+// always; an INT immediately followed by ":" - or a bare ":" with no
+// leading INT at all - is a Slice instead.
 func (p *parser) parseBracketSuffix(base Expr) (Expr, error) {
+	if p.peek().kind == tokColon {
+		return p.parseSlice(base, nil)
+	}
 	var result Expr
 	switch p.peek().kind {
 	case tokString:
@@ -162,15 +171,40 @@ func (p *parser) parseBracketSuffix(base Expr) (Expr, error) {
 		if err != nil {
 			return nil, fmt.Errorf("filter: invalid integer %q at position %d", tok.text, tok.pos)
 		}
+		if p.peek().kind == tokColon {
+			return p.parseSlice(base, &n)
+		}
 		result = Index{Base: base, N: n}
 	default:
-		return nil, fmt.Errorf("filter: expected a string or integer inside \"[...]\" at position %d, found %s", p.peek().pos, p.peek().describe())
+		return nil, fmt.Errorf("filter: expected a string, integer, or slice inside \"[...]\" at position %d, found %s", p.peek().pos, p.peek().describe())
 	}
 	if p.peek().kind != tokRBracket {
 		return nil, fmt.Errorf("filter: expected %q at position %d, found %s", "]", p.peek().pos, p.peek().describe())
 	}
 	p.advance()
 	return result, nil
+}
+
+// parseSlice parses the rest of a "[" INT? ":" INT? "]" suffix
+// (ADR-0020): the leading ":" (and, if present, the INT already
+// parsed as a candidate start bound by parseBracketSuffix), an
+// optional end INT, and the closing "]".
+func (p *parser) parseSlice(base Expr, start *int) (Expr, error) {
+	p.advance() // ":"
+	var end *int
+	if p.peek().kind == tokInt {
+		tok := p.advance()
+		n, err := strconv.Atoi(tok.text)
+		if err != nil {
+			return nil, fmt.Errorf("filter: invalid integer %q at position %d", tok.text, tok.pos)
+		}
+		end = &n
+	}
+	if p.peek().kind != tokRBracket {
+		return nil, fmt.Errorf("filter: expected %q at position %d, found %s", "]", p.peek().pos, p.peek().describe())
+	}
+	p.advance()
+	return Slice{Base: base, Start: start, End: end}, nil
 }
 
 // parseValue parses an assignment's right-hand side (ADR-0014):

@@ -45,6 +45,41 @@ func TestParseValid(t *testing.T) {
 			Index{Field{Identity{}, "Sheet1"}, -1},
 		},
 		{
+			"slice with both bounds",
+			".Sheet1[1:10]",
+			Slice{Field{Identity{}, "Sheet1"}, intPtr(1), intPtr(10)},
+		},
+		{
+			"slice with an omitted start",
+			".Sheet1[:10]",
+			Slice{Field{Identity{}, "Sheet1"}, nil, intPtr(10)},
+		},
+		{
+			"slice with an omitted end",
+			".Sheet1[1:]",
+			Slice{Field{Identity{}, "Sheet1"}, intPtr(1), nil},
+		},
+		{
+			"slice with both bounds omitted",
+			".Sheet1[:]",
+			Slice{Field{Identity{}, "Sheet1"}, nil, nil},
+		},
+		{
+			"slice with negative bounds (semantic validity is the evaluator's job)",
+			".Sheet1[-5:-1]",
+			Slice{Field{Identity{}, "Sheet1"}, intPtr(-5), intPtr(-1)},
+		},
+		{
+			"slice directly on identity",
+			".[1:10]",
+			Slice{Identity{}, intPtr(1), intPtr(10)},
+		},
+		{
+			"slice chained with further field access",
+			".Sheet1[1:10][0].A1",
+			Field{Index{Slice{Field{Identity{}, "Sheet1"}, intPtr(1), intPtr(10)}, 0}, "A1"},
+		},
+		{
 			"chained row then further field access",
 			".Sheet1[5].A1",
 			Field{Index{Field{Identity{}, "Sheet1"}, 5}, "A1"},
@@ -186,6 +221,10 @@ func TestParseInvalid(t *testing.T) {
 		{"assignment with trailing garbage after the value", `.Sheet1.A1 = "x" extra`},
 		{"double equals has no value on the right of the first", `.Sheet1.A1 == "x"`},
 		{"assignment target can't itself contain a pipe", `.Sheet1 | records = "x"`},
+		{"unterminated slice", ".Sheet1[1:"},
+		{"slice with a string bound", `.Sheet1[1:"x"]`},
+		{"slice with a second colon", ".Sheet1[1:2:3]"},
+		{"slice bound separated by a stray character", ".Sheet1[1 2:3]"},
 	}
 
 	for _, tc := range cases {
@@ -196,6 +235,10 @@ func TestParseInvalid(t *testing.T) {
 		})
 	}
 }
+
+// intPtr returns a pointer to n, for building a Slice's *int bounds in
+// test expectations.
+func intPtr(n int) *int { return &n }
 
 func TestParseIntegerOverflowReportsIntTokenPosition(t *testing.T) {
 	// "9223372036854775808" (one past math.MaxInt64) starts at byte 2,

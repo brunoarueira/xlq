@@ -77,6 +77,12 @@ func eval(expr filter.Expr, cur any) (any, error) {
 			return nil, err
 		}
 		return applyIndex(base, e.N)
+	case filter.Slice:
+		base, err := eval(e.Base, cur)
+		if err != nil {
+			return nil, err
+		}
+		return applySlice(base, e.Start, e.End)
 	case filter.Pipe:
 		left, err := eval(e.Left, cur)
 		if err != nil {
@@ -146,25 +152,103 @@ func applyIndex(base any, n int) (any, error) {
 		}
 		return wholeRow(v, n)
 	case []map[string]any:
-		// Indexing into an array produced by filter.Records (ADR-0011):
-		// 0-based, jq-style, per ADR-0008's own deferred note that
-		// indexing an already-produced array - as opposed to a
-		// spreadsheet row number - should be. A negative index counts
-		// from the end (jq's own convention: .[-1] is the last
-		// element), not merely "no further than -1" - matching jq
-		// fully, not just its 0-based-from-the-front half. Still out
-		// of range (too high, or too negative even after counting
-		// back from the end) is null, not an error.
-		if n < 0 {
-			n += len(v)
-		}
-		if n < 0 || n >= len(v) {
-			return nil, nil
-		}
-		return v[n], nil
+		// Indexing into an array produced by filter.Records (ADR-0011).
+		return indexArray(v, n), nil
+	case []any:
+		// Indexing into an already-produced row/column array
+		// (wholeColumn/wholeRow's result), e.g. ".Sheet1.A[0]" - the
+		// other half of ADR-0008's deferred "indexing an already-
+		// produced array" note, closed by ADR-0020 alongside slicing.
+		return indexArray(v, n), nil
 	default:
 		return nil, fmt.Errorf("eval: cannot index %s with [%d] - not indexable further in v1", describeType(base), n)
 	}
+}
+
+// indexArray implements jq-style 0-based indexing, generic over any
+// array element type produced by this package ([]map[string]any from
+// records, []any from wholeColumn/wholeRow - ADR-0011, generalized by
+// ADR-0020): a negative index counts from the end (jq's own
+// convention: .[-1] is the last element), not merely "no further than
+// -1" - matching jq fully, not just its 0-based-from-the-front half.
+// Still out of range (too high, or too negative even after counting
+// back from the end) is null, not an error.
+func indexArray[T any](v []T, n int) any {
+	if n < 0 {
+		n += len(v)
+	}
+	if n < 0 || n >= len(v) {
+		return nil
+	}
+	return v[n]
+}
+
+// applySlice implements filter.Slice (ADR-0020): jq-style positional
+// slicing, 0-based and end-exclusive. start/end are nil for an
+// omitted bound (".[1:]", ".[:10]", ".[:]").
+//
+// model.Sheet and model.Workbook are deliberately excluded, each with
+// its own clear error rather than a third, conflicting way to express
+// a row range: ".Sheet1[5]" already means "spreadsheet row 5"
+// (1-based, wholeRow), so ".Sheet1[5:10]" meaning "0-based array
+// positions 5 through 9" right next to it would be a foot-gun on the
+// exact same receiver type - and a row range is already expressible,
+// unambiguously, via ADR-0012's own ".Sheet1[\"A5:J10\"]".
+func applySlice(base any, start, end *int) (any, error) {
+	switch v := base.(type) {
+	case nil:
+		return nil, nil
+	case model.Workbook:
+		return nil, fmt.Errorf("eval: cannot slice a workbook with [START:END]; select a sheet first, then slice an array it produces, e.g. .Sheet1.A[1:10] or .Sheet1 | records | .[0:10]")
+	case model.Sheet:
+		return nil, fmt.Errorf("eval: cannot slice a sheet with [START:END]; use an A1-style range reference instead, e.g. [\"A1:C10\"]")
+	case []map[string]any:
+		s, e := resolveSliceBounds(start, end, len(v))
+		return v[s:e], nil
+	case []any:
+		s, e := resolveSliceBounds(start, end, len(v))
+		return v[s:e], nil
+	default:
+		return nil, fmt.Errorf("eval: cannot slice %s with [START:END] - not sliceable in v1", describeType(base))
+	}
+}
+
+// resolveSliceBounds turns start/end (nil for an omitted bound) into
+// concrete, in-range [s, e) indices into a length-length array:
+// negative bounds count from the end, and an out-of-range bound
+// clamps rather than erroring - unlike indexArray's "out of range is
+// null", slicing has no single obvious "absent slice" value to fall
+// back on, and clamping matches jq's own actual behavior (".[0:1000]"
+// on a 3-element array is simply ".[0:3]"). If, after resolving, end
+// is still before start, the result is an empty slice, not an error -
+// also matching jq (".[2:0]" is "[]").
+func resolveSliceBounds(start, end *int, length int) (int, int) {
+	s := clampBound(start, 0, length)
+	e := clampBound(end, length, length)
+	if e < s {
+		e = s
+	}
+	return s, e
+}
+
+// clampBound resolves one optional slice bound: def if bound is nil,
+// otherwise bound's value counted from the end if negative, then
+// clamped to [0, length].
+func clampBound(bound *int, def, length int) int {
+	if bound == nil {
+		return def
+	}
+	n := *bound
+	if n < 0 {
+		n += length
+	}
+	if n < 0 {
+		n = 0
+	}
+	if n > length {
+		n = length
+	}
+	return n
 }
 
 // applyRecords implements the "records" builtin (ADR-0011): an array of
