@@ -104,7 +104,7 @@ func TestEvalValid(t *testing.T) {
 		{"pipe is a no-op when followed by identity", ".Sheet1.A1 | .", "hello"},
 		{"pipe rebinds identity to the left result", ".Sheet1 | .A1", "hello"},
 		{"index into a column array (ADR-0020)", ".Sheet1.B[0]", 42.0},
-		{"negative index into a column array counts from the end", ".Sheet1.B[-1]", nil},
+		{"negative index into a column array counts from the end", ".Sheet1.B[-3]", 42.0},
 		{"out-of-range index into a column array is null", ".Sheet1.B[99]", nil},
 		{"index into a row array", ".Sheet1[1][1]", 42.0},
 		{

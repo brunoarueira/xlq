@@ -80,12 +80,15 @@ Once a value is an ordinary array - a `records` result, or a whole
 column/row (`.Sheet1.B`, `.Sheet1[5]`) - it can be indexed (`.[0]`) or
 sliced (`.[1:10]`, jq-style: 0-based, end-exclusive, a negative bound
 counts from the end, and an out-of-range bound clamps rather than
-erroring) the same way a `jq` array would. This is unrelated to - and
-can't be combined with - the A1-style range above: a range picks a
-rectangular block of a *sheet* by cell address, 1-based, before the
-sheet is ever turned into an array of anything; `[START:END]` slices
-an *already-produced array* by position, 0-based, same as `records`'
-own `.[N]` convention. See
+erroring) the same way a `jq` array would. `[START:END]` can't be
+applied *directly* to a sheet or a range - `.Sheet1[5:10]` is a clear
+error, not "rows 5 through 9" - but a range composes with slicing just
+fine once it's piped into something array-shaped, e.g.
+`.Sheet1["A3:C9"] | records | .[0:5]`: a range picks a rectangular
+block of a *sheet* by cell address, 1-based, before the sheet is ever
+turned into an array of anything; `[START:END]` slices an
+*already-produced array* by position, 0-based, same as `records`' own
+`.[N]` convention. See
 [ADR-0020](docs/adr/0020-array-slicing.md) for why the two don't mix:
 `.Sheet1[5]` already means "spreadsheet row 5", so `.Sheet1[5:10]`
 meaning "array positions 5 through 9" on that same sheet value would

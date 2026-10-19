@@ -8,10 +8,11 @@
 package filter
 
 // Expr is a parsed filter expression: one of Identity, Field, Index,
-// Pipe, Records, or Assign. What a Field or Index node actually does
-// (sheet lookup, column or A1 cell access, row access, ...) depends on
-// the runtime type it's evaluated against - the AST itself is
-// deliberately untyped beyond this, per ADR-0008.
+// Slice, Pipe, Records, or Assign. What a Field, Index, or Slice node
+// actually does (sheet lookup, column or A1 cell access, row access,
+// positional slicing, ...) depends on the runtime type it's evaluated
+// against - the AST itself is deliberately untyped beyond this, per
+// ADR-0008 (Slice added by ADR-0020).
 type Expr interface {
 	exprNode()
 }

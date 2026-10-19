@@ -199,7 +199,7 @@ func applySlice(base any, start, end *int) (any, error) {
 	case nil:
 		return nil, nil
 	case model.Workbook:
-		return nil, fmt.Errorf("eval: cannot slice a workbook with [START:END]; select a sheet first, e.g. .Sheet1[1:10] or .Sheet1[\"A1:C10\"]")
+		return nil, fmt.Errorf("eval: cannot slice a workbook with [START:END]; select a sheet first, then slice an array it produces, e.g. .Sheet1.A[1:10] or .Sheet1 | records | .[0:10]")
 	case model.Sheet:
 		return nil, fmt.Errorf("eval: cannot slice a sheet with [START:END]; use an A1-style range reference instead, e.g. [\"A1:C10\"]")
 	case []map[string]any:
