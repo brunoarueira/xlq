@@ -58,7 +58,11 @@ slice    = INT? ":" INT?
 
 A new `tokColon` token for `:` is the only lexer addition - `INT`
 already lexes a leading `-` (`lexNumber`, unchanged), so a negative
-slice bound (`.[-5:-1]`) needs no new lexer work at all.
+slice bound (`.[-5:-1]`) needs no new lexer work at all. `token.describe`
+gets a matching case alongside it, returning `":"` the same way every
+other punctuation token already does - skipping it would leave a
+malformed slice's parser error (e.g. a stray `:` where a value was
+expected) naming an empty string instead of `":"`.
 
 The parser needs exactly one token of lookahead to stay unambiguous
 with the existing `"[" INT "]"` form: `parseBracketSuffix` already
@@ -179,11 +183,38 @@ so `.Sheet1[5:10]` sitting right next to it but meaning "0-based array
 positions 5 through 9" would be a genuine foot-gun on the exact same
 receiver type - and a row range is already expressible, unambiguously,
 via ADR-0012's own `.Sheet1["A5:J10"]`. `applySlice`'s `model.Sheet`
-case (and `model.Workbook`, for the same reason one level up) returns:
+case returns:
 
 ```go
 return nil, fmt.Errorf("eval: cannot slice a sheet with [START:END]; use an A1-style range reference instead, e.g. [\"A1:C10\"]")
 ```
+
+`model.Workbook` is excluded for the same underlying reason (no
+established 0-based convention to extend - a workbook isn't an array
+of anything), but needs its own, workbook-shaped error rather than
+reusing the sheet one verbatim, since a workbook can't be sliced *or*
+range-referenced directly - a sheet has to be selected first:
+
+```go
+return nil, fmt.Errorf("eval: cannot slice a workbook with [START:END]; select a sheet first, e.g. .Sheet1[1:10] or .Sheet1[\"A1:C10\"]")
+```
+
+This is narrower than "0-based and 1-based numbering shouldn't coexist
+anywhere in the grammar" - that coexistence already exists and is
+fine: `.Sheet1.A[4]` (0-based, the 5th element of column A's array)
+and `.Sheet1[5]` (1-based, spreadsheet row 5) refer to the same row by
+two different numbers, and a user is already expected to know that
+once a value has left `model.Sheet` - via `.A`, `records`, or
+`wholeRow`'s own `[N]` result - it's an ordinary array and every
+further `[N]`/`[START:END]` on it is 0-based, jq-style, with no
+exception (`records`' `.[N]` already established this before this ADR
+existed). What this ADR actually avoids is two *different* numbering
+conventions on the *same* syntactic form applied to the *same*
+receiver type: `model.Sheet` itself keeps its own, pre-existing,
+spreadsheet-flavored `[N]` convention untouched, and simply isn't
+offered the array-flavored `[START:END]` form at all, rather than
+offering it with a numbering base that would silently disagree with
+its sibling `[N]` on the very same value.
 
 `nil` propagates as `nil` (missing-sheet-field-then-slice stays null,
 matching every other operation's "field/index on null is null"
@@ -257,3 +288,13 @@ slicing at all. Nothing about `model.Sheet`'s own `[N]`/`["A1:C10"]`
 dispatch changes - slicing a sheet directly is a clear error pointing
 at the range-reference syntax that already covers that need, not a
 second, conflicting way to express the same thing.
+
+A query can now mix a 1-based spreadsheet row number and a 0-based
+array position in the same filter - `.Sheet1.A[4]` and `.Sheet1[5]`
+both land on row 5 - which is new (plain `[N]` indexing into `[]any`
+didn't work at all before this ADR). This is accepted deliberately, not
+overlooked: it's the same split `records`' own `.[N]` already
+introduced, consistently applied to every array value regardless of
+which operation produced it, and keeping `model.Sheet`'s own `[N]`
+untouched (rather than somehow making it 0-based to match) would break
+far more - every existing filter using `.Sheet1[N]` today.
