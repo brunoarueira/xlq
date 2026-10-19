@@ -14,9 +14,13 @@
 // sheet name) a well-defined value to put under each key.
 //
 // filter.Records (the "records" builtin, ADR-0011) adds two more
-// result shapes: a []map[string]any (the records array itself) and a
-// map[string]any (one record, once indexed into). Both are already
-// JSON-marshalable as-is, so toJSON doesn't need a case for either.
+// public result shapes: a []map[string]any (the records array itself)
+// and a map[string]any (one record, once indexed into). Internally,
+// during evaluation, these are actually []record/record (ADR-0021,
+// carrying header/column-letter metadata applyField's own fallback
+// needs) - toJSON flattens either down to the public map shape before
+// Eval returns, so nothing outside this package ever sees record at
+// all.
 //
 // A range reference (ADR-0012, e.g. ".Sheet1[\"A3:C9\"]") adds no new
 // shape at all: it's a third pattern applyField recognizes on a Sheet,
@@ -57,9 +61,11 @@ func Eval(expr filter.Expr, wb model.Workbook) (any, error) {
 
 // eval walks expr, threading a "current value" that may be a
 // model.Workbook, a model.Sheet, a []any (an already-resolved row or
-// column), a scalar, or nil - per ADR-0008's evaluation table. Sheets
-// and workbooks are only converted to their final JSON shape once, in
-// Eval, since a Field/Index still needs to see the real model type to
+// column), a record or []record (ADR-0011/ADR-0021, before toJSON
+// flattens either to its public map shape), a scalar, or nil - per
+// ADR-0008's evaluation table. Sheets, workbooks, and records are only
+// converted to their final JSON shape once, in Eval, since a
+// Field/Index/Slice still needs to see the real internal type to
 // dispatch correctly.
 func eval(expr filter.Expr, cur any) (any, error) {
 	switch e := expr.(type) {
@@ -127,12 +133,29 @@ func applyField(base any, name string) (any, error) {
 		default:
 			return nil, fmt.Errorf("eval: %q is not a valid column letter, cell reference, or range on sheet %q", name, v.Name)
 		}
-	case map[string]any:
-		// A single record, produced by filter.Records (ADR-0011): a
-		// missing key is null, jq's own convention for a missing
-		// object key - not an error, unlike every other "not
-		// indexable further" case below.
-		return v[name], nil
+	case record:
+		// A single record, produced by filter.Records (ADR-0011): an
+		// exact header-name match always wins (sheetHeaders already
+		// guarantees every header name is globally unique, so this can
+		// never be "the wrong column's" value); failing that, a valid,
+		// in-range column letter falls back to that column's value by
+		// position (ADR-0021). Either way, a miss is null, jq's own
+		// convention for a missing object key - not an error, unlike
+		// every other "not indexable further" case below.
+		if val, ok := v.byName[name]; ok {
+			return val, nil
+		}
+		// len(name) > 3 is rejected before columnIndex ever computes
+		// it, the same guard parseCellReference already applies and
+		// documents: columnIndex's running total can silently overflow
+		// an int for an unbounded letter sequence, well before
+		// maxExcelCol would otherwise reject it.
+		if columnLetters.MatchString(name) && len(name) <= 3 {
+			if idx := columnIndex(name); idx >= 0 && idx < maxExcelCol && idx < len(v.headers) {
+				return v.byName[v.headers[idx]], nil
+			}
+		}
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("eval: cannot access field %q on %s - not indexable further in v1", name, describeType(base))
 	}
@@ -151,7 +174,7 @@ func applyIndex(base any, n int) (any, error) {
 			return nil, fmt.Errorf("eval: row number must be >= 1 (spreadsheet rows are 1-based), got %d", n)
 		}
 		return wholeRow(v, n)
-	case []map[string]any:
+	case []record:
 		// Indexing into an array produced by filter.Records (ADR-0011).
 		return indexArray(v, n), nil
 	case []any:
@@ -166,9 +189,9 @@ func applyIndex(base any, n int) (any, error) {
 }
 
 // indexArray implements jq-style 0-based indexing, generic over any
-// array element type produced by this package ([]map[string]any from
-// records, []any from wholeColumn/wholeRow - ADR-0011, generalized by
-// ADR-0020): a negative index counts from the end (jq's own
+// array element type produced by this package ([]record from records
+// - ADR-0011/ADR-0021, []any from wholeColumn/wholeRow - generalized
+// by ADR-0020): a negative index counts from the end (jq's own
 // convention: .[-1] is the last element), not merely "no further than
 // -1" - matching jq fully, not just its 0-based-from-the-front half.
 // Still out of range (too high, or too negative even after counting
@@ -202,7 +225,7 @@ func applySlice(base any, start, end *int) (any, error) {
 		return nil, fmt.Errorf("eval: cannot slice a workbook with [START:END]; select a sheet first, then slice an array it produces, e.g. .Sheet1.A[1:10] or .Sheet1 | records | .[0:10]")
 	case model.Sheet:
 		return nil, fmt.Errorf("eval: cannot slice a sheet with [START:END]; use an A1-style range reference instead, e.g. [\"A1:C10\"]")
-	case []map[string]any:
+	case []record:
 		s, e := resolveSliceBounds(start, end, len(v))
 		return v[s:e], nil
 	case []any:
@@ -264,6 +287,20 @@ func applyRecords(cur any) (any, error) {
 	}
 }
 
+// record is one row produced by sheetRecords (ADR-0011/ADR-0021).
+// byName is the exact map[string]any every existing consumer already
+// expects - toJSON flattens record (and []record) down to it, so
+// -o json/-o csv/-o table never see this type at all, only its byName
+// map. headers is the same column-index -> name slice sheetHeaders
+// already builds, carried alongside (not merged into byName) so
+// applyField's column-letter fallback can resolve a position without
+// duplicating data under two keys in the map that actually gets
+// serialized.
+type record struct {
+	byName  map[string]any
+	headers []string // shared across every record from one sheetRecords call
+}
+
 // sheetRecords converts sheet into an array of record objects, one per
 // data row (every row after row 1), keyed by header name, per
 // ADR-0011. A row entirely absent from sheet.Rows (every cell blank)
@@ -283,7 +320,7 @@ func applyRecords(cur any) (any, error) {
 // buffering every data row; building the actual record objects, keyed
 // by the now-fully-known headers, happens afterward over that
 // in-memory buffer, not a second pass over sheet.Rows itself.
-func sheetRecords(sheet model.Sheet) ([]map[string]any, error) {
+func sheetRecords(sheet model.Sheet) ([]record, error) {
 	headerCells := make(map[int]string) // column index -> header row's own value
 	headerSeen := false
 	var dataRows []model.Row
@@ -322,16 +359,16 @@ func sheetRecords(sheet model.Sheet) ([]map[string]any, error) {
 		return nil, err
 	}
 
-	records := make([]map[string]any, 0, len(dataRows))
+	records := make([]record, 0, len(dataRows))
 	for _, r := range dataRows {
-		record := make(map[string]any, cols)
+		byName := make(map[string]any, cols)
 		for _, h := range headers {
-			record[h] = nil
+			byName[h] = nil
 		}
 		hasValue := false
 		for _, c := range r.Cells {
 			v := cellValue(c)
-			record[headers[c.Column]] = v
+			byName[headers[c.Column]] = v
 			if v != nil {
 				hasValue = true
 			}
@@ -339,7 +376,7 @@ func sheetRecords(sheet model.Sheet) ([]map[string]any, error) {
 		if !hasValue {
 			continue
 		}
-		records = append(records, record)
+		records = append(records, record{byName: byName, headers: headers})
 	}
 	return records, nil
 }
@@ -715,6 +752,19 @@ func toJSON(v any) (any, error) {
 		return obj, nil
 	case model.Sheet:
 		return sheetGrid(val)
+	case record:
+		// Flattens to the exact map[string]any ADR-0011 already
+		// defined - the headers slice (ADR-0021's own addition, for
+		// applyField's column-letter fallback) is purely an
+		// evaluation-time detail, never part of the JSON/CSV/table
+		// shape.
+		return val.byName, nil
+	case []record:
+		out := make([]map[string]any, len(val))
+		for i, r := range val {
+			out[i] = r.byName
+		}
+		return out, nil
 	default:
 		return v, nil
 	}
@@ -806,9 +856,9 @@ func describeType(v any) string {
 		return "a boolean"
 	case model.Workbook:
 		return "a workbook"
-	case []map[string]any:
+	case []record:
 		return "a records array"
-	case map[string]any:
+	case record:
 		return "a record"
 	default:
 		return fmt.Sprintf("a %T", v)
