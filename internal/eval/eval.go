@@ -14,9 +14,13 @@
 // sheet name) a well-defined value to put under each key.
 //
 // filter.Records (the "records" builtin, ADR-0011) adds two more
-// result shapes: a []map[string]any (the records array itself) and a
-// map[string]any (one record, once indexed into). Both are already
-// JSON-marshalable as-is, so toJSON doesn't need a case for either.
+// public result shapes: a []map[string]any (the records array itself)
+// and a map[string]any (one record, once indexed into). Internally,
+// during evaluation, these are actually []record/record (ADR-0021,
+// carrying header/column-letter metadata applyField's own fallback
+// needs) - toJSON flattens either down to the public map shape before
+// Eval returns, so nothing outside this package ever sees record at
+// all.
 //
 // A range reference (ADR-0012, e.g. ".Sheet1[\"A3:C9\"]") adds no new
 // shape at all: it's a third pattern applyField recognizes on a Sheet,
@@ -57,9 +61,11 @@ func Eval(expr filter.Expr, wb model.Workbook) (any, error) {
 
 // eval walks expr, threading a "current value" that may be a
 // model.Workbook, a model.Sheet, a []any (an already-resolved row or
-// column), a scalar, or nil - per ADR-0008's evaluation table. Sheets
-// and workbooks are only converted to their final JSON shape once, in
-// Eval, since a Field/Index still needs to see the real model type to
+// column), a record or []record (ADR-0011/ADR-0021, before toJSON
+// flattens either to its public map shape), a scalar, or nil - per
+// ADR-0008's evaluation table. Sheets, workbooks, and records are only
+// converted to their final JSON shape once, in Eval, since a
+// Field/Index/Slice still needs to see the real internal type to
 // dispatch correctly.
 func eval(expr filter.Expr, cur any) (any, error) {
 	switch e := expr.(type) {
@@ -183,9 +189,9 @@ func applyIndex(base any, n int) (any, error) {
 }
 
 // indexArray implements jq-style 0-based indexing, generic over any
-// array element type produced by this package ([]map[string]any from
-// records, []any from wholeColumn/wholeRow - ADR-0011, generalized by
-// ADR-0020): a negative index counts from the end (jq's own
+// array element type produced by this package ([]record from records
+// - ADR-0011/ADR-0021, []any from wholeColumn/wholeRow - generalized
+// by ADR-0020): a negative index counts from the end (jq's own
 // convention: .[-1] is the last element), not merely "no further than
 // -1" - matching jq fully, not just its 0-based-from-the-front half.
 // Still out of range (too high, or too negative even after counting

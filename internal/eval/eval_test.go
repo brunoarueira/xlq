@@ -390,7 +390,7 @@ func TestEvalRecordsIndexAndFieldAccess(t *testing.T) {
 		},
 		{
 			"column letter beyond the record's own width is null, not an error",
-			`.Sheet1 | records | .[0].ZZZ`,
+			`.Sheet1 | records | .[0].D`, // testWorkbook's Sheet1 has 3 columns (A-C); D is in-range for Excel but beyond this record's own width
 			nil,
 		},
 		{
