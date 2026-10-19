@@ -1,4 +1,4 @@
-# 21. Column letter access on records (`.TOP POSTS.G`)
+# 21. Column letter access on records (`.["TOP POSTS"] | records | .[0].G`)
 
 ## Status
 
@@ -49,6 +49,14 @@ Verified before deciding anything below:
   (`indexArray[T any]`, `resolveSliceBounds`) - whatever type `records`
   produces, indexing and slicing it needs no new logic, only the type
   parameter to change.
+- `columnIndex` (same file) has no overflow protection of its own -
+  `parseCellReference`'s own doc comment already documents why an A1
+  reference's column is rejected for being longer than 3 letters
+  *before* `columnIndex` ever runs on it, rather than relying on
+  `maxExcelCol` alone: its running base-26 total can silently overflow
+  an `int` well before that point for an unbounded letter sequence. Any
+  new caller of `columnIndex` on externally-supplied text needs the
+  same guard, not just a bounds check on its result.
 
 The central tension: making `.G` resolve by letter needs the record to
 carry column-position information somewhere, but `records`' own public
@@ -91,8 +99,14 @@ case record:
 	if v, ok := val.byName[name]; ok {
 		return v, nil
 	}
-	if columnLetters.MatchString(name) {
-		if idx := columnIndex(name); idx >= 0 && idx < len(val.headers) {
+	// len(name) > 3 is rejected before columnIndex ever computes it,
+	// the same guard parseCellReference already applies (and documents
+	// why) for the identical reason: columnIndex's running total can
+	// silently overflow an int for an unbounded letter sequence, well
+	// before maxExcelCol would otherwise reject it - an unbounded
+	// field name must never reach it at all.
+	if columnLetters.MatchString(name) && len(name) <= 3 {
+		if idx := columnIndex(name); idx >= 0 && idx < maxExcelCol && idx < len(val.headers) {
 			return val.byName[val.headers[idx]], nil
 		}
 	}
@@ -138,14 +152,32 @@ changes - each already only ever sees `Eval`'s return value, which is
 `toJSON`'s output, which is the same `map[string]any`/`[]map[string]any`
 shape ADR-0011 already defined.
 
+`describeType` (used to build every "cannot index/field/slice %s"
+error) has its own existing `[]map[string]any`/`map[string]any` cases
+("a records array"/"a record") - once `sheetRecords` returns `record`/
+`[]record` instead, those two cases become unreachable dead code for
+that purpose, and any error describing a record-shaped value would
+fall through to its `default: fmt.Sprintf("a %T", v)`, printing
+`"a eval.record"`/`"a []eval.record"` instead. Those two cases are
+replaced, not kept alongside - nothing else in this package ever
+produces a bare `map[string]any`/`[]map[string]any` as an evaluation-
+time value once this lands:
+
+```go
+case []record:
+	return "a records array"
+case record:
+	return "a record"
+```
+
 ## Consequences
 
 `internal/eval` gains one new, unexported type and a handful of
 updated type switches (`applyField`, `applyIndex`, `applySlice`,
-`toJSON`); `sheetRecords`'s return type is the only exported-adjacent
-surface that changes, and it's already internal to this package -
-`filter.Expr`, `Eval`'s own signature, and every output format are
-untouched. `.Sheet1 | records | .[0].G` now resolves a column by
+`toJSON`, `describeType`); `sheetRecords`'s return type is the only
+exported-adjacent surface that changes, and it's already internal to
+this package - `filter.Expr`, `Eval`'s own signature, and every output
+format are untouched. `.Sheet1 | records | .[0].G` now resolves a column by
 letter even when that column has a real, different header name,
 closing the gap #40 asks for; the one documented edge case (a
 different column's real header literally equal to the letter you
