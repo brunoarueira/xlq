@@ -26,7 +26,8 @@ xlq, using the format described in
 | [0018](0018-streaming-xlsx-reader.md) | Streaming xlsx reader: lazy `Sheet.Rows` via Go iterators (supersedes ADR-0007/0008/0011/0012's `Dimensions()`, see ADR-0019) |
 | [0019](0019-correct-adr-0018-streaming-reader-claims.md) | Correct ADR-0018's streaming-reader claims |
 | [0020](0020-array-slicing.md) | Array slicing: jq-style `.[START:END]` |
-| [0021](0021-column-letter-access-on-records.md) | Column letter access on records (`.TOP POSTS.G`) |
+| [0021](0021-column-letter-access-on-records.md) | Column letter access on records (`.["TOP POSTS"] \| records \| .[0].G`) |
+| [0022](0022-extensible-builtins.md) | Extensible builtins: `name` or `name(literal, ...)` |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
