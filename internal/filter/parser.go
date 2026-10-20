@@ -101,6 +101,7 @@ func (p *parser) advance() token {
 var builtinNames = map[string]bool{
 	"records":  true,
 	"tonumber": true, // #37
+	"todate":   true, // #42
 }
 
 // parseStep parses one pipeline step after a "|": either a path, or a

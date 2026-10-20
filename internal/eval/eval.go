@@ -294,6 +294,8 @@ func applyBuiltin(name string, args []any, cur any) (any, error) {
 			return nil, fmt.Errorf("eval: tonumber takes no arguments, got %d", len(args))
 		}
 		return applyToNumber(cur)
+	case "todate":
+		return applyToDate(cur, args)
 	default:
 		// Unreachable today: internal/filter's own builtinNames set
 		// already rejects any other name at parse time. Kept as a
@@ -387,6 +389,227 @@ func applyToNumber(cur any) (any, error) {
 	default:
 		return nil, fmt.Errorf("eval: tonumber: %s cannot be parsed as a number", describeType(cur))
 	}
+}
+
+// dateToken describes one recognized todate format token (#42,
+// ADR-0023): how many digits it consumes from the input, and which
+// date component it fills. component 'y' (lowercase) marks the
+// 2-digit year, which needs the pivot rule in dateState.fill; 'Y' is
+// the plain 4-digit year. Longer tokens are listed, and matched,
+// before their shorter prefixes (YYYY before YY, MM before M, DD
+// before D) so a left-to-right scan never mistakes "YYYY" for "YY"
+// followed by two literal "Y" characters.
+type dateToken struct {
+	text                 string
+	minDigits, maxDigits int
+	component            byte
+}
+
+var dateTokens = []dateToken{
+	{"YYYY", 4, 4, 'Y'},
+	{"YY", 2, 2, 'y'},
+	{"MM", 2, 2, 'M'},
+	{"M", 1, 2, 'M'},
+	{"DD", 2, 2, 'D'},
+	{"D", 1, 2, 'D'},
+}
+
+func allDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isLetter(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
+
+// startsWithDateToken reports whether s begins with one of dateTokens'
+// own spellings - used to tell "a token immediately followed by
+// another token" (legitimate, no separator needed: "MDDYYYY") apart
+// from "a token immediately followed by a letter that isn't a token at
+// all" (an unrelated word like "March" or "MAY", not meant as a token).
+func startsWithDateToken(s string) bool {
+	for _, tok := range dateTokens {
+		if strings.HasPrefix(s, tok.text) {
+			return true
+		}
+	}
+	return false
+}
+
+// dateState is the year/month/day extracted so far, plus which of the
+// three have actually been filled (as opposed to merely being their
+// zero value) - passed and returned by value throughout matchDate, so
+// backtracking to an earlier choice is just "use the dateState from
+// before that choice was made," with nothing to explicitly undo.
+type dateState struct {
+	year, month, day             int
+	haveYear, haveMonth, haveDay bool
+}
+
+// filled reports whether component ('Y'/'y' for either year form, 'M',
+// or 'D') has already been filled.
+func (st dateState) filled(component byte) bool {
+	switch component {
+	case 'Y', 'y':
+		return st.haveYear
+	case 'M':
+		return st.haveMonth
+	case 'D':
+		return st.haveDay
+	}
+	return false
+}
+
+// fill returns a copy of st with component set to n (applying the
+// 2-digit year pivot for component 'y': 00-68 -> 2000-2068, 69-99 ->
+// 1969-1999, the same convention POSIX strftime's own "%y" uses).
+func (st dateState) fill(component byte, n int) dateState {
+	switch component {
+	case 'Y':
+		st.year, st.haveYear = n, true
+	case 'y':
+		if n <= 68 {
+			st.year = 2000 + n
+		} else {
+			st.year = 1900 + n
+		}
+		st.haveYear = true
+	case 'M':
+		st.month, st.haveMonth = n, true
+	case 'D':
+		st.day, st.haveDay = n, true
+	}
+	return st
+}
+
+// matchDate matches format against s, filling st's date components as
+// it goes, backtracking a variable-width token's digit count - longest
+// first - when consuming it greedily leaves the rest of format unable
+// to match what's left of s (#42, ADR-0023). A token for an
+// already-filled component is rejected immediately, independent of
+// width, so a format that binds year, month, or day more than once
+// (e.g. "M/D/YYYY/D") is rejected rather than letting the last one
+// silently win. format's literal characters (anything not a
+// recognized token) must match s exactly - deliberately never routed
+// through Go's own time.Parse layout mechanism, which has no real
+// escaping and would otherwise reinterpret literal text that happens
+// to look like one of its own reference-time substrings (e.g.
+// "January") as a directive instead of matching it literally.
+//
+// A token match is itself rejected (treated as literal text instead)
+// if immediately followed by a letter that doesn't itself start
+// another recognized token: "March" and the all-caps "MAY" (an
+// Oracle-style "DD-MON-YYYY" separator) both textually start with the
+// "M" (month) token, but "arch" and "AY" don't start any token of
+// their own, so both are matched as the literal characters they are -
+// with a real, numeric month token supplying the actual value
+// elsewhere in the format - not misread as a 1-digit month token
+// followed by unrelated literal text. "MDDYYYY" still works: "M" is
+// immediately followed by "DD", which *does* start a token, so no
+// separator is required between two adjacent, genuine tokens. A
+// format relying on a month name (upper- or lowercase) to supply the
+// month value itself still correctly errors for missing a month token
+// - month names were never a supported token, only ever literal text,
+// per this ADR's own scoping.
+func matchDate(format, s string, st dateState) (dateState, bool) {
+	if format == "" {
+		if s != "" || !st.haveYear || !st.haveMonth || !st.haveDay {
+			return st, false
+		}
+		return st, true
+	}
+	for _, tok := range dateTokens {
+		if !strings.HasPrefix(format, tok.text) {
+			continue
+		}
+		if rest := format[len(tok.text):]; rest != "" && isLetter(rest[0]) && !startsWithDateToken(rest) {
+			// E.g. "March" or the all-caps "MAY" (an Oracle-style
+			// "DD-MON-YYYY" separator): "M" textually matches the
+			// month token, but is immediately followed by a letter
+			// that doesn't itself start a recognized token - unlike
+			// "MDDYYYY", where "M" is immediately followed by "DD",
+			// which does. No real token is ever followed by a letter
+			// that isn't itself a token start, so this is literal text
+			// (a month name used purely as a separator, which this
+			// builtin doesn't parse into a number), not a token.
+			break
+		}
+		if st.filled(tok.component) {
+			return st, false
+		}
+		for width := tok.maxDigits; width >= tok.minDigits; width-- {
+			if len(s) < width || !allDigits(s[:width]) {
+				continue
+			}
+			n, _ := strconv.Atoi(s[:width])
+			next := st.fill(tok.component, n)
+			if result, ok := matchDate(format[len(tok.text):], s[width:], next); ok {
+				return result, true
+			}
+		}
+		return st, false
+	}
+	if len(s) == 0 || s[0] != format[0] {
+		return st, false
+	}
+	return matchDate(format[1:], s[1:], st)
+}
+
+// parseDate parses s against format and returns the resulting date,
+// validated via time.Date's own calendar rules (comparing the
+// constructed time's fields back against what was parsed, rather than
+// accepting whatever time.Date itself rolls an out-of-range day over
+// into) - a nonexistent date like February 30 is a format/input
+// mismatch, not a silently-corrected March 1 or 2.
+func parseDate(format, s string) (time.Time, error) {
+	st, ok := matchDate(format, s, dateState{})
+	if !ok {
+		return time.Time{}, fmt.Errorf("%q does not match format %q", s, format)
+	}
+	if st.month < 1 || st.month > 12 {
+		return time.Time{}, fmt.Errorf("month %d in %q is out of range", st.month, s)
+	}
+	t := time.Date(st.year, time.Month(st.month), st.day, 0, 0, 0, 0, time.UTC)
+	if t.Day() != st.day || int(t.Month()) != st.month || t.Year() != st.year {
+		return time.Time{}, fmt.Errorf("%04d-%02d-%02d (from %q) is not a valid date", st.year, st.month, st.day, s)
+	}
+	return t, nil
+}
+
+// applyToDate implements the "todate" builtin (#42, ADR-0023):
+// converts a string to an RFC3339 date string, matching what cellValue
+// already produces for a real Date-kind cell (ADR-0008), given an
+// explicit format argument - never guessing whether "7/28/2026" is
+// month/day/year or day/month/year, the same reasoning tonumber (#37)
+// already applies to numeric text. cur must already be a string,
+// matching tonumber's own precedent: null/a number/a bool are all
+// errors, with no "null propagates" exception.
+func applyToDate(cur any, args []any) (any, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("eval: todate takes exactly one argument (a format string), got %d", len(args))
+	}
+	format, ok := args[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("eval: todate: format argument must be a string, got %s", describeType(args[0]))
+	}
+	s, ok := cur.(string)
+	if !ok {
+		return nil, fmt.Errorf("eval: todate: %s cannot be parsed as a date", describeType(cur))
+	}
+	// Trimmed before parsing, matching tonumber's own deviation from
+	// jq (ADR-0023 predates this fix, but the reasoning is identical):
+	// stray leading/trailing whitespace from a copy-pasted export is
+	// incidental noise, not a meaningful part of the date text, and
+	// parseDate's own literal-character matching has no tolerance for
+	// it otherwise.
+	t, err := parseDate(format, strings.TrimSpace(s))
+	if err != nil {
+		return nil, fmt.Errorf("eval: todate: %w", err)
+	}
+	return t.Format(time.RFC3339), nil
 }
 
 // record is one row produced by sheetRecords (ADR-0011/ADR-0021).
