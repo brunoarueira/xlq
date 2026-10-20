@@ -28,6 +28,7 @@ xlq, using the format described in
 | [0020](0020-array-slicing.md) | Array slicing: jq-style `.[START:END]` |
 | [0021](0021-column-letter-access-on-records.md) | Column letter access on records (`.["TOP POSTS"] \| records \| .[0].G`) |
 | [0022](0022-extensible-builtins.md) | Extensible builtins: `name` or `name(literal, ...)` |
+| [0023](0023-explicit-date-parsing.md) | Explicit date parsing: `todate(format)` |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
