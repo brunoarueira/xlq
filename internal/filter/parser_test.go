@@ -134,6 +134,11 @@ func TestParseValid(t *testing.T) {
 			Pipe{Field{Field{Identity{}, "Sheet1"}, "A1"}, Builtin{Name: "tonumber"}},
 		},
 		{
+			"todate builtin with a format argument (#42)",
+			`.Sheet1.A1 | todate("M/D/YYYY")`,
+			Pipe{Field{Field{Identity{}, "Sheet1"}, "A1"}, Builtin{Name: "todate", Args: []any{"M/D/YYYY"}}},
+		},
+		{
 			"whitespace between tokens is insignificant",
 			" .  Sheet1 . A1 ",
 			Field{Field{Identity{}, "Sheet1"}, "A1"},

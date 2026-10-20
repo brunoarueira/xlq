@@ -27,6 +27,7 @@ xlq '.Sheet1 | records | .[0].SomeHeader' path/to/book.xlsx  # by header name
 xlq '.Sheet1["A3:C9"]' path/to/book.xlsx  # a rectangular range
 xlq '.Sheet1 | records | .[0:10]' path/to/book.xlsx  # the first 10 records
 xlq '.Sheet1.B2 | tonumber' path/to/book.xlsx  # "3048" -> 3048
+xlq '.Sheet1.B2 | todate("M/D/YYYY")' path/to/book.xlsx  # "7/28/2026" -> an RFC3339 date
 xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
 xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
 xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
@@ -82,6 +83,24 @@ number a spreadsheet cell's text would ever legitimately mean.
 Leading/trailing whitespace is trimmed before parsing (a deliberate
 difference from jq, for exactly the kind of incidental copy-paste
 noise this conversion exists to look past).
+
+`todate(format)` (#42, see
+[ADR-0023](docs/adr/0023-explicit-date-parsing.md)) converts a string
+to an RFC3339 date, given an explicit format - a date like `7/28/2026`
+is genuinely ambiguous (US month/day/year vs. everyone else's
+day/month/year), so, matching `tonumber`'s own "never guess" rule,
+`todate` always needs to be told which: `.Sheet1.B2 | todate("M/D/YYYY")`
+and `.Sheet1.B2 | todate("D/M/YYYY")` read the same text as two
+different dates. Format tokens are Excel/spreadsheet-style, not code
+syntax: `YYYY`/`YY` (year, 4 or 2 digits - a 2-digit year pivots
+00-68 to 2000-2068 and 69-99 to 1969-1999), `MM`/`M` (month, zero-
+padded or not), `DD`/`D` (day, same). Anything else in the format -
+`/`, `-`, a space, even text - is matched as literal, never
+reinterpreted (`todate("D January M YYYY")` treats `"January"` as an
+arbitrary literal separator, the same as `/` would be, not a month
+name). The input must already be a string; `null`, a number, and a
+boolean are all errors, with no "propagates as null" exception, same
+as `tonumber`.
 
 A range (`.Sheet1["A3:C9"]`, see
 [ADR-0012](docs/adr/0012-range-references.md)) selects a rectangular
