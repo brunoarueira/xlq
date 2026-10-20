@@ -80,6 +80,28 @@ look like a Go directive) is then *always* literal, by construction,
 since this code never hands anything to Go's own layout parser to
 misinterpret in the first place:
 
+A second draft matched greedily, left to right, always consuming the
+maximum digit width a variable token (`M`, `D`) allows. Also caught in
+review, and also confirmed by running it: a variable-width token
+immediately followed by *another token* (not a literal separator) is
+genuinely ambiguous without lookahead - `"MDDYYYY"` against `"1282026"`
+greedily took `"12"` for `M` (its max width), leaving no way for the
+remaining `"82026"` to satisfy `DD` (needs exactly 2 digits) and
+`YYYY` (needs exactly 4) at all, even though `M=1, DD=28, YYYY=2026`
+is the obvious, unambiguous reading a human would reach immediately.
+Separately, nothing stopped a format from binding the same component
+twice - `"M/D/YYYY/D"` against `"7/28/2026/5"` silently let the second
+`D` overwrite the first, returning July 5th instead of rejecting the
+nonsensical duplicate-token format outright.
+
+Fixed with a small backtracking matcher: a variable-width token tries
+its longest width first (the common case, resolved immediately with no
+extra cost), but backtracks to a shorter width if-and-only-if the rest
+of the format fails to match what greedy consumption left behind - and
+a token for a component that's already filled is rejected immediately,
+with no width to backtrack into, since no choice of width changes that
+it's a duplicate:
+
 ```go
 // dateToken describes one recognized format token (ADR-0023): how many
 // digits it consumes from the input, and which date component it
@@ -103,97 +125,155 @@ var dateTokens = []dateToken{
 	{"D", 1, 2, 'D'},
 }
 
-// parseDate matches format against s one character/token at a time:
-// a recognized token consumes 1-2 (or exactly 4, for YYYY) digits from
-// s and fills the matching date component; anything else in format
-// must match the identical character in s. A two-digit year pivots
-// 00-68 to 2000-2068 and 69-99 to 1969-1999 - the same convention
-// POSIX strftime's own "%y" uses, picked over Go's own "06" pivot
-// (2000-2068/1969-1999 too, as it happens, but inherited implicitly
-// rather than chosen) specifically so this ADR states the rule rather
-// than leaving it to whatever a particular Go version's layout parser
-// happens to do. A format missing a year, month, or day token entirely
-// is rejected outright, not silently defaulted (e.g. to year 0) - an
-// incomplete date is exactly the kind of ambiguity this builtin exists
-// to never guess through. The result is validated via time.Date's own
-// calendar rules (comparing the constructed time's fields back against
-// what was parsed) rather than accepted as whatever rolls over - a
-// nonexistent date like February 30 is a format/input mismatch, not a
-// silently-corrected March 1 or 2.
-func parseDate(format, s string) (time.Time, error) {
-	var year, month, day int
-	haveYear, haveMonth, haveDay := false, false, false
-	fi, si := 0, 0
-	for fi < len(format) {
-		matched := false
-		for _, tok := range dateTokens {
-			if !strings.HasPrefix(format[fi:], tok.text) {
-				continue
-			}
-			start := si
-			for si < len(s) && si-start < tok.maxDigits && isDigit(s[si]) {
-				si++
-			}
-			if si-start < tok.minDigits {
-				return time.Time{}, fmt.Errorf("expected %d-%d digits for %q in %q at position %d", tok.minDigits, tok.maxDigits, tok.text, s, start)
-			}
-			n, _ := strconv.Atoi(s[start:si])
-			switch tok.component {
-			case 'Y':
-				year, haveYear = n, true
-			case 'y':
-				if n <= 68 {
-					year = 2000 + n
-				} else {
-					year = 1900 + n
-				}
-				haveYear = true
-			case 'M':
-				month, haveMonth = n, true
-			case 'D':
-				day, haveDay = n, true
-			}
-			fi += len(tok.text)
-			matched = true
-			break
+func allDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
 		}
-		if matched {
+	}
+	return true
+}
+
+// dateState is the year/month/day extracted so far, plus which of the
+// three have actually been filled (as opposed to merely being their
+// zero value) - passed and returned by value throughout matchDate, so
+// backtracking to an earlier choice is just "use the dateState from
+// before that choice was made," with nothing to explicitly undo.
+type dateState struct {
+	year, month, day             int
+	haveYear, haveMonth, haveDay bool
+}
+
+// filled reports whether component ('Y'/'y' for either year form, 'M',
+// or 'D') has already been filled.
+func (st dateState) filled(component byte) bool {
+	switch component {
+	case 'Y', 'y':
+		return st.haveYear
+	case 'M':
+		return st.haveMonth
+	case 'D':
+		return st.haveDay
+	}
+	return false
+}
+
+// fill returns a copy of st with component set to n (applying the
+// 2-digit year pivot for component 'y').
+func (st dateState) fill(component byte, n int) dateState {
+	switch component {
+	case 'Y':
+		st.year, st.haveYear = n, true
+	case 'y':
+		if n <= 68 {
+			st.year = 2000 + n
+		} else {
+			st.year = 1900 + n
+		}
+		st.haveYear = true
+	case 'M':
+		st.month, st.haveMonth = n, true
+	case 'D':
+		st.day, st.haveDay = n, true
+	}
+	return st
+}
+
+// matchDate matches format against s, filling st's date components as
+// it goes, backtracking a variable-width token's digit count - longest
+// first - when consuming it greedily leaves the rest of format unable
+// to match what's left of s. A token for an already-filled component
+// is rejected immediately, independent of width (ADR-0023's own fix
+// for a format that binds year, month, or day more than once - e.g.
+// "M/D/YYYY/D" - rather than letting the last one silently win). A
+// two-digit year pivots 00-68 to 2000-2068 and 69-99 to 1969-1999 -
+// the same convention POSIX strftime's own "%y" uses, chosen and
+// stated here rather than left to whatever a particular runtime's own
+// date parser happens to do implicitly. format's literal characters
+// (anything not a recognized token) must match s exactly - "January"
+// in a format is only ever literal text to match, never reinterpreted
+// as a month name, since nothing here is a Go time.Parse layout for
+// Go's own reference-time substrings to collide with in the first
+// place.
+func matchDate(format, s string, st dateState) (dateState, bool) {
+	if format == "" {
+		if s != "" || !st.haveYear || !st.haveMonth || !st.haveDay {
+			return st, false
+		}
+		return st, true
+	}
+	for _, tok := range dateTokens {
+		if !strings.HasPrefix(format, tok.text) {
 			continue
 		}
-		if si >= len(s) || s[si] != format[fi] {
-			return time.Time{}, fmt.Errorf("%q does not match format %q at format position %d", s, format, fi)
+		if st.filled(tok.component) {
+			return st, false
 		}
-		fi++
-		si++
+		for width := tok.maxDigits; width >= tok.minDigits; width-- {
+			if len(s) < width || !allDigits(s[:width]) {
+				continue
+			}
+			n, _ := strconv.Atoi(s[:width])
+			next := st.fill(tok.component, n)
+			if result, ok := matchDate(format[len(tok.text):], s[width:], next); ok {
+				return result, true
+			}
+		}
+		return st, false
 	}
-	if si != len(s) {
-		return time.Time{}, fmt.Errorf("%q has trailing text %q not consumed by format %q", s, s[si:], format)
+	if len(s) == 0 || s[0] != format[0] {
+		return st, false
 	}
-	if !haveYear || !haveMonth || !haveDay {
-		return time.Time{}, fmt.Errorf("format %q must include a year, month, and day token", format)
+	return matchDate(format[1:], s[1:], st)
+}
+
+// parseDate parses s against format and returns the resulting date,
+// validated via time.Date's own calendar rules (comparing the
+// constructed time's fields back against what was parsed, rather than
+// accepting whatever time.Date itself rolls an out-of-range day over
+// into) - a nonexistent date like February 30 is a format/input
+// mismatch, not a silently-corrected March 1 or 2. A format missing a
+// year, month, or day token entirely is rejected by matchDate's own
+// final check, not silently defaulted (e.g. to year 0) - an incomplete
+// date is exactly the kind of ambiguity this builtin exists to never
+// guess through.
+func parseDate(format, s string) (time.Time, error) {
+	st, ok := matchDate(format, s, dateState{})
+	if !ok {
+		return time.Time{}, fmt.Errorf("%q does not match format %q", s, format)
 	}
-	if month < 1 || month > 12 {
-		return time.Time{}, fmt.Errorf("month %d in %q is out of range", month, s)
+	if st.month < 1 || st.month > 12 {
+		return time.Time{}, fmt.Errorf("month %d in %q is out of range", st.month, s)
 	}
-	t := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
-	if t.Day() != day || int(t.Month()) != month || t.Year() != year {
-		return time.Time{}, fmt.Errorf("%04d-%02d-%02d (from %q) is not a valid date", year, month, day, s)
+	t := time.Date(st.year, time.Month(st.month), st.day, 0, 0, 0, 0, time.UTC)
+	if t.Day() != st.day || int(t.Month()) != st.month || t.Year() != st.year {
+		return time.Time{}, fmt.Errorf("%04d-%02d-%02d (from %q) is not a valid date", st.year, st.month, st.day, s)
 	}
 	return t, nil
 }
 ```
 
-Verified empirically before writing this down, not assumed: `"M/D/YYYY"`
-against `"7/28/2026"` and `"D/M/YYYY"` against `"28/7/2026"` both
-resolve to the same date; `"M/D/YY"` against `"7/28/26"` and `"7/28/95"`
-pivot to 2026 and 1995 respectively; `"January/D/YYYY"` against
-`"January/28/2026"` - "January" meant as literal separator text, with
-no month token in the format at all - correctly errors ("must include
-a ... month ... token"), confirming no Go-layout reinterpretation is
-possible; `"M/D"` against `"7/28"` errors for the missing year;
-`"M/D/YYYY"` against `"2/30/2026"` errors as an invalid date (February
-never has 30 days); trailing text after a full match errors instead of
-being silently ignored.
+Backtracking's cost is bounded, not a performance concern: only `M`/`D`
+ever have more than one width to try, a format realistically has at
+most a handful of tokens (it's a short string a person types as a
+`todate(...)` argument, not attacker-controlled input of unbounded
+size), and `dateState` being passed by value rather than mutated means
+there's nothing to explicitly undo on backtracking either.
+
+Verified empirically before writing any of this down, not assumed, re-
+running every earlier case plus the two that motivated this redesign:
+`"M/D/YYYY"` against `"7/28/2026"` and `"D/M/YYYY"` against
+`"28/7/2026"` both resolve to the same date; `"M/D/YY"` against
+`"7/28/26"` and `"7/28/95"` pivot to 2026 and 1995 respectively;
+`"January/D/YYYY"` against `"January/28/2026"` - no month token in the
+format at all - correctly errors, confirming no reinterpretation of
+"January" is possible; `"M/D"` against `"7/28"` errors for the missing
+year; `"M/D/YYYY"` against `"2/30/2026"` errors as an invalid date;
+trailing text after a full match errors instead of being silently
+ignored; `"MDDYYYY"` against `"1282026"` now correctly backtracks to
+`M=1, DD=28, YYYY=2026` instead of failing; and `"M/D/YYYY/D"` against
+`"7/28/2026/5"` now correctly rejects the duplicate `D` token instead
+of returning July 5th.
 
 ### Output: an RFC3339 string, matching every other date value this grammar already produces
 
@@ -238,11 +318,11 @@ generic "didn't work."
 `"todate"` is added to `internal/filter`'s `builtinNames` and as a new
 case in `internal/eval`'s `applyBuiltin`, exactly the two-line addition
 ADR-0022 designed this mechanism for - no grammar or parser change.
-`internal/eval` gains `dateTokens`/`parseDate`/`applyToDate`, all new,
-self-contained code with no effect on any existing operation, and no
-dependency on `time.Parse`'s own layout mechanism at all - deliberately,
-given the reinterpretation risk that mechanism turned out to have for
-this ADR's own token language. A later, genuinely general
-date-formatting need (month names, time components, locale-aware
-parsing) stays out of scope here and would be its own future decision,
-not a reason to widen this one now.
+`internal/eval` gains `dateTokens`/`dateState`/`matchDate`/`parseDate`/
+`applyToDate`, all new, self-contained code with no effect on any
+existing operation, and no dependency on `time.Parse`'s own layout
+mechanism at all - deliberately, given the reinterpretation risk that
+mechanism turned out to have for this ADR's own token language. A
+later, genuinely general date-formatting need (month names, time
+components, locale-aware parsing) stays out of scope here and would be
+its own future decision, not a reason to widen this one now.
