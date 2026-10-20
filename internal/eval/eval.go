@@ -13,9 +13,10 @@
 // 1D arrays, and it's what gives the whole-workbook object (keyed by
 // sheet name) a well-defined value to put under each key.
 //
-// filter.Records (the "records" builtin, ADR-0011) adds two more
-// public result shapes: a []map[string]any (the records array itself)
-// and a map[string]any (one record, once indexed into). Internally,
+// The "records" builtin (ADR-0011, filter.Builtin{Name: "records"}
+// since ADR-0022 generalized it) adds two more public result shapes: a
+// []map[string]any (the records array itself) and a map[string]any
+// (one record, once indexed into). Internally,
 // during evaluation, these are actually []record/record (ADR-0021,
 // carrying header/column-letter metadata applyField's own fallback
 // needs) - toJSON flattens either down to the public map shape before
@@ -95,8 +96,8 @@ func eval(expr filter.Expr, cur any) (any, error) {
 			return nil, err
 		}
 		return eval(e.Right, left)
-	case filter.Records:
-		return applyRecords(cur)
+	case filter.Builtin:
+		return applyBuiltin(e.Name, e.Args, cur)
 	default:
 		return nil, fmt.Errorf("eval: unknown expression type %T", expr)
 	}
@@ -272,6 +273,27 @@ func clampBound(bound *int, def, length int) int {
 		n = length
 	}
 	return n
+}
+
+// applyBuiltin implements filter.Builtin (ADR-0022): dispatches by
+// name to each builtin's own implementation. Argument count/type
+// validation happens here, per builtin, not in the parser - the same
+// way applyIndex validates a row number's own range at eval time, not
+// parse time.
+func applyBuiltin(name string, args []any, cur any) (any, error) {
+	switch name {
+	case "records":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("eval: records takes no arguments, got %d", len(args))
+		}
+		return applyRecords(cur)
+	default:
+		// Unreachable today: internal/filter's own builtinNames set
+		// already rejects any other name at parse time. Kept as a
+		// clear internal-consistency error, not a silent fallthrough,
+		// in case the two ever drift.
+		return nil, fmt.Errorf("eval: unknown builtin %q", name)
+	}
 }
 
 // applyRecords implements the "records" builtin (ADR-0011): an array of

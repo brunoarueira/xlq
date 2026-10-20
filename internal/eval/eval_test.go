@@ -264,6 +264,7 @@ func TestEvalInvalid(t *testing.T) {
 		{"slicing a sheet directly", `.Sheet1[1:3]`},
 		{"slicing a workbook", `.[1:3]`},
 		{"slicing a scalar", ".Sheet1.A1[0:1]"},
+		{"records rejects arguments at eval time (ADR-0022)", `.Sheet1 | records("x")`},
 	}
 
 	for _, tc := range cases {
@@ -372,6 +373,23 @@ func TestEvalRecords(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Eval(%q) = %#v, want %#v", ".Sheet1 | records", got, want)
+	}
+}
+
+// TestEvalRecordsEmptyParens guards ADR-0022's own claim that
+// "records()" and bare "records" are the exact same Builtin, not two
+// different code paths that happen to currently agree.
+func TestEvalRecordsEmptyParens(t *testing.T) {
+	bare, err := evalString(t, ".Sheet1 | records")
+	if err != nil {
+		t.Fatalf("Eval(\".Sheet1 | records\") returned error: %v", err)
+	}
+	parens, err := evalString(t, ".Sheet1 | records()")
+	if err != nil {
+		t.Fatalf("Eval(\".Sheet1 | records()\") returned error: %v", err)
+	}
+	if !reflect.DeepEqual(bare, parens) {
+		t.Errorf("records() = %#v, want the same as bare records: %#v", parens, bare)
 	}
 }
 
