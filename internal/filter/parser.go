@@ -256,17 +256,22 @@ func (p *parser) parseSlice(base Expr, start *int) (Expr, error) {
 	return Slice{Base: base, Start: start, End: end}, nil
 }
 
-// parseValue parses an assignment's right-hand side (ADR-0014):
-// STRING, NUMBER, INT, or one of the "true"/"false"/"null" keywords.
-// INT (the same token a bracket index like ".Sheet1[5]" uses) is
-// accepted here too, alongside NUMBER, since NUMBER's fraction is
-// mandatory and so has no case of its own for a bare integer -
-// without INT, ".Sheet1.A1 = 5" would have no value alternative to
-// parse at all. true/false/null already lex as ordinary tokIdent
-// tokens (the same way "records" does) - recognizing them as literals
-// rather than field names is purely a parser-level distinction, made
-// only here. The result is already the Go value Assign.Value holds:
-// string, float64, bool, or nil.
+// parseValue parses one literal value: STRING, NUMBER, INT, or one of
+// the "true"/"false"/"null" keywords. Originally just an assignment's
+// right-hand side (ADR-0014), it's reused unchanged by
+// parseBuiltinArgs (ADR-0022) for each argument in a builtin call's
+// "(" ... ")" list - both positions need exactly the same literal
+// grammar, so there's one parser for it, not two. INT (the same token
+// a bracket index like ".Sheet1[5]" uses) is accepted here too,
+// alongside NUMBER, since NUMBER's fraction is mandatory and so has no
+// case of its own for a bare integer - without INT, ".Sheet1.A1 = 5"
+// would have no value alternative to parse at all. true/false/null
+// already lex as ordinary tokIdent tokens (the same way any builtin
+// name does) - recognizing them as literals rather than field names or
+// a builtin reference is purely a parser-level distinction, made only
+// here. The result is already the Go value both callers need:
+// Assign.Value, or one element of a Builtin's Args - string, float64,
+// bool, or nil either way.
 func (p *parser) parseValue() (any, error) {
 	tok := p.peek()
 	switch tok.kind {

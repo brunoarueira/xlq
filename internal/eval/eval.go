@@ -135,7 +135,8 @@ func applyField(base any, name string) (any, error) {
 			return nil, fmt.Errorf("eval: %q is not a valid column letter, cell reference, or range on sheet %q", name, v.Name)
 		}
 	case record:
-		// A single record, produced by filter.Records (ADR-0011): an
+		// A single record, produced by filter.Builtin{Name: "records"}
+		// (ADR-0011/ADR-0022): an
 		// exact header-name match always wins (sheetHeaders already
 		// guarantees every header name is globally unique, so this can
 		// never be "the wrong column's" value); failing that, a valid,
@@ -176,7 +177,8 @@ func applyIndex(base any, n int) (any, error) {
 		}
 		return wholeRow(v, n)
 	case []record:
-		// Indexing into an array produced by filter.Records (ADR-0011).
+		// Indexing into an array produced by filter.Builtin{Name:
+		// "records"} (ADR-0011/ADR-0022).
 		return indexArray(v, n), nil
 	case []any:
 		// Indexing into an already-produced row/column array
