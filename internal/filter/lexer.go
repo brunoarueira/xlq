@@ -15,6 +15,9 @@ const (
 	tokPipe
 	tokEquals
 	tokColon
+	tokLParen
+	tokRParen
+	tokComma
 	tokIdent
 	tokString
 	tokInt
@@ -52,6 +55,12 @@ func (t token) describe() string {
 		return `"="`
 	case tokColon:
 		return `":"`
+	case tokLParen:
+		return `"("`
+	case tokRParen:
+		return `")"`
+	case tokComma:
+		return `","`
 	default:
 		return fmt.Sprintf("%q", t.text)
 	}
@@ -84,6 +93,15 @@ func lex(input string) ([]token, error) {
 			i++
 		case c == ':':
 			toks = append(toks, token{kind: tokColon, pos: i})
+			i++
+		case c == '(':
+			toks = append(toks, token{kind: tokLParen, pos: i})
+			i++
+		case c == ')':
+			toks = append(toks, token{kind: tokRParen, pos: i})
+			i++
+		case c == ',':
+			toks = append(toks, token{kind: tokComma, pos: i})
 			i++
 		case c == '"':
 			tok, next, err := lexString(input, i)

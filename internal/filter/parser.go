@@ -9,14 +9,15 @@ import (
 // pipeline or an in-place assignment - per
 // docs/adr/0008-filter-grammar-v1.md, the grammar correction in
 // docs/adr/0009-correct-filter-grammar-ebnf.md, the builtin-step
-// addition in docs/adr/0011-header-aware-record-output.md, the
-// assignment form added by docs/adr/0014-in-place-editing.md, and the
-// slice form added by docs/adr/0020-array-slicing.md:
+// addition in docs/adr/0011-header-aware-record-output.md (generalized
+// by docs/adr/0022-extensible-builtins.md), the assignment form added
+// by docs/adr/0014-in-place-editing.md, and the slice form added by
+// docs/adr/0020-array-slicing.md:
 //
 //	filter     = pipeline | assignment
 //	pipeline   = path ( "|" step )*
 //	step       = path | builtin
-//	builtin    = "records"
+//	builtin    = IDENT ( "(" ( value ( "," value )* )? ")" )?
 //	path       = "." ( head tail* )?
 //	head       = IDENT | "[" STRING "]" | "[" INT "]" | "[" slice "]"
 //	tail       = "." IDENT | "[" STRING "]" | "[" INT "]" | "[" slice "]"
@@ -88,17 +89,65 @@ func (p *parser) advance() token {
 	return t
 }
 
+// builtinNames are the identifiers parseStep recognizes as a builtin
+// reference rather than a malformed path (ADR-0022) - checked here so
+// a misspelled name still fails at parse time, with a precise
+// position, the same as it always has (when "records" was the only
+// name parseStep knew about at all, anything else already fell
+// through to parsePath and failed there). internal/eval's own builtin
+// dispatch is still where each name's actual argument count/types are
+// validated - this set exists only to keep typo-detection at parse
+// time, not to duplicate that validation.
+var builtinNames = map[string]bool{
+	"records": true,
+}
+
 // parseStep parses one pipeline step after a "|": either a path, or a
-// bare builtin keyword (currently just "records", ADR-0011). A builtin
-// is only valid here - Parse always parses a filter's first segment
-// via parsePath, never parseStep, so "records" alone (with no
-// preceding "|") isn't a valid filter on its own.
+// builtin reference (ADR-0011, generalized by ADR-0022). A builtin is
+// only valid here - Parse always parses a filter's first segment via
+// parsePath, never parseStep, so a builtin alone (with no preceding
+// "|") isn't a valid filter on its own.
 func (p *parser) parseStep() (Expr, error) {
-	if p.peek().kind == tokIdent && p.peek().text == "records" {
-		p.advance()
-		return Records{}, nil
+	if p.peek().kind == tokIdent && builtinNames[p.peek().text] {
+		name := p.advance().text
+		args, err := p.parseBuiltinArgs()
+		if err != nil {
+			return nil, err
+		}
+		return Builtin{Name: name, Args: args}, nil
 	}
 	return p.parsePath()
+}
+
+// parseBuiltinArgs parses an optional "(" value ("," value)* ")"
+// argument list (ADR-0022). No "(" at all means zero arguments (the
+// bare-keyword form, e.g. "records"), not a parse error - "("
+// immediately followed by ")" (empty parens) is also zero arguments,
+// both forms accepted identically.
+func (p *parser) parseBuiltinArgs() ([]any, error) {
+	if p.peek().kind != tokLParen {
+		return nil, nil
+	}
+	p.advance()
+	var args []any
+	if p.peek().kind != tokRParen {
+		for {
+			v, err := p.parseValue()
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, v)
+			if p.peek().kind != tokComma {
+				break
+			}
+			p.advance()
+		}
+	}
+	if p.peek().kind != tokRParen {
+		return nil, fmt.Errorf("filter: expected %q at position %d, found %s", ")", p.peek().pos, p.peek().describe())
+	}
+	p.advance()
+	return args, nil
 }
 
 func (p *parser) parsePath() (Expr, error) {
@@ -207,17 +256,22 @@ func (p *parser) parseSlice(base Expr, start *int) (Expr, error) {
 	return Slice{Base: base, Start: start, End: end}, nil
 }
 
-// parseValue parses an assignment's right-hand side (ADR-0014):
-// STRING, NUMBER, INT, or one of the "true"/"false"/"null" keywords.
-// INT (the same token a bracket index like ".Sheet1[5]" uses) is
-// accepted here too, alongside NUMBER, since NUMBER's fraction is
-// mandatory and so has no case of its own for a bare integer -
-// without INT, ".Sheet1.A1 = 5" would have no value alternative to
-// parse at all. true/false/null already lex as ordinary tokIdent
-// tokens (the same way "records" does) - recognizing them as literals
-// rather than field names is purely a parser-level distinction, made
-// only here. The result is already the Go value Assign.Value holds:
-// string, float64, bool, or nil.
+// parseValue parses one literal value: STRING, NUMBER, INT, or one of
+// the "true"/"false"/"null" keywords. Originally just an assignment's
+// right-hand side (ADR-0014), it's reused unchanged by
+// parseBuiltinArgs (ADR-0022) for each argument in a builtin call's
+// "(" ... ")" list - both positions need exactly the same literal
+// grammar, so there's one parser for it, not two. INT (the same token
+// a bracket index like ".Sheet1[5]" uses) is accepted here too,
+// alongside NUMBER, since NUMBER's fraction is mandatory and so has no
+// case of its own for a bare integer - without INT, ".Sheet1.A1 = 5"
+// would have no value alternative to parse at all. true/false/null
+// already lex as ordinary tokIdent tokens (the same way any builtin
+// name does) - recognizing them as literals rather than field names or
+// a builtin reference is purely a parser-level distinction, made only
+// here. The result is already the Go value both callers need:
+// Assign.Value, or one element of a Builtin's Args - string, float64,
+// bool, or nil either way.
 func (p *parser) parseValue() (any, error) {
 	tok := p.peek()
 	switch tok.kind {

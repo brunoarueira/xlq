@@ -1,18 +1,19 @@
 // Package filter implements xlq's filter language: lexing and parsing a
 // filter string into the AST described in
 // docs/adr/0008-filter-grammar-v1.md (grammar corrected in
-// docs/adr/0009-correct-filter-grammar-ebnf.md; the Records builtin
-// added by docs/adr/0011-header-aware-record-output.md). Evaluating
+// docs/adr/0009-correct-filter-grammar-ebnf.md; the records builtin
+// added by docs/adr/0011-header-aware-record-output.md, generalized
+// into Builtin by docs/adr/0022-extensible-builtins.md). Evaluating
 // that AST against a model.Workbook is a later package's job - this one
 // only covers syntax.
 package filter
 
 // Expr is a parsed filter expression: one of Identity, Field, Index,
-// Slice, Pipe, Records, or Assign. What a Field, Index, or Slice node
+// Slice, Pipe, Builtin, or Assign. What a Field, Index, or Slice node
 // actually does (sheet lookup, column or A1 cell access, row access,
 // positional slicing, ...) depends on the runtime type it's evaluated
 // against - the AST itself is deliberately untyped beyond this, per
-// ADR-0008 (Slice added by ADR-0020).
+// ADR-0008 (Slice added by ADR-0020, Builtin by ADR-0022).
 type Expr interface {
 	exprNode()
 }
@@ -58,15 +59,21 @@ type Pipe struct {
 
 func (Pipe) exprNode() {}
 
-// Records is the bare "records" builtin (ADR-0011): transforms whatever
-// value flows into it into an array of record objects keyed by header
-// name. Like Identity, it has no Base - it isn't a suffix on some other
-// expression, it operates on the current value directly. Unlike
-// Identity, it's only valid as a pipeline step after a "|": the grammar
-// never allows it as a filter's first segment.
-type Records struct{}
+// Builtin is "name" or "name(arg, ...)" (ADR-0022): a named operation
+// with no Base of its own - like Identity, it isn't a suffix on some
+// other expression, it operates on the pipeline's current value
+// directly. Args are always literals (ADR-0014's value grammar:
+// string, float64, bool, nil), never a nested filter expression -
+// that's map/select's own, separate, larger design. Like records
+// before it (ADR-0011, the only builtin before this generalization),
+// a Builtin is only valid as a pipeline step after a "|": the grammar
+// never allows one as a filter's first segment.
+type Builtin struct {
+	Name string
+	Args []any
+}
 
-func (Records) exprNode() {}
+func (Builtin) exprNode() {}
 
 // Assign is "path = value" (ADR-0014): in-place editing only, never
 // evaluated as a read-only query - eval.Eval rejects it outright.

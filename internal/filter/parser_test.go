@@ -100,13 +100,13 @@ func TestParseValid(t *testing.T) {
 		{
 			"records builtin after a pipe",
 			".Sheet1 | records",
-			Pipe{Field{Identity{}, "Sheet1"}, Records{}},
+			Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
 		},
 		{
 			"records followed by further steps",
 			".Sheet1 | records | .[0].Impressions",
 			Pipe{
-				Pipe{Field{Identity{}, "Sheet1"}, Records{}},
+				Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
 				Field{Index{Identity{}, 0}, "Impressions"},
 			},
 		},
@@ -114,9 +114,19 @@ func TestParseValid(t *testing.T) {
 			"records chained with itself parses fine (an eval-time error, not a syntax one)",
 			".Sheet1 | records | records",
 			Pipe{
-				Pipe{Field{Identity{}, "Sheet1"}, Records{}},
-				Records{},
+				Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+				Builtin{Name: "records"},
 			},
+		},
+		{
+			"builtin with empty parens is the same as the bare form (ADR-0022)",
+			".Sheet1 | records()",
+			Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+		},
+		{
+			"builtin call with literal arguments of every value type (ADR-0022) - argument count/type isn't validated until eval",
+			`.Sheet1 | records("x", 5, true, false, null)`,
+			Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records", Args: []any{"x", 5.0, true, false, nil}}},
 		},
 		{
 			"whitespace between tokens is insignificant",
@@ -216,6 +226,11 @@ func TestParseInvalid(t *testing.T) {
 		{"trailing garbage after valid filter", ".Sheet1 extra"},
 		{"records can't be a filter's first segment", "records"},
 		{"records can't be chained directly without a pipe", ".Sheet1 | records.Impressions"},
+		{"an unrecognized identifier fails as a malformed path, not a builtin (ADR-0022)", ".Sheet1 | recrods"},
+		{"builtin call missing its closing paren", ".Sheet1 | records("},
+		{"builtin call argument must be a literal, not a path", ".Sheet1 | records(.A1)"},
+		{"builtin call with a trailing comma and no following argument", `.Sheet1 | records("x",)`},
+		{"builtin call with a comma but no opening paren", ".Sheet1 | records, records"},
 		{"assignment with no value after =", ".Sheet1.A1 = "},
 		{"assignment value must be a recognized literal, not an arbitrary ident", ".Sheet1.A1 = banana"},
 		{"assignment with trailing garbage after the value", `.Sheet1.A1 = "x" extra`},
