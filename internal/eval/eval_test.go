@@ -460,16 +460,20 @@ func TestEvalToNumberInvalid(t *testing.T) {
 func todateWorkbook() model.Workbook {
 	return model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
 		{Index: 0, Cells: []model.Cell{
-			model.NewStringCell("7/28/2026").At(0),   // A1: US-order, matches "M/D/YYYY"
-			model.NewStringCell("28/7/2026").At(1),   // B1: EU-order, matches "D/M/YYYY"
-			model.NewStringCell("2026-07-28").At(2),  // C1: ISO-ish, matches "YYYY-MM-DD"
-			model.NewStringCell("7/28/26").At(3),     // D1: 2-digit year, pivots to 2026
-			model.NewStringCell("7/28/95").At(4),     // E1: 2-digit year, pivots to 1995
-			model.NewStringCell("1282026").At(5),     // F1: no separators, needs backtracking for "MDDYYYY"
-			model.NewStringCell("2/30/2026").At(6),   // G1: invalid date (no Feb 30)
-			model.NewStringCell("7/28/2026/5").At(7), // H1: would bind D twice against "M/D/YYYY/D"
-			model.NewNumberCell(123).At(8),           // I1: not a string at all
-			model.NewBoolCell(true).At(9),            // J1: not a string at all
+			model.NewStringCell("7/28/2026").At(0),            // A1: US-order, matches "M/D/YYYY"
+			model.NewStringCell("28/7/2026").At(1),            // B1: EU-order, matches "D/M/YYYY"
+			model.NewStringCell("2026-07-28").At(2),           // C1: ISO-ish, matches "YYYY-MM-DD"
+			model.NewStringCell("7/28/26").At(3),              // D1: 2-digit year, pivots to 2026
+			model.NewStringCell("7/28/95").At(4),              // E1: 2-digit year, pivots to 1995
+			model.NewStringCell("1282026").At(5),              // F1: no separators, needs backtracking for "MDDYYYY"
+			model.NewStringCell("2/30/2026").At(6),            // G1: invalid date (no Feb 30)
+			model.NewStringCell("7/28/2026/5").At(7),          // H1: would bind D twice against "M/D/YYYY/D"
+			model.NewNumberCell(123).At(8),                    // I1: not a string at all
+			model.NewBoolCell(true).At(9),                     // J1: not a string at all
+			model.NewStringCell("7/28/68").At(10),             // K1: YY pivot boundary, pivots to 2068
+			model.NewStringCell("7/28/69").At(11),             // L1: YY pivot boundary, pivots to 1969
+			model.NewStringCell("28 of 7, March 2026").At(12), // M1: "March" is literal text; the real month value (7) comes from the M token
+			model.NewStringCell(" 7/28/2026 ").At(13),         // N1: stray whitespace, trimmed before parsing
 		}},
 	})}}
 }
@@ -487,6 +491,18 @@ func TestEvalToDate(t *testing.T) {
 		{"2-digit year pivots to 2000s", `.Sheet1.D1 | todate("M/D/YY")`, "2026-07-28T00:00:00Z"},
 		{"2-digit year pivots to 1900s", `.Sheet1.E1 | todate("M/D/YY")`, "1995-07-28T00:00:00Z"},
 		{"no separators, requires backtracking", `.Sheet1.F1 | todate("MDDYYYY")`, "2026-01-28T00:00:00Z"},
+		{"YY pivot boundary: 68 pivots to 2068", `.Sheet1.K1 | todate("M/D/YY")`, "2068-07-28T00:00:00Z"},
+		{"YY pivot boundary: 69 pivots to 1969", `.Sheet1.L1 | todate("M/D/YY")`, "1969-07-28T00:00:00Z"},
+		{
+			"a word starting with a token letter (\"March\") is literal, not misread as a 1-digit month",
+			`.Sheet1.M1 | todate("D of M, March YYYY")`,
+			"2026-07-28T00:00:00Z",
+		},
+		{
+			"leading/trailing whitespace is trimmed, matching tonumber's own deviation from jq",
+			`.Sheet1.N1 | todate("M/D/YYYY")`,
+			"2026-07-28T00:00:00Z",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -521,6 +537,22 @@ func TestEvalToDateLiteralNotReinterpreted(t *testing.T) {
 	want := "2026-07-28T00:00:00Z"
 	if got != want {
 		t.Errorf("got %#v, want %#v", got, want)
+	}
+}
+
+// TestEvalToDateMonthNameAloneIsNotAToken guards the other side of the
+// same fix TestEvalToDateLiteralNotReinterpreted covers: a word that
+// starts with a token letter ("March") is correctly treated as
+// literal text, not a month name - so a format relying on it alone to
+// supply the month value, with no separate numeric month token, still
+// correctly errors (missing month token) rather than silently
+// guessing month=3 from the word.
+func TestEvalToDateMonthNameAloneIsNotAToken(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{model.NewStringCell("28 March 2026").At(0)}},
+	})}}
+	if _, err := Eval(mustParse(t, `.Sheet1.A1 | todate("D March YYYY")`), wb); err == nil {
+		t.Error("Eval: want error (format has no month token), got nil")
 	}
 }
 

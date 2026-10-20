@@ -86,21 +86,33 @@ noise this conversion exists to look past).
 
 `todate(format)` (#42, see
 [ADR-0023](docs/adr/0023-explicit-date-parsing.md)) converts a string
-to an RFC3339 date, given an explicit format - a date like `7/28/2026`
+to an RFC3339 date, given an explicit format - a date like `7/8/2026`
 is genuinely ambiguous (US month/day/year vs. everyone else's
-day/month/year), so, matching `tonumber`'s own "never guess" rule,
-`todate` always needs to be told which: `.Sheet1.B2 | todate("M/D/YYYY")`
-and `.Sheet1.B2 | todate("D/M/YYYY")` read the same text as two
-different dates. Format tokens are Excel/spreadsheet-style, not code
-syntax: `YYYY`/`YY` (year, 4 or 2 digits - a 2-digit year pivots
-00-68 to 2000-2068 and 69-99 to 1969-1999), `MM`/`M` (month, zero-
-padded or not), `DD`/`D` (day, same). Anything else in the format -
-`/`, `-`, a space, even text - is matched as literal, never
-reinterpreted (`todate("D January M YYYY")` treats `"January"` as an
-arbitrary literal separator, the same as `/` would be, not a month
-name). The input must already be a string; `null`, a number, and a
+day/month/year: July 8th or August 7th?), so, matching `tonumber`'s own
+"never guess" rule, `todate` always needs to be told which:
+`.Sheet1.B2 | todate("M/D/YYYY")` and `.Sheet1.B2 | todate("D/M/YYYY")`
+read the same text as two different, equally valid dates. Format
+tokens are Excel/spreadsheet-style, not code syntax: `YYYY`/`YY` (year,
+4 or 2 digits - a 2-digit year pivots 00-68 to 2000-2068 and 69-99 to
+1969-1999), `MM`/`M` (month, zero-padded or not), `DD`/`D` (day, same).
+Anything else in the format - `/`, `-`, a space, even a word - is
+matched as literal, never reinterpreted (`todate("D January M YYYY")`
+treats `"January"` as an arbitrary literal separator, the same as `/`
+would be, not a month name - and a word that happens to start with a
+token letter, like `"March"`, is still literal as long as it's
+immediately followed by a lowercase letter, so `"D of M, March YYYY"`
+still reads the real month from `M`, not from `"March"`).
+
+A format must include exactly one year, one month, and one day token -
+`todate("M/D")` (no year) and `todate("M/D/YYYY/D")` (two day tokens)
+are both errors, not silently accepted with a guessed or overwritten
+value - and the input must actually describe a real calendar date:
+`todate("M/D/YYYY")` on `"2/30/2026"` errors, since February never has
+30 days. The input must already be a string; `null`, a number, and a
 boolean are all errors, with no "propagates as null" exception, same
-as `tonumber`.
+as `tonumber`. Leading/trailing whitespace is trimmed before parsing,
+matching `tonumber`'s own deviation from jq, for the same reason:
+incidental copy-paste noise, not a meaningful part of the date text.
 
 A range (`.Sheet1["A3:C9"]`, see
 [ADR-0012](docs/adr/0012-range-references.md)) selects a rectangular
