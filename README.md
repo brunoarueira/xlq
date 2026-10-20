@@ -98,10 +98,16 @@ tokens are Excel/spreadsheet-style, not code syntax: `YYYY`/`YY` (year,
 Anything else in the format - `/`, `-`, a space, even a word - is
 matched as literal, never reinterpreted (`todate("D January M YYYY")`
 treats `"January"` as an arbitrary literal separator, the same as `/`
-would be, not a month name - and a word that happens to start with a
-token letter, like `"March"`, is still literal as long as it's
-immediately followed by a lowercase letter, so `"D of M, March YYYY"`
-still reads the real month from `M`, not from `"March"`).
+would be, not a month name). A word that happens to start with a token
+letter, like `"March"` or the all-caps `"MAY"` (an Oracle-style
+`"DD-MON-YYYY"` separator), is still literal as long as what follows
+that letter isn't itself the start of another token - so
+`"D of M, March YYYY"` still reads the real month from `M`, not from
+`"March"`, while `"MDDYYYY"` (`M` immediately followed by `DD`, which
+*is* a token) needs no separator at all between the two. Either way, a
+month name supplies no month value by itself - a format that relies on
+one alone, with no separate numeric month token, still errors for
+missing the month, the same as any other incomplete format.
 
 A format must include exactly one year, one month, and one day token -
 `todate("M/D")` (no year) and `todate("M/D/YYYY/D")` (two day tokens)

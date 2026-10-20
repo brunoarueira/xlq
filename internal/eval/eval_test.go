@@ -474,6 +474,8 @@ func todateWorkbook() model.Workbook {
 			model.NewStringCell("7/28/69").At(11),             // L1: YY pivot boundary, pivots to 1969
 			model.NewStringCell("28 of 7, March 2026").At(12), // M1: "March" is literal text; the real month value (7) comes from the M token
 			model.NewStringCell(" 7/28/2026 ").At(13),         // N1: stray whitespace, trimmed before parsing
+			model.NewStringCell("28 (MAY be 7) 2026").At(14),  // O1: all-caps "MAY" is literal; the real month value (7) comes from the M token
+			model.NewStringCell("28-MAY-2026").At(15),         // P1: Oracle-style "DD-MON-YYYY" with no separate numeric month at all
 		}},
 	})}}
 }
@@ -501,6 +503,11 @@ func TestEvalToDate(t *testing.T) {
 		{
 			"leading/trailing whitespace is trimmed, matching tonumber's own deviation from jq",
 			`.Sheet1.N1 | todate("M/D/YYYY")`,
+			"2026-07-28T00:00:00Z",
+		},
+		{
+			"an all-caps word starting with a token letter (\"MAY\") is also literal, not misread as a month",
+			`.Sheet1.O1 | todate("D (MAY be M) YYYY")`,
 			"2026-07-28T00:00:00Z",
 		},
 	}
@@ -572,6 +579,7 @@ func TestEvalToDateInvalid(t *testing.T) {
 		{"too many arguments", `.Sheet1.A1 | todate("M/D/YYYY", "extra")`},
 		{"format argument must be a string", `.Sheet1.A1 | todate(5)`},
 		{"format missing a year token", `.Sheet1.A1 | todate("M/D")`},
+		{"an all-caps month name alone (\"MAY\") supplies no month token either", `.Sheet1.P1 | todate("D-MAY-YYYY")`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -423,7 +423,21 @@ func allDigits(s string) bool {
 	return true
 }
 
-func isLowerLetter(c byte) bool { return c >= 'a' && c <= 'z' }
+func isLetter(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
+
+// startsWithDateToken reports whether s begins with one of dateTokens'
+// own spellings - used to tell "a token immediately followed by
+// another token" (legitimate, no separator needed: "MDDYYYY") apart
+// from "a token immediately followed by a letter that isn't a token at
+// all" (an unrelated word like "March" or "MAY", not meant as a token).
+func startsWithDateToken(s string) bool {
+	for _, tok := range dateTokens {
+		if strings.HasPrefix(s, tok.text) {
+			return true
+		}
+	}
+	return false
+}
 
 // dateState is the year/month/day extracted so far, plus which of the
 // three have actually been filled (as opposed to merely being their
@@ -486,16 +500,20 @@ func (st dateState) fill(component byte, n int) dateState {
 // "January") as a directive instead of matching it literally.
 //
 // A token match is itself rejected (treated as literal text instead)
-// if immediately followed by a lowercase letter: "March" textually
-// starts with the "M" (month) token, but no real token is ever
-// followed by a lowercase letter, so "March" used purely as a literal
-// separator - with a real, numeric month token supplying the actual
-// value elsewhere in the format - is matched as the 5 literal
-// characters it is, not misread as a 1-digit month token followed by
-// unrelated literal text. A format relying on "March" (or any other
-// month name) to supply the month value itself still correctly errors
-// for missing a month token - month names were never a supported
-// token, only ever literal text, per this ADR's own scoping.
+// if immediately followed by a letter that doesn't itself start
+// another recognized token: "March" and the all-caps "MAY" (an
+// Oracle-style "DD-MON-YYYY" separator) both textually start with the
+// "M" (month) token, but "arch" and "AY" don't start any token of
+// their own, so both are matched as the literal characters they are -
+// with a real, numeric month token supplying the actual value
+// elsewhere in the format - not misread as a 1-digit month token
+// followed by unrelated literal text. "MDDYYYY" still works: "M" is
+// immediately followed by "DD", which *does* start a token, so no
+// separator is required between two adjacent, genuine tokens. A
+// format relying on a month name (upper- or lowercase) to supply the
+// month value itself still correctly errors for missing a month token
+// - month names were never a supported token, only ever literal text,
+// per this ADR's own scoping.
 func matchDate(format, s string, st dateState) (dateState, bool) {
 	if format == "" {
 		if s != "" || !st.haveYear || !st.haveMonth || !st.haveDay {
@@ -507,10 +525,14 @@ func matchDate(format, s string, st dateState) (dateState, bool) {
 		if !strings.HasPrefix(format, tok.text) {
 			continue
 		}
-		if rest := format[len(tok.text):]; rest != "" && isLowerLetter(rest[0]) {
-			// E.g. "March": "M" textually matches the month token, but
-			// is immediately followed by a lowercase letter - no real
-			// token is ever followed by one, so this is literal text
+		if rest := format[len(tok.text):]; rest != "" && isLetter(rest[0]) && !startsWithDateToken(rest) {
+			// E.g. "March" or the all-caps "MAY" (an Oracle-style
+			// "DD-MON-YYYY" separator): "M" textually matches the
+			// month token, but is immediately followed by a letter
+			// that doesn't itself start a recognized token - unlike
+			// "MDDYYYY", where "M" is immediately followed by "DD",
+			// which does. No real token is ever followed by a letter
+			// that isn't itself a token start, so this is literal text
 			// (a month name used purely as a separator, which this
 			// builtin doesn't parse into a number), not a token.
 			break
