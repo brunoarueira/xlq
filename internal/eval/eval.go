@@ -35,6 +35,7 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -289,6 +290,11 @@ func applyBuiltin(name string, args []any, cur any) (any, error) {
 			return nil, fmt.Errorf("eval: records takes no arguments, got %d", len(args))
 		}
 		return applyRecords(cur)
+	case "tonumber":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("eval: tonumber takes no arguments, got %d", len(args))
+		}
+		return applyToNumber(cur)
 	default:
 		// Unreachable today: internal/filter's own builtinNames set
 		// already rejects any other name at parse time. Kept as a
@@ -308,6 +314,52 @@ func applyRecords(cur any) (any, error) {
 		return sheetRecords(v)
 	default:
 		return nil, fmt.Errorf("eval: records: cannot apply to %s - records only applies to a sheet", describeType(cur))
+	}
+}
+
+// applyToNumber implements the "tonumber" builtin (#37): LinkedIn (and
+// many other exports) store numbers as text, so a cell's own value is
+// often a string that every calculation needs converted first.
+// "Never guess a cell's type from its text" (ADR-0010) is about
+// *implicit* inference while reading a file; this is the opposite - an
+// explicit, deliberate request to convert, which this package already
+// decided (ADR-0022) should error rather than produce null when it
+// can't.
+//
+// Matches jq's own tonumber in the cases that matter most - verified
+// against real jq (1.8.2) rather than assumed: a number passes through
+// unchanged, and a string that doesn't parse as a number errors, as
+// does any other type (including null and bool - jq itself errors on
+// both: "null (null) cannot be parsed as a number",
+// "boolean (true) cannot be parsed as a number" - tonumber doesn't get
+// the "null propagates" exception this package's own structural
+// Field/Index/Slice operators have, since converting a value is not
+// the same kind of operation as navigating into one).
+//
+// Deliberately diverges from jq on two points, both because the
+// motivating case is messy real-world spreadsheet exports, not
+// hand-written jq programs: leading/trailing whitespace is trimmed
+// before parsing (verified jq itself does not: `" 3048 " | tonumber`
+// errors there), since stray whitespace from a copy-pasted export is
+// exactly the kind of incidental noise this conversion exists to look
+// past; and "NaN"/"Inf"/"Infinity" text (which Go's strconv.ParseFloat
+// accepts but a JSON/jq number never is) is explicitly rejected rather
+// than silently becoming a non-finite float, since a spreadsheet
+// column is never legitimately expected to contain those as numbers.
+func applyToNumber(cur any) (any, error) {
+	switch v := cur.(type) {
+	case float64:
+		return v, nil
+	case nil:
+		return nil, fmt.Errorf("eval: tonumber: null cannot be parsed as a number")
+	case string:
+		n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
+			return nil, fmt.Errorf("eval: tonumber: %q cannot be parsed as a number", v)
+		}
+		return n, nil
+	default:
+		return nil, fmt.Errorf("eval: tonumber: %s cannot be parsed as a number", describeType(cur))
 	}
 }
 

@@ -26,6 +26,7 @@ xlq -r '.Sheet1.A1' path/to/book.xlsx      # a string result, unquoted
 xlq '.Sheet1 | records | .[0].SomeHeader' path/to/book.xlsx  # by header name
 xlq '.Sheet1["A3:C9"]' path/to/book.xlsx  # a rectangular range
 xlq '.Sheet1 | records | .[0:10]' path/to/book.xlsx  # the first 10 records
+xlq '.Sheet1.B2 | tonumber' path/to/book.xlsx  # "3048" -> 3048
 xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
 xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
 xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
@@ -64,6 +65,18 @@ sheet's original column order, since that's how Go's JSON encoder
 orders any object's keys. It also assumes row 1 actually is a header
 row; piping a sheet without one into `records` will treat its first
 data row as headers instead.
+
+`tonumber` (#37, see [ADR-0022](docs/adr/0022-extensible-builtins.md)
+for the builtin mechanism it's built on) converts a string to a
+number, for exports (LinkedIn's among them) that store numbers as
+text: `.DISCOVERY.B2 | tonumber` turns `"3048"` into `3048`. An
+already-numeric value passes through unchanged; anything that can't be
+parsed as a number - including `null` and a boolean, which don't get
+the "propagates as null" treatment field/index access has - is an
+error, not a silent `null`, matching jq's own `tonumber`. Leading/
+trailing whitespace is trimmed before parsing (a deliberate difference
+from jq, for exactly the kind of incidental copy-paste noise this
+conversion exists to look past).
 
 A range (`.Sheet1["A3:C9"]`, see
 [ADR-0012](docs/adr/0012-range-references.md)) selects a rectangular

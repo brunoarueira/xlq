@@ -129,6 +129,11 @@ func TestParseValid(t *testing.T) {
 			Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records", Args: []any{"x", 5.0, true, false, nil}}},
 		},
 		{
+			"tonumber builtin after a pipe (#37)",
+			".Sheet1.A1 | tonumber",
+			Pipe{Field{Field{Identity{}, "Sheet1"}, "A1"}, Builtin{Name: "tonumber"}},
+		},
+		{
 			"whitespace between tokens is insignificant",
 			" .  Sheet1 . A1 ",
 			Field{Field{Identity{}, "Sheet1"}, "A1"},

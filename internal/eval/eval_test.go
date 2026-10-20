@@ -376,6 +376,81 @@ func TestEvalRecords(t *testing.T) {
 	}
 }
 
+// tonumberWorkbook is a small, dedicated fixture for the "tonumber"
+// builtin (#37): one of every input shape tonumber needs to handle.
+func tonumberWorkbook() model.Workbook {
+	return model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("3048").At(0),     // A1: plain numeric text
+			model.NewStringCell(" 42 ").At(1),     // B1: numeric text with whitespace
+			model.NewStringCell("-10.5").At(2),    // C1: negative, decimal
+			model.NewNumberCell(99).At(3),         // D1: already a number
+			model.NewStringCell("abc").At(4),      // E1: unconvertible text
+			model.NewStringCell("").At(5),         // F1: empty string
+			model.NewStringCell("NaN").At(6),      // G1: rejected despite strconv.ParseFloat accepting it
+			model.NewStringCell("Infinity").At(7), // H1: same
+			model.NewBoolCell(true).At(8),         // I1: bool, not string/number
+		}},
+	})}}
+}
+
+func TestEvalToNumber(t *testing.T) {
+	wb := tonumberWorkbook()
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"plain numeric text", ".Sheet1.A1 | tonumber", 3048.0},
+		{"whitespace is trimmed, a deliberate deviation from jq", ".Sheet1.B1 | tonumber", 42.0},
+		{"negative decimal", ".Sheet1.C1 | tonumber", -10.5},
+		{"already a number is a pass-through", ".Sheet1.D1 | tonumber", 99.0},
+		{"empty parens is the same as the bare form", ".Sheet1.A1 | tonumber()", 3048.0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalToNumberInvalid(t *testing.T) {
+	wb := tonumberWorkbook()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"unconvertible text", ".Sheet1.E1 | tonumber"},
+		{"empty string", ".Sheet1.F1 | tonumber"},
+		{"\"NaN\" is rejected despite strconv.ParseFloat accepting it", ".Sheet1.G1 | tonumber"},
+		{"\"Infinity\" is rejected despite strconv.ParseFloat accepting it", ".Sheet1.H1 | tonumber"},
+		{"a bool errors, matching jq - no null-style pass-through", ".Sheet1.I1 | tonumber"},
+		{"null errors, matching jq - tonumber has no null-propagates exception", ".Sheet1.ZZ1 | tonumber"},
+		{"tonumber takes no arguments", `.Sheet1.A1 | tonumber("x")`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			if _, err := Eval(expr, wb); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
 // TestEvalRecordsEmptyParens guards ADR-0022's own claim that
 // "records()" and bare "records" are the exact same Builtin, not two
 // different code paths that happen to currently agree.

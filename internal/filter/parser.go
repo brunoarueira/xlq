@@ -99,7 +99,8 @@ func (p *parser) advance() token {
 // validated - this set exists only to keep typo-detection at parse
 // time, not to duplicate that validation.
 var builtinNames = map[string]bool{
-	"records": true,
+	"records":  true,
+	"tonumber": true, // #37
 }
 
 // parseStep parses one pipeline step after a "|": either a path, or a
