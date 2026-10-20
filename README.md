@@ -73,10 +73,15 @@ text: `.DISCOVERY.B2 | tonumber` turns `"3048"` into `3048`. An
 already-numeric value passes through unchanged; anything that can't be
 parsed as a number - including `null` and a boolean, which don't get
 the "propagates as null" treatment field/index access has - is an
-error, not a silent `null`, matching jq's own `tonumber`. Leading/
-trailing whitespace is trimmed before parsing (a deliberate difference
-from jq, for exactly the kind of incidental copy-paste noise this
-conversion exists to look past).
+error, not a silent `null`, matching jq's own `tonumber`. Only a plain
+decimal number is accepted (an optional sign, digits, an optional
+fraction, an optional exponent) - `"NaN"`, `"Inf"`/`"Infinity"`, and a
+hex float like `"0x1p2"` are all rejected too, even though Go's own
+number parser would otherwise accept them, since none of those is a
+number a spreadsheet cell's text would ever legitimately mean.
+Leading/trailing whitespace is trimmed before parsing (a deliberate
+difference from jq, for exactly the kind of incidental copy-paste
+noise this conversion exists to look past).
 
 A range (`.Sheet1["A3:C9"]`, see
 [ADR-0012](docs/adr/0012-range-references.md)) selects a rectangular

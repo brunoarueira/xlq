@@ -35,7 +35,6 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -317,6 +316,25 @@ func applyRecords(cur any) (any, error) {
 	}
 }
 
+// decimalNumber matches a plain decimal number - optional sign, digits,
+// an optional fraction, an optional exponent - and nothing else.
+// strconv.ParseFloat alone is too permissive for applyToNumber's own
+// purposes: it also accepts Go/C99 hex floats ("0x1p2") and
+// "NaN"/"Inf"/"Infinity" (any case), none of which is a number a
+// spreadsheet cell's text would ever legitimately mean. Checking the
+// text against this grammar first, before ParseFloat ever sees it,
+// rules all of that out up front rather than trying to special-case
+// every one of ParseFloat's own extra accepted forms after the fact.
+//
+// No ReDoS concern: Go's regexp package is RE2-based, which guarantees
+// linear-time matching with no catastrophic backtracking regardless of
+// pattern or input, and this pattern has no nested or overlapping
+// quantifiers to begin with - three sequential, unambiguous groups.
+// The input is also bounded in practice to one cell's text (Excel's
+// own per-cell limit is 32,767 characters), not an attacker-controlled
+// size.
+var decimalNumber = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
+
 // applyToNumber implements the "tonumber" builtin (#37): LinkedIn (and
 // many other exports) store numbers as text, so a cell's own value is
 // often a string that every calculation needs converted first.
@@ -343,9 +361,9 @@ func applyRecords(cur any) (any, error) {
 // errors there), since stray whitespace from a copy-pasted export is
 // exactly the kind of incidental noise this conversion exists to look
 // past; and "NaN"/"Inf"/"Infinity" text (which Go's strconv.ParseFloat
-// accepts but a JSON/jq number never is) is explicitly rejected rather
-// than silently becoming a non-finite float, since a spreadsheet
-// column is never legitimately expected to contain those as numbers.
+// accepts but a JSON/jq number never is, and decimalNumber above
+// rejects) is explicitly not treated as a number, since a spreadsheet
+// column is never legitimately expected to contain those as one.
 func applyToNumber(cur any) (any, error) {
 	switch v := cur.(type) {
 	case float64:
@@ -353,8 +371,16 @@ func applyToNumber(cur any) (any, error) {
 	case nil:
 		return nil, fmt.Errorf("eval: tonumber: null cannot be parsed as a number")
 	case string:
-		n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-		if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
+		trimmed := strings.TrimSpace(v)
+		if !decimalNumber.MatchString(trimmed) {
+			return nil, fmt.Errorf("eval: tonumber: %q cannot be parsed as a number", v)
+		}
+		n, err := strconv.ParseFloat(trimmed, 64)
+		if err != nil {
+			// decimalNumber already guarantees valid decimal syntax;
+			// only reachable for a value too large for a float64
+			// (ParseFloat itself reports that as an error, "value out
+			// of range", rather than silently returning +/-Inf).
 			return nil, fmt.Errorf("eval: tonumber: %q cannot be parsed as a number", v)
 		}
 		return n, nil

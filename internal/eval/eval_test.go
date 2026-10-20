@@ -390,6 +390,8 @@ func tonumberWorkbook() model.Workbook {
 			model.NewStringCell("NaN").At(6),      // G1: rejected despite strconv.ParseFloat accepting it
 			model.NewStringCell("Infinity").At(7), // H1: same
 			model.NewBoolCell(true).At(8),         // I1: bool, not string/number
+			model.NewStringCell("0x1p2").At(9),    // J1: Go/C99 hex float - also rejected, not treated as 4
+			model.NewStringCell("1.5e10").At(10),  // K1: valid scientific notation
 		}},
 	})}}
 }
@@ -406,6 +408,7 @@ func TestEvalToNumber(t *testing.T) {
 		{"negative decimal", ".Sheet1.C1 | tonumber", -10.5},
 		{"already a number is a pass-through", ".Sheet1.D1 | tonumber", 99.0},
 		{"empty parens is the same as the bare form", ".Sheet1.A1 | tonumber()", 3048.0},
+		{"scientific notation", ".Sheet1.K1 | tonumber", 1.5e10},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -435,6 +438,7 @@ func TestEvalToNumberInvalid(t *testing.T) {
 		{"\"NaN\" is rejected despite strconv.ParseFloat accepting it", ".Sheet1.G1 | tonumber"},
 		{"\"Infinity\" is rejected despite strconv.ParseFloat accepting it", ".Sheet1.H1 | tonumber"},
 		{"a bool errors, matching jq - no null-style pass-through", ".Sheet1.I1 | tonumber"},
+		{"a Go/C99 hex float is rejected, not silently parsed as 4", ".Sheet1.J1 | tonumber"},
 		{"null errors, matching jq - tonumber has no null-propagates exception", ".Sheet1.ZZ1 | tonumber"},
 		{"tonumber takes no arguments", `.Sheet1.A1 | tonumber("x")`},
 	}
