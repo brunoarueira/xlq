@@ -626,24 +626,29 @@ func applyToDate(cur any, args []any) (any, error) {
 }
 
 // applyComparison implements filter.Comparison (ADR-0024): == and !=
-// never error (cross-type is simply unequal, matching jq); ordering
-// (</>/<=/>=) errors on a non-null type mismatch instead of guessing a
-// ranking jq's own total type order would otherwise supply, but
-// treats null specially - compared with anything via an ordering
-// operator, including another null, it's always false, never an
-// error, so a sparse column's absent value quietly fails a threshold
-// check rather than aborting it.
+// never error on a type mismatch (cross-type is simply unequal,
+// matching jq); ordering (</>/<=/>=) errors on a non-null type
+// mismatch instead of guessing a ranking jq's own total type order
+// would otherwise supply, but treats null specially for a scalar
+// comparison - a number or string compared with null via an ordering
+// operator, including null compared with another null, is always
+// false, never an error, so a sparse column's absent value quietly
+// fails a threshold check rather than aborting it.
 //
-// model.Sheet and model.Workbook are rejected before reflect.DeepEqual
-// ever runs on them, for both == and != - Sheet carries a non-nil Rows
-// iter.Seq2 closure, and Go's reflect.DeepEqual only ever considers
-// two func values equal when *both* are nil, so DeepEqual(sheet,
-// sheet) - the exact same value compared to itself - is false, not
-// true. Comparing a whole sheet or workbook was never a meaningful
-// operation this project defines anyway (the same reasoning ADR-0020
-// already gave for excluding them from slicing), so this is a clear
-// error pointing at a specific cell or field instead, not a silently
-// wrong answer.
+// model.Sheet and model.Workbook are always rejected before anything
+// else runs, for every operator (==, !=, and ordering alike) and
+// regardless of what the other operand is, including null - Sheet
+// carries a non-nil Rows iter.Seq2 closure, and Go's reflect.DeepEqual
+// only ever considers two func values equal when *both* are nil, so
+// DeepEqual(sheet, sheet) - the exact same value compared to itself -
+// is false, not true. Comparing a whole sheet or workbook was never a
+// meaningful operation this project defines anyway (the same reasoning
+// ADR-0020 already gave for excluding them from slicing), so this is a
+// clear error pointing at a specific cell or field instead, not a
+// silently wrong answer - checking it unconditionally, before the null
+// short-circuit, also avoids the inconsistency a review round caught:
+// ordering a sheet against null used to silently return false instead
+// of erroring, unlike ordering two actual sheets.
 func applyComparison(op string, left, right any) (any, error) {
 	// Checked unconditionally, before the null short-circuit below -
 	// otherwise comparing a sheet/workbook against null (rather than

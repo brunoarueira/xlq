@@ -634,6 +634,7 @@ func TestEvalComparisonInvalid(t *testing.T) {
 		{"cross-type ordering is an error, not a guessed ranking", ".Sheet1.E1 > .Sheet1.A1"},
 		{"bool ordering is an error - no established ordering for bools", ".Sheet1.G1 > .Sheet1.H1"},
 		{"comparing a whole sheet errors instead of a wrong DeepEqual answer", ".Sheet1 == .Sheet1"},
+		{"ordering a sheet against null errors too, not a silent false", ".NoSuchSheet > .Sheet1"},
 		{"comparing a whole workbook errors the same way", ". == ."},
 	}
 	for _, tc := range cases {
