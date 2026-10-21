@@ -123,19 +123,22 @@ incidental copy-paste noise, not a meaningful part of the date text.
 
 Comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`, see
 [ADR-0024](docs/adr/0024-comparison-operators.md)) work the way you'd
-expect: `.Sheet1.A1 == .Sheet1.B1`, `.Sheet1.Likes > 100`, or against a
-literal (`.Sheet1.A1 == "done"`). `==`/`!=` never error, even across
-types - a number and a string are just "not equal," matching jq
-exactly. Ordering deliberately does **not** match jq: comparing two
-different types (other than with `null`) is an error, not a guessed
-ranking - `tonumber`/`todate` already refuse to guess a cell's type
-from its text, and silently deciding "a string always outranks a
-number" would be the same kind of guess. `null` compared with anything
+expect: `.Sheet1.A1 == .Sheet1.B1`, `.Sheet1 | records | .[0].Likes >
+100`, or against a literal (`.Sheet1.A1 == "done"`). `==`/`!=` never
+error on a type mismatch - a number and a string are just "not equal,"
+matching jq exactly - though comparing a whole sheet or workbook is
+still a clear error, never a (meaningless) `true` or `false`, the same
+as for ordering below. Ordering deliberately does **not** match jq:
+comparing two different types (other than with `null`) is an error,
+not a guessed ranking - `tonumber`/`todate` already refuse to guess a
+cell's type from its text, and silently deciding "a string always
+outranks a number" would be the same kind of guess. This includes two
+values of the *same* type when neither is a number or a string -
+`true > false` is also an error, not `true`, since this project
+defines no ordering for booleans at all. `null` compared with anything
 via an ordering operator is `false`, never an error - unlike equality's
 `null == null`, which is `true` - so a sparse column's missing value
-just quietly fails a threshold check instead of erroring out. Comparing
-a whole sheet or workbook is a clear error, not a (meaningless) `true`
-or `false`.
+just quietly fails a threshold check instead of erroring out.
 
 A range (`.Sheet1["A3:C9"]`, see
 [ADR-0012](docs/adr/0012-range-references.md)) selects a rectangular

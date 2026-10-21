@@ -164,9 +164,19 @@ func TestParseValid(t *testing.T) {
 			Comparison{"==", Field{Identity{}, "A1"}, Literal{nil}},
 		},
 		{
-			"every comparison operator lexes and parses",
+			"\"<\" lexes and parses",
+			".A1 < .B1",
+			Comparison{"<", Field{Identity{}, "A1"}, Field{Identity{}, "B1"}},
+		},
+		{
+			"\"<=\" lexes and parses",
 			".A1 <= .B1",
 			Comparison{"<=", Field{Identity{}, "A1"}, Field{Identity{}, "B1"}},
+		},
+		{
+			"\">=\" lexes and parses",
+			".A1 >= .B1",
+			Comparison{">=", Field{Identity{}, "A1"}, Field{Identity{}, "B1"}},
 		},
 		{
 			"comparison after a pipe, left side a builtin (ADR-0024)",

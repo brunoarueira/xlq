@@ -645,13 +645,21 @@ func applyToDate(cur any, args []any) (any, error) {
 // error pointing at a specific cell or field instead, not a silently
 // wrong answer.
 func applyComparison(op string, left, right any) (any, error) {
-	if op == "==" || op == "!=" {
-		for _, v := range []any{left, right} {
-			switch v.(type) {
-			case model.Sheet, model.Workbook:
-				return nil, fmt.Errorf("eval: cannot compare %s with %q; compare a specific cell or field instead", describeType(v), op)
-			}
+	// Checked unconditionally, before the null short-circuit below -
+	// otherwise comparing a sheet/workbook against null (rather than
+	// another sheet/workbook) would silently skip this rejection and
+	// fall through to the ordering branch's own null handling instead,
+	// inconsistently allowing exactly the comparison this guards
+	// against every other time (caught in review: comparing a sheet or
+	// workbook is never meaningful, regardless of what's on the other
+	// side).
+	for _, v := range []any{left, right} {
+		switch v.(type) {
+		case model.Sheet, model.Workbook:
+			return nil, fmt.Errorf("eval: cannot compare %s with %q; compare a specific cell or field instead", describeType(v), op)
 		}
+	}
+	if op == "==" || op == "!=" {
 		eq := reflect.DeepEqual(left, right)
 		if op == "!=" {
 			return !eq, nil
@@ -667,30 +675,36 @@ func applyComparison(op string, left, right any) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("eval: cannot compare %s and %s with %q", describeType(left), describeType(right), op)
 		}
-		return compareOrdered(op, l, r), nil
+		return compareOrdered(op, l, r)
 	case string:
 		r, ok := right.(string)
 		if !ok {
 			return nil, fmt.Errorf("eval: cannot compare %s and %s with %q", describeType(left), describeType(right), op)
 		}
-		return compareOrdered(op, l, r), nil
+		return compareOrdered(op, l, r)
 	default:
 		return nil, fmt.Errorf("eval: %s does not support ordering with %q", describeType(left), op)
 	}
 }
 
-func compareOrdered[T float64 | string](op string, l, r T) bool {
+// compareOrdered evaluates op (one of <, >, <=, >=) between l and r.
+// op is only ever one of those four here - applyComparison handles ==
+// and != itself, before calling this - but Eval is exported, so a
+// hand-built filter.Comparison with some other Op string is possible
+// without going through the parser at all; this returns a clean error
+// for that case instead of panicking the caller (caught in review).
+func compareOrdered[T float64 | string](op string, l, r T) (bool, error) {
 	switch op {
 	case "<":
-		return l < r
+		return l < r, nil
 	case ">":
-		return l > r
+		return l > r, nil
 	case "<=":
-		return l <= r
+		return l <= r, nil
 	case ">=":
-		return l >= r
+		return l >= r, nil
 	}
-	panic("unreachable")
+	return false, fmt.Errorf("eval: unknown comparison operator %q", op)
 }
 
 // record is one row produced by sheetRecords (ADR-0011/ADR-0021).

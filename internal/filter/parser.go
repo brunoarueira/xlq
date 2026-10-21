@@ -375,6 +375,15 @@ func spacedAfterIdent(input string, toks []token, pos int) bool {
 	if pos == 0 || toks[pos-1].kind != tokIdent {
 		return false
 	}
+	// A "true"/"false"/"null" literal operand (ADR-0024) is also a
+	// tokIdent, but it was never a field name the bracket-quoting hint
+	// below would actually fix - a stray token after one is some other
+	// mistake (e.g. "and"/"or", which aren't supported), not a name
+	// with spaces (caught in review).
+	switch toks[pos-1].text {
+	case "true", "false", "null":
+		return false
+	}
 	start := toks[pos].pos
 	return start > 0 && (input[start-1] == ' ' || input[start-1] == '\t')
 }
