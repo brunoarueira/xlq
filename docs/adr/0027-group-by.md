@@ -76,6 +76,20 @@ also sidesteps the `model.Sheet`/`model.Workbook` `reflect.DeepEqual`
 bug ADR-0024 found and fixed for `==` - those two types never reach
 this code path to trigger it.
 
+One `float64` value needs its own, explicit rejection: `NaN`. `NaN`
+isn't even equal to itself (`NaN == NaN` is `false`, and so is
+`reflect.DeepEqual(NaN, NaN)` - verified directly, Go doesn't
+special-case it either way), so a `map[any]...` keyed by a `NaN` value
+can never retrieve that entry back out again - every `NaN`-keyed
+element would silently become an unreachable group, read back as a
+`nil` slice rather than the elements actually grouped there (verified
+empirically before deciding this: two `NaN` keys in a row, inserted
+into exactly this map shape, come back as two separate `nil` groups,
+not one holding both elements - a silent, total loss of that data, not
+an error). `group_by` rejects a `NaN` key explicitly, with the same
+clear-error treatment as a record or array key, rather than letting it
+reach the map at all.
+
 ```go
 func applyGroupBy(arg filter.Expr, cur any) (any, error) {
 	switch v := cur.(type) {
@@ -96,8 +110,18 @@ func groupByOver[T any](arg filter.Expr, elems []T) ([]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		switch key.(type) {
-		case float64, string, bool, nil:
+		switch n := key.(type) {
+		case float64:
+			if math.IsNaN(n) {
+				// NaN != NaN, including itself, so a map[any]... can
+				// never retrieve a NaN key back out again - every NaN
+				// would silently become its own group that then reads
+				// back as a nil slice (verified empirically: two NaN
+				// keys in a row produce two nil result groups, not one
+				// containing their elements - caught in review).
+				return nil, fmt.Errorf("eval: group_by: NaN cannot be used as a group key")
+			}
+		case string, bool, nil:
 		default:
 			return nil, fmt.Errorf("eval: group_by: %s cannot be used as a group key", describeType(key))
 		}
