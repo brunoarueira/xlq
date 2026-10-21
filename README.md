@@ -30,6 +30,7 @@ xlq '.Sheet1.B2 | tonumber' path/to/book.xlsx  # "3048" -> 3048
 xlq '.Sheet1.B2 | todate("M/D/YYYY")' path/to/book.xlsx  # "7/28/2026" -> an RFC3339 date
 xlq '.Sheet1.B2 | tonumber > 100' path/to/book.xlsx  # a comparison, true or false
 xlq '.Sheet1 | records | select(.Likes > 100)' path/to/book.xlsx  # keep matching records
+xlq '.Sheet1 | records | map(.Likes) | sum' path/to/book.xlsx  # total a column
 xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
 xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
 xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
@@ -165,6 +166,26 @@ null"); for `select`, it's this project's own deliberate design, not a
 jq match - jq's `select` isn't array-iterating at all (see above), so
 it has no equivalent "requires an array" rule to match in the first
 place.
+
+`sum`, `count`, and `avg` (see
+[ADR-0026](docs/adr/0026-sum-count-avg.md)) are zero-argument reduce
+builtins - no filter-expression argument, unlike `map`/`select`; project
+a field first with `map` (`.Sheet1 | records | map(.Likes) | sum`), the
+same composition jq's own `map(.field) | add` idiom uses. `count`
+accepts `records`'s output or a plain array and returns its element
+count, including `null` elements - an array-only, jq-compatible subset
+of jq's own polymorphic `length`. `sum` requires a plain array of
+numbers (not `records`'s output directly - summing a record has no
+single defined field); a `null` element contributes `0`, matching jq's
+own `add`, so a blank cell in a sparse column doesn't abort the sum;
+any other non-number element is a clear error. An array with no
+non-`null` numbers at all (empty, or every element `null`) sums to
+`null`, not `0`, matching jq's `add` for both cases - so "no data" and
+"a genuine zero total" stay distinguishable. `avg` has no jq
+equivalent - this project's own addition - and deliberately disagrees
+with `sum` on `null`: excluded from both the total and the count used
+to divide, not treated as a zero contribution, since averaging a
+sparse column should reflect the values actually present.
 
 A range (`.Sheet1["A3:C9"]`, see
 [ADR-0012](docs/adr/0012-range-references.md)) selects a rectangular
