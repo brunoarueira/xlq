@@ -49,7 +49,7 @@ project's own addition, not a jq port:
 
 ## Decision
 
-### `count`: shape-agnostic length, matching jq's own `length` exactly
+### `count`: shape-agnostic length - an array-only, jq-compatible subset of `length`
 
 `count` accepts either array shape this evaluator produces (`[]record`
 from `records`, `[]any` from `map`, a whole row/column, or a slice) and
@@ -58,16 +58,18 @@ blank cell is still a row or array position, not an absent one, and
 there's nothing to disambiguate the way there is for `sum`/`avg`
 below. Anything else (a scalar, a single record, `nil`, a sheet, a
 workbook) is a clear error, the same "wrong shape, say so" choice
-`map`/`select` already make (ADR-0025).
+`map`/`select` already make (ADR-0025) - a deliberate, narrower scope
+than jq's own `length`, which is polymorphic (a string's character
+count, a number's absolute value, an object's key count, `null` as
+`0`); this project's `count` only ever means "how many elements," and
+only for the one shape ("an array") that question is unambiguous for.
 
-### `sum`: `[]any` only, `null` contributes 0, matching jq's own `add`
+### `sum`: `[]any` only, `null` contributes 0 - jq-inspired, numbers only
 
 `sum` requires `[]any` specifically, not `[]record` - summing a record
-directly has no single defined meaning (which field?), the same
-reasoning that already makes `[]record` invalid for `map`'s argument
-to assume without projecting a field first. A `[]record` input gets a
-clear, actionable error naming the fix (`map(.Likes) | sum`), not a
-generic "wrong type" message.
+directly has no single defined meaning (which field would it sum?). A
+`[]record` input gets a clear, actionable error naming the fix
+(`map(.Likes) | sum`), not a generic "wrong type" message.
 
 `null` elements contribute `0` to the running total, matching jq's own
 `add` (verified above) - and consistent with this project's own
@@ -75,16 +77,24 @@ established precedent for `null` in a sparse-data context: ADR-0024
 already treats `null` specially in an ordering comparison (always
 `false`, never an error) specifically so a sparse column's blank cells
 don't abort the whole operation. Any other non-number element (a
-string, a bool, a record) is a clear error, not a guessed `0` - only
-`null` gets this treatment, because only `null` unambiguously means
+string, a bool, a record) is a clear error, not a guessed `0` - unlike
+jq's own `add`, which is polymorphic (it also concatenates an array of
+strings, an array of arrays, or merges an array of objects), `sum`
+here is deliberately numbers-only: inferring "the user must have meant
+string concatenation" from an array's element type would be exactly
+the kind of guess this project otherwise refuses to make. Only `null`
+gets special treatment, because only `null` unambiguously means
 "nothing was here," the same distinction `tonumber`/`todate` already
 draw between `null` (a real absence) and a malformed value (a mistake
 worth surfacing).
 
-An empty array sums to `null`, not `0` - also matching jq's own `add`
-- so "no data to sum" and "summed some data, and it was zero" stay
-distinguishable in the output, rather than colliding on the same
-value.
+An array with no non-`null` numbers at all - whether because it's
+empty, or because every element is `null` - sums to `null`, not `0`,
+matching jq's own `add` for both cases (verified above: `[] | add` and
+`[null,null] | add` are both `null`; a number only ever appears once a
+real, non-`null` element does) - so "no data to sum" and "summed some
+data, and it was zero" stay distinguishable in the output, rather than
+colliding on the same value.
 
 ### `avg`: this project's own addition - `null` is excluded, not zeroed
 
@@ -103,11 +113,11 @@ should include every present contribution (0 for a blank, matching
 jq), while a mean should only be computed over values that exist.
 
 An array with no non-`null` numbers at all (including an empty array)
-averages to `null`, the same "no data" signal `sum` uses for an empty
-array, rather than a divide-by-zero error. Any other non-number,
-non-`null` element is a clear error, the same as `sum`. Like `sum`,
-`avg` requires `[]any`, not `[]record`, with the same actionable error
-naming `map` as the fix.
+averages to `null`, the same "no data" signal `sum` now uses for both
+an empty array and an all-`null` one, rather than a divide-by-zero
+error. Any other non-number, non-`null` element is a clear error, the
+same as `sum`. Like `sum`, `avg` requires `[]any`, not `[]record`, with
+the same actionable error naming `map` as the fix.
 
 ```go
 func applyCount(cur any) (any, error) {
@@ -126,19 +136,21 @@ func applySum(cur any) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("eval: sum requires an array of numbers, got %s; project a field first, e.g. map(.Likes) | sum", describeType(cur))
 	}
-	if len(v) == 0 {
-		return nil, nil
-	}
 	var total float64
+	var sawNumber bool
 	for _, elem := range v {
 		switch n := elem.(type) {
 		case float64:
 			total += n
+			sawNumber = true
 		case nil:
 			// Contributes 0 - see Decision above.
 		default:
 			return nil, fmt.Errorf("eval: sum: %s is not a number", describeType(elem))
 		}
+	}
+	if !sawNumber {
+		return nil, nil
 	}
 	return total, nil
 }
