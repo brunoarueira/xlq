@@ -26,7 +26,9 @@ on). No `pkg/`, nothing importable from outside the module. See
 Run what CI runs:
 
 ```sh
-gofmt -l .
+test -z "$(gofmt -l .)"   # gofmt -l only lists unformatted files and
+                          # always exits 0 - check its output is empty,
+                          # don't just run it and move on
 go vet ./...
 go build ./...
 go test ./... -race -cover
