@@ -18,12 +18,16 @@ separately, filed once this one lands) decides the `map`/`select`
 mechanism itself.
 
 Comparisons are decided as a **general grammar feature**, not
-something invented just for `select`'s internal use: `.A1 == .B1` is a
-valid, directly-evaluable filter on its own today, the same way jq's
-own `.a == .b` is, producing a bare boolean. This also means
-comparisons can ship and be tested completely independently of
-`map`/`select` existing at all, keeping this PR small per the
-feature's own rollout plan.
+something invented just for `select`'s internal use: once implemented,
+`.A1 == .B1` will be a valid, directly-evaluable filter on its own -
+the same way jq's own `.a == .b` is, producing a bare boolean - not
+something that only parses inside a `select(...)` argument. This ADR
+is design-only; the lexer/parser/evaluator changes it decides land in
+a separate implementation PR. Deciding comparisons as their own,
+general feature (rather than special-cased syntax only valid inside a
+future `select`) means they can ship and be tested completely
+independently of `map`/`select` existing at all, keeping that
+implementation PR small per the feature's own rollout plan.
 
 Verified against real jq (1.8.2) before deciding the semantics below,
 not assumed:
@@ -105,8 +109,25 @@ worth the risk of it being wrong later.
 // operator, including another null, it's always false, never an
 // error, so a sparse column's absent value quietly fails a threshold
 // check rather than aborting it.
+//
+// model.Sheet and model.Workbook are rejected before reflect.DeepEqual
+// ever runs on them, for both == and != - caught in review, verified
+// empirically: Sheet carries a non-nil Rows iter.Seq2 closure, and
+// Go's reflect.DeepEqual only ever considers two func values equal
+// when *both* are nil, so DeepEqual(sheet, sheet) - the exact same
+// value compared to itself - is false, not true. Comparing a whole
+// sheet or workbook was never a meaningful operation this project
+// defines anyway (the same reasoning ADR-0020 already gave for
+// excluding them from slicing), so this is a clear error pointing at
+// a specific cell or field instead, not a silently wrong answer.
 func applyComparison(op string, left, right any) (any, error) {
 	if op == "==" || op == "!=" {
+		for _, v := range []any{left, right} {
+			switch v.(type) {
+			case model.Sheet, model.Workbook:
+				return nil, fmt.Errorf("eval: cannot compare %s with %q; compare a specific cell or field instead", describeType(v), op)
+			}
+		}
 		eq := reflect.DeepEqual(left, right)
 		if op == "!=" {
 			return !eq, nil
@@ -150,11 +171,21 @@ func compareOrdered[T float64 | string](op string, l, r T) bool {
 ```
 
 (`reflect.DeepEqual` for `==`/`!=` handles every value shape this
-package's evaluator already produces - `float64`, `string`, `bool`,
-`nil`, `[]any`, `[]map[string]any`, `map[string]any` - correctly and
-uniformly, including a records array or a whole-row/column array
-compared for equality, without needing a bespoke case per type the
-way the ordering branch does.)
+package's evaluator produces *that `eval()`'s own AST walk can still
+reach by the time a `Comparison` evaluates its operands* - `float64`,
+`string`, `bool`, `nil`, `[]any`, the internal `record`/`[]record`
+shape (ADR-0021) - correctly and uniformly, without needing a bespoke
+case per type the way the ordering branch does. `model.Sheet` and
+`model.Workbook` are the two exceptions, excluded explicitly above
+rather than silently mishandled.)
+
+`describeType` gains a `case model.Sheet: return "a sheet"` alongside
+its existing `model.Workbook` case, needed for the error message
+above - nothing has ever called `describeType` on a bare `model.Sheet`
+before now (`applyField`/`applyIndex`/`applySlice` all handle `model.Sheet`
+explicitly, never falling through to `describeType`'s own generic
+`default`), so this gap existed unnoticed until this ADR's own error
+path needed it.
 
 ### Grammar: a new binary-operator layer, between pipe and path/builtin, matching jq's own precedence
 
@@ -387,10 +418,12 @@ pipe and path/builtin that every existing filter still parses through
 unchanged (no comparison operator present, no behavior change).
 `internal/eval` gains `applyComparison`, dispatched from `eval()`'s own
 switch like `Field`/`Index`/`Slice` already are, plus a trivial
-`Literal` case. `map`/`select` (tracked separately) can now be decided
+`Literal` case, and `describeType` gains the `model.Sheet` case this
+ADR's own error path needed. `map`/`select` (tracked separately) can
+now be decided
 purely in terms of their own filter-expression-argument mechanism and
 per-element evaluation model, with a working, independently-useful
-comparison layer already under them - `.Sheet1 | records | .[0].Likes
-> 100` is a complete, valid filter today, with or without `map`/
-`select` ever landing. Chaining and boolean combinators stay
-explicitly deferred.
+comparison layer already under them - once this ADR's own
+implementation PR lands, `.Sheet1 | records | .[0].Likes > 100` is a
+complete, valid filter on its own, with or without `map`/`select` ever
+landing. Chaining and boolean combinators stay explicitly deferred.
