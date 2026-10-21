@@ -1298,12 +1298,34 @@ func toJSON(v any) (any, error) {
 		return out, nil
 	case []any:
 		out := make([]any, len(val))
+		allRecords := len(val) > 0
 		for i, elem := range val {
 			converted, err := toJSON(elem)
 			if err != nil {
 				return nil, err
 			}
 			out[i] = converted
+			if _, ok := converted.(map[string]any); !ok {
+				allRecords = false
+			}
+		}
+		if allRecords {
+			// map(.) (or anything else whose filter hands back a
+			// record/[]record nested inside a []any) can end up here
+			// with every element flattened to a map[string]any -
+			// internal/output's CSV/table formatters only recognize
+			// []map[string]any as "a records table," not a []any that
+			// happens to contain maps (caught in review: map(.) was
+			// rendering as one opaque JSON-text cell per row instead of
+			// a real table). A []any only ever gets map[string]any
+			// elements from a flattened record in the first place, so
+			// promoting it here is recovering the records shape, not
+			// guessing one.
+			records := make([]map[string]any, len(out))
+			for i, elem := range out {
+				records[i] = elem.(map[string]any)
+			}
+			return records, nil
 		}
 		return out, nil
 	default:
@@ -1387,6 +1409,8 @@ func sheetGrid(sheet model.Sheet) ([][]any, error) {
 
 func describeType(v any) string {
 	switch v.(type) {
+	case nil:
+		return "null"
 	case []any:
 		return "an array"
 	case string:

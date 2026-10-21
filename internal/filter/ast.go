@@ -68,9 +68,9 @@ func (Pipe) exprNode() {}
 // directly. Args are always literals (ADR-0014's value grammar:
 // string, float64, bool, nil), never a nested filter expression - see
 // FilterArg (ADR-0025) for that. Like records before it (ADR-0011, the
-// only builtin before this generalization), a Builtin is only valid as
-// a pipeline step after a "|": the grammar never allows one as a
-// filter's first segment.
+// only builtin before this generalization), a Builtin is never valid
+// as a whole filter's first segment - only after a "|", or (ADR-0025)
+// as the first segment of a map/select argument, e.g. "map(tonumber)".
 type Builtin struct {
 	Name string
 	Args []any

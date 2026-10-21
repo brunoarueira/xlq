@@ -698,12 +698,18 @@ func TestEvalMap(t *testing.T) {
 			[]any{true, false, true},
 		},
 		{
-			"map(.) is the identity map - exercises the toJSON []any-nesting fix",
+			"map(.) is the identity map - exercises the toJSON record-recovery fix",
 			".Sheet1 | records | map(.)",
-			[]any{
-				map[string]any{"Name": "alice", "Likes": 150.0},
-				map[string]any{"Name": "bob", "Likes": 50.0},
-				map[string]any{"Name": "carol", "Likes": 300.0},
+			// []map[string]any, not []any{map[string]any{...}}: toJSON
+			// promotes a []any whose every element is a flattened
+			// record back to []map[string]any, so --csv/--table still
+			// recognize it as a records table (caught in review -
+			// without this, map(.) rendered as one opaque JSON-text
+			// cell per row instead of a real table).
+			[]map[string]any{
+				{"Name": "alice", "Likes": 150.0},
+				{"Name": "bob", "Likes": 50.0},
+				{"Name": "carol", "Likes": 300.0},
 			},
 		},
 		{
@@ -726,6 +732,24 @@ func TestEvalMap(t *testing.T) {
 				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestEvalMapNilDescribesAsNull guards describeType's nil case (caught
+// in review): without it, a nil input's error reads "got a <nil>"
+// instead of "got null".
+func TestEvalMapNilDescribesAsNull(t *testing.T) {
+	expr, err := filter.Parse(".NoSuchSheet | map(.)")
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	_, err = Eval(expr, mapSelectWorkbook())
+	if err == nil {
+		t.Fatal("Eval: want error, got nil")
+	}
+	want := "eval: map requires an array, got null"
+	if err.Error() != want {
+		t.Errorf("Eval error = %q, want %q", err.Error(), want)
 	}
 }
 

@@ -54,8 +54,8 @@ an xlsx or ods input, which have no delimiter concept to override.
 Filters can address a sheet by name (`.Sheet1`, case-insensitive), and
 from there a cell by its A1 reference (`.Sheet1.A1`), a whole column
 (`.Sheet1.B`), a whole row (`.Sheet1[5]`, 1-based), or a rectangular
-range (`.Sheet1["A3:C9"]`, see below); arithmetic, `map`/`select`, and
-formula introspection aren't implemented yet.
+range (`.Sheet1["A3:C9"]`, see below); arithmetic and formula
+introspection aren't implemented yet.
 
 `records` (see [ADR-0011](docs/adr/0011-header-aware-record-output.md))
 turns a sheet into an array of row objects keyed by its row-1 header,
@@ -157,8 +157,12 @@ it was. `select`'s filter must evaluate to an actual boolean; a
 non-boolean result (even a jq-style "truthy" value like `0` or `""`)
 is an error, not a guessed coercion. Both require an actual array
 (`records`'s output, or a plain row/column array) - a scalar, a single
-record, or `null` is an error, matching jq's own `map`/`select`
-behavior on those.
+record, or `null` is an error. For `map`, that matches jq's own
+behavior (`jq -n 'null | map(.)'` also errors, "Cannot iterate over
+null"); for `select`, it's this project's own deliberate design, not a
+jq match - jq's `select` isn't array-iterating at all (see above), so
+it has no equivalent "requires an array" rule to match in the first
+place.
 
 A range (`.Sheet1["A3:C9"]`, see
 [ADR-0012](docs/adr/0012-range-references.md)) selects a rectangular
