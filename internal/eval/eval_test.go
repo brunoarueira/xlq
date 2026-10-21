@@ -650,6 +650,208 @@ func TestEvalComparisonInvalid(t *testing.T) {
 	}
 }
 
+// mapSelectWorkbook is a small, dedicated fixture for map/select
+// (ADR-0025): a header row (Name, Likes) and three data rows, with
+// Likes already a real number - so map/select's own mechanics are
+// exercised directly, without needing tonumber along the way too.
+func mapSelectWorkbook() model.Workbook {
+	return model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("Name").At(0),
+			model.NewStringCell("Likes").At(1),
+		}},
+		{Index: 1, Cells: []model.Cell{
+			model.NewStringCell("alice").At(0),
+			model.NewNumberCell(150).At(1),
+		}},
+		{Index: 2, Cells: []model.Cell{
+			model.NewStringCell("bob").At(0),
+			model.NewNumberCell(50).At(1),
+		}},
+		{Index: 3, Cells: []model.Cell{
+			model.NewStringCell("carol").At(0),
+			model.NewNumberCell(300).At(1),
+		}},
+	})}}
+}
+
+func TestEvalMap(t *testing.T) {
+	wb := mapSelectWorkbook()
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{
+			"map extracts a field across every record",
+			".Sheet1 | records | map(.Likes)",
+			[]any{150.0, 50.0, 300.0},
+		},
+		{
+			"map transforms with a comparison",
+			".Sheet1 | records | map(.Likes > 100)",
+			[]any{true, false, true},
+		},
+		{
+			"map over a plain []any (a column range)",
+			".Sheet1.B[1:] | map(. > 100)",
+			[]any{true, false, true},
+		},
+		{
+			"map(.) is the identity map - exercises the toJSON record-recovery fix",
+			".Sheet1 | records | map(.)",
+			// []map[string]any, not []any{map[string]any{...}}: toJSON
+			// promotes a []any whose every element is a flattened
+			// record back to []map[string]any, so --csv/--table still
+			// recognize it as a records table (caught in review -
+			// without this, map(.) rendered as one opaque JSON-text
+			// cell per row instead of a real table).
+			[]map[string]any{
+				{"Name": "alice", "Likes": 150.0},
+				{"Name": "bob", "Likes": 50.0},
+				{"Name": "carol", "Likes": 300.0},
+			},
+		},
+		{
+			"map composes with a further pipeline step",
+			".Sheet1 | records | map(.Name) | .[0]",
+			"alice",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEvalMapNilDescribesAsNull guards describeType's nil case (caught
+// in review): without it, a nil input's error reads "got a <nil>"
+// instead of "got null".
+func TestEvalMapNilDescribesAsNull(t *testing.T) {
+	expr, err := filter.Parse(".NoSuchSheet | map(.)")
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	_, err = Eval(expr, mapSelectWorkbook())
+	if err == nil {
+		t.Fatal("Eval: want error, got nil")
+	}
+	want := "eval: map requires an array, got null"
+	if err.Error() != want {
+		t.Errorf("Eval error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestEvalMapInvalid(t *testing.T) {
+	wb := mapSelectWorkbook()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"map requires an array, not a scalar", ".Sheet1.A1 | map(.)"},
+		{"map requires an array, not a single record", ".Sheet1 | records | .[0] | map(.)"},
+		{"map on null errors, matching jq, rather than propagating null", ".NoSuchSheet | map(.)"},
+		{"map(select(...)) errors per-element - select needs an array, not one record", ".Sheet1 | records | map(select(.Likes > 100))"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			if _, err := Eval(expr, wb); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
+func TestEvalSelect(t *testing.T) {
+	wb := mapSelectWorkbook()
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{
+			"select filters records, keeping them unchanged",
+			".Sheet1 | records | select(.Likes > 100)",
+			// []record stays []record (selectOver preserves cur's own
+			// slice type), which toJSON then flattens the same way it
+			// already does for records on its own: []map[string]any,
+			// not []any - unlike map, whose result is always []any.
+			[]map[string]any{
+				{"Name": "alice", "Likes": 150.0},
+				{"Name": "carol", "Likes": 300.0},
+			},
+		},
+		{
+			"select matching nothing is [], not null",
+			".Sheet1 | records | select(.Likes > 100000)",
+			[]map[string]any{},
+		},
+		{
+			"select over a plain []any preserves that type",
+			".Sheet1.B[1:] | select(. > 100)",
+			[]any{150.0, 300.0},
+		},
+		{
+			"select composes with a further pipeline step",
+			".Sheet1 | records | select(.Likes > 100) | map(.Name)",
+			[]any{"alice", "carol"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalSelectInvalid(t *testing.T) {
+	wb := mapSelectWorkbook()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"select requires an array, not a scalar", ".Sheet1.A1 | select(. == \"Name\")"},
+		{"select's filter must be a boolean, not a jq-style truthy value", ".Sheet1 | records | select(.Likes)"},
+		{"select on null errors, matching jq, rather than propagating null", ".NoSuchSheet | select(.)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			if _, err := Eval(expr, wb); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
 func TestEvalToDateInvalid(t *testing.T) {
 	wb := todateWorkbook()
 	cases := []struct {

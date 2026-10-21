@@ -111,6 +111,8 @@ func eval(expr filter.Expr, cur any) (any, error) {
 			return nil, err
 		}
 		return applyComparison(e.Op, left, right)
+	case filter.FilterArg:
+		return applyFilterArg(e.Name, e.Arg, cur)
 	default:
 		return nil, fmt.Errorf("eval: unknown expression type %T", expr)
 	}
@@ -316,6 +318,102 @@ func applyBuiltin(name string, args []any, cur any) (any, error) {
 		// in case the two ever drift.
 		return nil, fmt.Errorf("eval: unknown builtin %q", name)
 	}
+}
+
+// applyFilterArg dispatches map/select (ADR-0025), each evaluating arg
+// once per element of cur's array, with "." rebound to that element.
+func applyFilterArg(name string, arg filter.Expr, cur any) (any, error) {
+	switch name {
+	case "map":
+		return applyMap(arg, cur)
+	case "select":
+		return applySelect(arg, cur)
+	default:
+		// Unreachable today: internal/filter's own filterArgBuiltins set
+		// already rejects any other name at parse time, the same
+		// consistency guard applyBuiltin's own default case already
+		// uses.
+		return nil, fmt.Errorf("eval: unknown filter-expression builtin %q", name)
+	}
+}
+
+// applyMap implements "map(arg)" (ADR-0025): arg is evaluated once per
+// element of cur, with "." rebound to that element, and the results
+// collected into a new []any - always []any, regardless of cur's own
+// element type, since arg is free to transform each element into
+// something else entirely (ADR-0024's motivating example,
+// map(.Likes), turns a []record into a []any of numbers). Unlike
+// select below, map doesn't preserve cur's own slice type, because
+// there's no single result type left to preserve once arg can return
+// anything. nil is an error here, not a propagated nil, matching jq's
+// own "map(.) on null" behavior (verified before deciding this) -
+// there's no array to iterate.
+func applyMap(arg filter.Expr, cur any) (any, error) {
+	switch v := cur.(type) {
+	case []record:
+		return mapOver(arg, v)
+	case []any:
+		return mapOver(arg, v)
+	default:
+		return nil, fmt.Errorf("eval: map requires an array, got %s", describeType(cur))
+	}
+}
+
+func mapOver[T any](arg filter.Expr, elems []T) ([]any, error) {
+	result := make([]any, len(elems))
+	for i, elem := range elems {
+		v, err := eval(arg, elem)
+		if err != nil {
+			return nil, err
+		}
+		result[i] = v
+	}
+	return result, nil
+}
+
+// applySelect implements "select(arg)" (ADR-0025): arg is evaluated
+// once per element of cur, with "." rebound to that element, and must
+// evaluate to a bool - a non-bool result (including a jq-style
+// "truthy" value like 0, "", or []) is a clear error, not a guessed
+// coercion, matching this project's standing refusal to guess a type
+// from context (ADR-0010, ADR-0024's own ordering decision) rather
+// than jq's own "everything but false/null is truthy." Elements that
+// pass are kept unchanged (not replaced by arg's result, unlike map) -
+// select filters, it doesn't transform - so cur's own slice type
+// ([]record stays []record, []any stays []any) is preserved, not
+// flattened to []any the way map's result always is.
+func applySelect(arg filter.Expr, cur any) (any, error) {
+	switch v := cur.(type) {
+	case []record:
+		return selectOver(arg, v)
+	case []any:
+		return selectOver(arg, v)
+	default:
+		return nil, fmt.Errorf("eval: select requires an array, got %s", describeType(cur))
+	}
+}
+
+func selectOver[T any](arg filter.Expr, elems []T) ([]T, error) {
+	// make(..., 0), not "var result []T": an all-filtered-out result
+	// must still be a non-nil, empty slice - encoding/json marshals a
+	// nil slice as "null", not "[]", and an empty match set (e.g.
+	// select(.Likes > 1000000) matching nothing) is a normal, valid
+	// result, not an absent one.
+	result := make([]T, 0, len(elems))
+	for _, elem := range elems {
+		v, err := eval(arg, elem)
+		if err != nil {
+			return nil, err
+		}
+		b, ok := v.(bool)
+		if !ok {
+			return nil, fmt.Errorf("eval: select's filter must evaluate to a boolean, got %s", describeType(v))
+		}
+		if b {
+			result = append(result, elem)
+		}
+	}
+	return result, nil
 }
 
 // applyRecords implements the "records" builtin (ADR-0011): an array of
@@ -1142,7 +1240,15 @@ func cellValue(c model.Cell) any {
 }
 
 // toJSON converts a final Workbook or Sheet result to its JSON shape;
-// anything else (a row/column array, a scalar, nil) is already there.
+// a plain scalar or nil is already there. A []any (ADR-0025's map
+// produces one; select's own []any input stays []any too) recurses
+// into every element rather than being assumed already-flat like a
+// bare scalar array always was before map/select existed - map(.) on
+// a []record, or anything else that can still hand back an unflattened
+// record/[]record nested inside a []any, would otherwise reach
+// encoding/json with a struct of unexported fields and silently
+// marshal to "{}", losing the data (verified empirically before this
+// was added - a bare []any{record{...}} does exactly that).
 func toJSON(v any) (any, error) {
 	switch val := v.(type) {
 	case model.Workbook:
@@ -1188,6 +1294,38 @@ func toJSON(v any) (any, error) {
 		out := make([]map[string]any, len(val))
 		for i, r := range val {
 			out[i] = r.byName
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(val))
+		allRecords := len(val) > 0
+		for i, elem := range val {
+			converted, err := toJSON(elem)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = converted
+			if _, ok := converted.(map[string]any); !ok {
+				allRecords = false
+			}
+		}
+		if allRecords {
+			// map(.) (or anything else whose filter hands back a
+			// record/[]record nested inside a []any) can end up here
+			// with every element flattened to a map[string]any -
+			// internal/output's CSV/table formatters only recognize
+			// []map[string]any as "a records table," not a []any that
+			// happens to contain maps (caught in review: map(.) was
+			// rendering as one opaque JSON-text cell per row instead of
+			// a real table). A []any only ever gets map[string]any
+			// elements from a flattened record in the first place, so
+			// promoting it here is recovering the records shape, not
+			// guessing one.
+			records := make([]map[string]any, len(out))
+			for i, elem := range out {
+				records[i] = elem.(map[string]any)
+			}
+			return records, nil
 		}
 		return out, nil
 	default:
@@ -1271,6 +1409,8 @@ func sheetGrid(sheet model.Sheet) ([][]any, error) {
 
 func describeType(v any) string {
 	switch v.(type) {
+	case nil:
+		return "null"
 	case []any:
 		return "an array"
 	case string:

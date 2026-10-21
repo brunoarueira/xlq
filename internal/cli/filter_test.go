@@ -449,6 +449,32 @@ func TestRootFilterTableWithRecords(t *testing.T) {
 	}
 }
 
+// TestRootFilterTableMapOfIdentity guards ADR-0025's own toJSON fix:
+// map(.) produces a []any whose every element happens to be a
+// flattened record, and toJSON must promote that back to
+// []map[string]any so --table still recognizes it as a records table
+// - caught in review, this used to render each record as one opaque
+// JSON-text cell per row instead.
+func TestRootFilterTableMapOfIdentity(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "Name"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "A2", "Alice"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "--table", ".Sheet1 | records | map(.)", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := "Name\nAlice\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
 func TestRootFilterTableScalar(t *testing.T) {
 	path := buildFixture(t, func(f *excelize.File) {
 		if err := f.SetCellValue("Sheet1", "A1", "hello"); err != nil {
