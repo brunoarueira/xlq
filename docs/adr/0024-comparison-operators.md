@@ -181,11 +181,17 @@ rather than silently mishandled.)
 
 `describeType` gains a `case model.Sheet: return "a sheet"` alongside
 its existing `model.Workbook` case, needed for the error message
-above - nothing has ever called `describeType` on a bare `model.Sheet`
-before now (`applyField`/`applyIndex`/`applySlice` all handle `model.Sheet`
-explicitly, never falling through to `describeType`'s own generic
-`default`), so this gap existed unnoticed until this ADR's own error
-path needed it.
+above. This isn't only a new gap this ADR's own error path exposes -
+verified against the actual CLI: `.Sheet1 | tonumber` already falls
+through to `describeType` via `applyToNumber`'s own `default` case
+(`applyField`/`applyIndex`/`applySlice` all handle `model.Sheet`
+explicitly and never reach it, but `tonumber`/`todate` don't have a
+`model.Sheet` case of their own, so they already do), producing today's
+"eval: tonumber: a model.Sheet cannot be parsed as a number" - the bare
+Go type name leaking into a user-facing error. Adding this case changes
+that existing text to "a sheet," a small, deliberate side effect
+improving an existing error alongside the new one this ADR needs, not
+a gap that only started mattering now.
 
 ### Grammar: a new binary-operator layer, between pipe and path/builtin, matching jq's own precedence
 
@@ -419,8 +425,11 @@ unchanged (no comparison operator present, no behavior change).
 `internal/eval` gains `applyComparison`, dispatched from `eval()`'s own
 switch like `Field`/`Index`/`Slice` already are, plus a trivial
 `Literal` case, and `describeType` gains the `model.Sheet` case this
-ADR's own error path needed. `map`/`select` (tracked separately) can
-now be decided
+ADR's own error path needed - also improving `tonumber`/`todate`'s
+existing "a model.Sheet cannot be parsed as a ..." text to "a sheet,"
+a small, incidental fix to an already-shipped error message, not only
+new-code scaffolding. `map`/`select` (tracked separately) can now be
+decided
 purely in terms of their own filter-expression-argument mechanism and
 per-element evaluation model, with a working, independently-useful
 comparison layer already under them - once this ADR's own
