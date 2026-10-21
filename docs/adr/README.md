@@ -30,6 +30,7 @@ xlq, using the format described in
 | [0022](0022-extensible-builtins.md) | Extensible builtins: `name` or `name(literal, ...)` |
 | [0023](0023-explicit-date-parsing.md) | Explicit date parsing: `todate(format)` |
 | [0024](0024-comparison-operators.md) | Comparison operators: `==`, `!=`, `<`, `>`, `<=`, `>=` |
+| [0025](0025-map-select-filter-arguments.md) | `map`/`select`: higher-order filters with a filter-expression argument |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
