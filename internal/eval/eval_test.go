@@ -865,6 +865,133 @@ func TestEvalSelectInvalid(t *testing.T) {
 	}
 }
 
+// aggregatesWorkbook is a small, dedicated fixture for sum/count/avg
+// (ADR-0026): a header row (Name, Likes) and three data rows, with
+// bob's Likes cell left entirely blank - sum/avg's own sparse-column
+// handling is this fixture's whole point.
+func aggregatesWorkbook() model.Workbook {
+	return model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("Name").At(0),
+			model.NewStringCell("Likes").At(1),
+		}},
+		{Index: 1, Cells: []model.Cell{
+			model.NewStringCell("alice").At(0),
+			model.NewNumberCell(150).At(1),
+		}},
+		{Index: 2, Cells: []model.Cell{
+			model.NewStringCell("bob").At(0),
+			// Likes left blank.
+		}},
+		{Index: 3, Cells: []model.Cell{
+			model.NewStringCell("carol").At(0),
+			model.NewNumberCell(300).At(1),
+		}},
+	})}}
+}
+
+func TestEvalAggregates(t *testing.T) {
+	wb := aggregatesWorkbook()
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"count on records, including the blank row", ".Sheet1 | records | count", 3.0},
+		{"count on a mapped array, including the null", ".Sheet1 | records | map(.Likes) | count", 3.0},
+		{"sum treats the blank as 0, not an error", ".Sheet1 | records | map(.Likes) | sum", 450.0},
+		{"avg excludes the blank from the divisor, not just the total", ".Sheet1 | records | map(.Likes) | avg", 225.0},
+		{"sum of an empty select result is null, not 0", ".Sheet1 | records | select(.Likes > 100000) | map(.Likes) | sum", nil},
+		{"avg of an empty select result is null", ".Sheet1 | records | select(.Likes > 100000) | map(.Likes) | avg", nil},
+		{"count of an empty select result is 0", ".Sheet1 | records | select(.Likes > 100000) | count", 0.0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEvalSumAllNull guards ADR-0026's own cubic-caught fix: an
+// all-null, non-empty array must sum to null, not 0 - distinct from
+// (but just as important as) the already-covered literally-empty case.
+func TestEvalSumAllNull(t *testing.T) {
+	// Every row's Likes cell is entirely absent (not an empty string -
+	// a genuinely blank cell), so map(.Likes) is [null, null] - non-
+	// empty, but with no real number in it anywhere. Name stays
+	// present so records() doesn't skip these rows as entirely blank
+	// (ADR-0011).
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0), model.NewStringCell("Likes").At(1)}},
+		{Index: 1, Cells: []model.Cell{model.NewStringCell("alice").At(0)}},
+		{Index: 2, Cells: []model.Cell{model.NewStringCell("bob").At(0)}},
+	})}}
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"sum of an all-null array is null, not 0", ".Sheet1 | records | map(.Likes) | sum", nil},
+		{"avg of an all-null array is null", ".Sheet1 | records | map(.Likes) | avg", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalAggregatesInvalid(t *testing.T) {
+	wb := aggregatesWorkbook()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"count requires an array, not a scalar", ".Sheet1.A1 | count"},
+		{"sum requires []any, not []record - project a field first", ".Sheet1 | records | sum"},
+		{"avg requires []any, not []record - project a field first", ".Sheet1 | records | avg"},
+		{"sum errors on a non-number, non-null element", ".Sheet1 | records | map(.Name) | sum"},
+		{"avg errors on a non-number, non-null element", ".Sheet1 | records | map(.Name) | avg"},
+		{"count on null errors, matching map/select's own precedent", ".NoSuchSheet | count"},
+		{"sum on null errors", ".NoSuchSheet | sum"},
+		{"avg on null errors", ".NoSuchSheet | avg"},
+		{"sum takes no arguments", ".Sheet1.B | sum(5)"},
+		{"count takes no arguments", ".Sheet1.B | count(5)"},
+		{"avg takes no arguments", ".Sheet1.B | avg(5)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			if _, err := Eval(expr, wb); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
 func TestEvalToDateInvalid(t *testing.T) {
 	wb := todateWorkbook()
 	cases := []struct {

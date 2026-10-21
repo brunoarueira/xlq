@@ -122,6 +122,9 @@ var builtinNames = map[string]bool{
 	"records":  true,
 	"tonumber": true, // #37
 	"todate":   true, // #42
+	"sum":      true, // #38
+	"count":    true, // #38
+	"avg":      true, // #38
 }
 
 // filterArgBuiltins are builtins whose single argument is a recursive
