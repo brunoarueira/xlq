@@ -139,6 +139,116 @@ func TestParseValid(t *testing.T) {
 			Pipe{Field{Field{Identity{}, "Sheet1"}, "A1"}, Builtin{Name: "todate", Args: []any{"M/D/YYYY"}}},
 		},
 		{
+			"comparison between two paths, as a filter's first segment (ADR-0024)",
+			".A1 == .B1",
+			Comparison{"==", Field{Identity{}, "A1"}, Field{Identity{}, "B1"}},
+		},
+		{
+			"comparison against a literal number",
+			".Sheet1.Likes > 100",
+			Comparison{">", Field{Field{Identity{}, "Sheet1"}, "Likes"}, Literal{100.0}},
+		},
+		{
+			"comparison against a literal string",
+			`.A1 == "hello"`,
+			Comparison{"==", Field{Identity{}, "A1"}, Literal{"hello"}},
+		},
+		{
+			"comparison against a literal bool",
+			".A1 != true",
+			Comparison{"!=", Field{Identity{}, "A1"}, Literal{true}},
+		},
+		{
+			"comparison against a literal null",
+			".A1 == null",
+			Comparison{"==", Field{Identity{}, "A1"}, Literal{nil}},
+		},
+		{
+			"\"<\" lexes and parses",
+			".A1 < .B1",
+			Comparison{"<", Field{Identity{}, "A1"}, Field{Identity{}, "B1"}},
+		},
+		{
+			"\"<=\" lexes and parses",
+			".A1 <= .B1",
+			Comparison{"<=", Field{Identity{}, "A1"}, Field{Identity{}, "B1"}},
+		},
+		{
+			"\">=\" lexes and parses",
+			".A1 >= .B1",
+			Comparison{">=", Field{Identity{}, "A1"}, Field{Identity{}, "B1"}},
+		},
+		{
+			"comparison after a pipe, left side a builtin (ADR-0024)",
+			".A1 | tonumber == 5",
+			Pipe{Field{Identity{}, "A1"}, Comparison{"==", Builtin{Name: "tonumber"}, Literal{5.0}}},
+		},
+		{
+			"comparison composes with further pipeline steps",
+			".Sheet1 | records | .[0].Likes > 100",
+			Pipe{
+				Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+				Comparison{">", Field{Index{Identity{}, 0}, "Likes"}, Literal{100.0}},
+			},
+		},
+		{
+			"map with a field-access argument (ADR-0025)",
+			".Sheet1 | records | map(.Likes)",
+			Pipe{
+				Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+				FilterArg{Name: "map", Arg: Field{Identity{}, "Likes"}},
+			},
+		},
+		{
+			"select with a comparison argument",
+			".Sheet1 | records | select(.Likes > 100)",
+			Pipe{
+				Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+				FilterArg{Name: "select", Arg: Comparison{">", Field{Identity{}, "Likes"}, Literal{100.0}}},
+			},
+		},
+		{
+			"map argument starting from a bare builtin",
+			".Sheet1.B | map(tonumber)",
+			Pipe{
+				Field{Field{Identity{}, "Sheet1"}, "B"},
+				FilterArg{Name: "map", Arg: Builtin{Name: "tonumber"}},
+			},
+		},
+		{
+			"map argument starting from bare identity",
+			".Sheet1.B | map(.)",
+			Pipe{
+				Field{Field{Identity{}, "Sheet1"}, "B"},
+				FilterArg{Name: "map", Arg: Identity{}},
+			},
+		},
+		{
+			"select argument is itself a pipe",
+			".Sheet1 | records | select(.Likes | tonumber > 100)",
+			Pipe{
+				Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+				FilterArg{
+					Name: "select",
+					Arg: Pipe{
+						Field{Identity{}, "Likes"},
+						Comparison{">", Builtin{Name: "tonumber"}, Literal{100.0}},
+					},
+				},
+			},
+		},
+		{
+			"nested map/select arguments parse",
+			".Sheet1 | records | map(select(.Likes > 100))",
+			Pipe{
+				Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+				FilterArg{
+					Name: "map",
+					Arg:  FilterArg{Name: "select", Arg: Comparison{">", Field{Identity{}, "Likes"}, Literal{100.0}}},
+				},
+			},
+		},
+		{
 			"whitespace between tokens is insignificant",
 			" .  Sheet1 . A1 ",
 			Field{Field{Identity{}, "Sheet1"}, "A1"},
@@ -244,7 +354,18 @@ func TestParseInvalid(t *testing.T) {
 		{"assignment with no value after =", ".Sheet1.A1 = "},
 		{"assignment value must be a recognized literal, not an arbitrary ident", ".Sheet1.A1 = banana"},
 		{"assignment with trailing garbage after the value", `.Sheet1.A1 = "x" extra`},
-		{"double equals has no value on the right of the first", `.Sheet1.A1 == "x"`},
+		{"comparison chaining isn't supported (ADR-0024)", `.A1 == .B1 == .C1`},
+		{"a literal can't start a filter's first segment", "100 == .A1"},
+		{"a lone \"!\" is never valid (only \"!=\" is)", ".A1 ! .B1"},
+		{"a comparison operator with nothing on the right", ".A1 =="},
+		{"and/or/not aren't supported (ADR-0024 explicitly defers them)", ".A1 == true and .B1 == false"},
+		{"map with no parentheses at all", ".Sheet1 | records | map"},
+		{"map with empty parentheses", ".Sheet1 | records | map()"},
+		{"select with no parentheses at all", ".Sheet1 | records | select"},
+		{"select with empty parentheses", ".Sheet1 | records | select()"},
+		{"map/select aren't valid as a filter's first segment (ADR-0025)", "map(.A1)"},
+		{"map/select aren't valid comparison operands (ADR-0025)", ".A1 == map(.B1)"},
+		{"map missing its closing paren", ".Sheet1 | records | map(.Likes"},
 		{"assignment target can't itself contain a pipe", `.Sheet1 | records = "x"`},
 		{"unterminated slice", ".Sheet1[1:"},
 		{"slice with a string bound", `.Sheet1[1:"x"]`},

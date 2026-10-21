@@ -11,23 +11,38 @@ import (
 // docs/adr/0009-correct-filter-grammar-ebnf.md, the builtin-step
 // addition in docs/adr/0011-header-aware-record-output.md (generalized
 // by docs/adr/0022-extensible-builtins.md), the assignment form added
-// by docs/adr/0014-in-place-editing.md, and the slice form added by
-// docs/adr/0020-array-slicing.md:
+// by docs/adr/0014-in-place-editing.md, the slice form added by
+// docs/adr/0020-array-slicing.md, the comparison form added by
+// docs/adr/0024-comparison-operators.md, and the map/select
+// filter-expression-argument form added by
+// docs/adr/0025-map-select-filter-arguments.md:
 //
-//	filter     = pipeline | assignment
-//	pipeline   = path ( "|" step )*
-//	step       = path | builtin
-//	builtin    = IDENT ( "(" ( value ( "," value )* )? ")" )?
-//	path       = "." ( head tail* )?
-//	head       = IDENT | "[" STRING "]" | "[" INT "]" | "[" slice "]"
-//	tail       = "." IDENT | "[" STRING "]" | "[" INT "]" | "[" slice "]"
-//	slice      = INT? ":" INT?
-//	assignment = path "=" value
-//	value      = STRING | NUMBER | INT | "true" | "false" | "null"
+//	filter         = pipeline | assignment
+//	pipeline       = first ( "|" step )*
+//	first          = path ( cmp_op operand )?
+//	step           = step_operand ( cmp_op operand )?
+//	step_operand   = path | builtin | filter_arg_builtin
+//	operand        = path | builtin | value
+//	cmp_op         = "==" | "!=" | "<" | ">" | "<=" | ">="
+//	builtin        = IDENT ( "(" ( value ( "," value )* )? ")" )?
+//	filter_arg_builtin = ( "map" | "select" ) "(" filter_arg ")"
+//	filter_arg     = step_operand ( cmp_op operand )? ( "|" step_operand ( cmp_op operand )? )*
+//	path           = "." ( head tail* )?
+//	head           = IDENT | "[" STRING "]" | "[" INT "]" | "[" slice "]"
+//	tail           = "." IDENT | "[" STRING "]" | "[" INT "]" | "[" slice "]"
+//	slice          = INT? ":" INT?
+//	assignment     = path "=" value
+//	value          = STRING | NUMBER | INT | "true" | "false" | "null"
 //
 // assignment is a wholly separate top-level alternative to pipeline,
 // never composed with a pipe - an Assign's Target is parsed as one
-// path, not a pipeline, and parsing stops right after its value.
+// path, not a pipeline, and parsing stops right after its value. A
+// literal operand is only ever valid on a comparison's right-hand
+// side, never as a filter's own first segment - "100 == .A1" isn't
+// supported, a deliberate, narrower scope than full symmetry (ADR-0024).
+// filter_arg_builtin is likewise left out of operand - ".A1 ==
+// map(...)" isn't supported either, the same narrower-than-full-
+// symmetry call (ADR-0025).
 func Parse(input string) (Expr, error) {
 	toks, err := lex(input)
 	if err != nil {
@@ -52,7 +67,12 @@ func Parse(input string) (Expr, error) {
 		return Assign{Target: path, Value: value}, nil
 	}
 
-	expr := path
+	first, err := p.maybeComparison(path)
+	if err != nil {
+		return nil, err
+	}
+
+	expr := first
 	for p.peek().kind == tokPipe {
 		p.advance()
 		right, err := p.parseStep()
@@ -104,12 +124,122 @@ var builtinNames = map[string]bool{
 	"todate":   true, // #42
 }
 
-// parseStep parses one pipeline step after a "|": either a path, or a
-// builtin reference (ADR-0011, generalized by ADR-0022). A builtin is
-// only valid here - Parse always parses a filter's first segment via
-// parsePath, never parseStep, so a builtin alone (with no preceding
-// "|") isn't a valid filter on its own.
+// filterArgBuiltins are builtins whose single argument is a recursive
+// filter expression, not a literal (ADR-0025) - a disjoint set from
+// builtinNames, parsed via parseFilterArgBuiltin instead of
+// parseBuiltinArgs.
+var filterArgBuiltins = map[string]bool{
+	"map":    true,
+	"select": true,
+}
+
+// parseStep parses one pipeline step after a "|": a path, a literal-arg
+// builtin reference (ADR-0011, generalized by ADR-0022), or a
+// filter-expression-arg builtin (ADR-0025), now optionally followed by
+// a comparison against a second operand (ADR-0024). None of these are
+// valid as a filter's first segment - Parse always parses that via
+// parsePath, never parseStep.
 func (p *parser) parseStep() (Expr, error) {
+	var left Expr
+	var err error
+	switch {
+	case p.peek().kind == tokIdent && filterArgBuiltins[p.peek().text]:
+		if left, err = p.parseFilterArgBuiltin(); err != nil {
+			return nil, err
+		}
+	case p.peek().kind == tokIdent && builtinNames[p.peek().text]:
+		name := p.advance().text
+		var args []any
+		if args, err = p.parseBuiltinArgs(); err != nil {
+			return nil, err
+		}
+		left = Builtin{Name: name, Args: args}
+	default:
+		if left, err = p.parsePath(); err != nil {
+			return nil, err
+		}
+	}
+	return p.maybeComparison(left)
+}
+
+// parseFilterArgBuiltin parses "name(filter)" (ADR-0025): map or
+// select, where the parenthesized argument is a recursive filter
+// expression - never omitted, since (unlike parseBuiltinArgs' literal
+// arguments) there's no meaningful "zero arguments" default for a
+// predicate or transform.
+func (p *parser) parseFilterArgBuiltin() (Expr, error) {
+	name := p.advance().text
+	if p.peek().kind != tokLParen {
+		return nil, fmt.Errorf("filter: %s requires a filter-expression argument, e.g. %s(.Field), at position %d", name, name, p.peek().pos)
+	}
+	p.advance()
+	arg, err := p.parseFilterArgExpr()
+	if err != nil {
+		return nil, err
+	}
+	if p.peek().kind != tokRParen {
+		return nil, fmt.Errorf("filter: expected %q at position %d, found %s", ")", p.peek().pos, p.peek().describe())
+	}
+	p.advance()
+	return FilterArg{Name: name, Arg: arg}, nil
+}
+
+// parseFilterArgExpr parses the pipeline inside a map/select's
+// parentheses (ADR-0025): structurally identical to Parse's own
+// pipeline loop, except its first segment is parsed via parseStep (a
+// path, a builtin, or a nested map/select, each optionally compared),
+// not parsePath - unlike a whole filter's own first segment, a
+// filter-expression argument's "." is already bound to one array
+// element by the time it runs, so starting from a bare builtin (e.g.
+// "map(tonumber)", converting each element directly) is meaningful
+// here in a way it isn't at the top level.
+func (p *parser) parseFilterArgExpr() (Expr, error) {
+	expr, err := p.parseStep()
+	if err != nil {
+		return nil, err
+	}
+	for p.peek().kind == tokPipe {
+		p.advance()
+		right, err := p.parseStep()
+		if err != nil {
+			return nil, err
+		}
+		expr = Pipe{Left: expr, Right: right}
+	}
+	return expr, nil
+}
+
+// cmpTokens maps each comparison token to its operator text (ADR-0024).
+var cmpTokens = map[tokenKind]string{
+	tokEq: "==", tokNe: "!=", tokLt: "<", tokLe: "<=", tokGt: ">", tokGe: ">=",
+}
+
+// maybeComparison checks for a trailing comparison operator after an
+// already-parsed left operand (ADR-0024), parsing the right-hand
+// operand if one follows. Returns left unchanged if no operator
+// follows - this is how both Parse's own first segment and parseStep
+// stay optional-comparison, not comparison-required.
+func (p *parser) maybeComparison(left Expr) (Expr, error) {
+	op, ok := cmpTokens[p.peek().kind]
+	if !ok {
+		return left, nil
+	}
+	p.advance()
+	right, err := p.parseOperand()
+	if err != nil {
+		return nil, err
+	}
+	return Comparison{Op: op, Left: left, Right: right}, nil
+}
+
+// parseOperand parses a comparison's right-hand operand: a path, a
+// builtin reference, or a literal value (ADR-0024) - never another
+// comparison (no chaining) and never the first thing in the whole
+// filter (Parse always starts from parsePath, not parseOperand).
+func (p *parser) parseOperand() (Expr, error) {
+	if p.peek().kind == tokDot {
+		return p.parsePath()
+	}
 	if p.peek().kind == tokIdent && builtinNames[p.peek().text] {
 		name := p.advance().text
 		args, err := p.parseBuiltinArgs()
@@ -118,7 +248,11 @@ func (p *parser) parseStep() (Expr, error) {
 		}
 		return Builtin{Name: name, Args: args}, nil
 	}
-	return p.parsePath()
+	v, err := p.parseValue()
+	if err != nil {
+		return nil, err
+	}
+	return Literal{Value: v}, nil
 }
 
 // parseBuiltinArgs parses an optional "(" value ("," value)* ")"
@@ -309,6 +443,15 @@ func (p *parser) parseValue() (any, error) {
 // a bracket suffix like .foo[1]bar.
 func spacedAfterIdent(input string, toks []token, pos int) bool {
 	if pos == 0 || toks[pos-1].kind != tokIdent {
+		return false
+	}
+	// A "true"/"false"/"null" literal operand (ADR-0024) is also a
+	// tokIdent, but it was never a field name the bracket-quoting hint
+	// below would actually fix - a stray token after one is some other
+	// mistake (e.g. "and"/"or", which aren't supported), not a name
+	// with spaces (caught in review).
+	switch toks[pos-1].text {
+	case "true", "false", "null":
 		return false
 	}
 	start := toks[pos].pos

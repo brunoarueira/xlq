@@ -28,6 +28,8 @@ xlq '.Sheet1["A3:C9"]' path/to/book.xlsx  # a rectangular range
 xlq '.Sheet1 | records | .[0:10]' path/to/book.xlsx  # the first 10 records
 xlq '.Sheet1.B2 | tonumber' path/to/book.xlsx  # "3048" -> 3048
 xlq '.Sheet1.B2 | todate("M/D/YYYY")' path/to/book.xlsx  # "7/28/2026" -> an RFC3339 date
+xlq '.Sheet1.B2 | tonumber > 100' path/to/book.xlsx  # a comparison, true or false
+xlq '.Sheet1 | records | select(.Likes > 100)' path/to/book.xlsx  # keep matching records
 xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
 xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
 xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
@@ -52,8 +54,8 @@ an xlsx or ods input, which have no delimiter concept to override.
 Filters can address a sheet by name (`.Sheet1`, case-insensitive), and
 from there a cell by its A1 reference (`.Sheet1.A1`), a whole column
 (`.Sheet1.B`), a whole row (`.Sheet1[5]`, 1-based), or a rectangular
-range (`.Sheet1["A3:C9"]`, see below); arithmetic, `map`/`select`, and
-formula introspection aren't implemented yet.
+range (`.Sheet1["A3:C9"]`, see below); arithmetic and formula
+introspection aren't implemented yet.
 
 `records` (see [ADR-0011](docs/adr/0011-header-aware-record-output.md))
 turns a sheet into an array of row objects keyed by its row-1 header,
@@ -119,6 +121,50 @@ boolean are all errors, with no "propagates as null" exception, same
 as `tonumber`. Leading/trailing whitespace is trimmed before parsing,
 matching `tonumber`'s own deviation from jq, for the same reason:
 incidental copy-paste noise, not a meaningful part of the date text.
+
+Comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`, see
+[ADR-0024](docs/adr/0024-comparison-operators.md)) work the way you'd
+expect: `.Sheet1.A1 == .Sheet1.B1`, `.Sheet1 | records | .[0].Likes >
+100`, or against a literal (`.Sheet1.A1 == "done"`). `==`/`!=` never
+error on a type mismatch - a number and a string are just "not equal,"
+matching jq exactly - though comparing a whole sheet or workbook is
+still a clear error, never a (meaningless) `true` or `false`, the same
+as for ordering below. Ordering deliberately does **not** match jq:
+comparing two different types (other than with `null`) is an error,
+not a guessed ranking - `tonumber`/`todate` already refuse to guess a
+cell's type from its text, and silently deciding "a string always
+outranks a number" would be the same kind of guess. This includes two
+values of the *same* type when neither is a number or a string -
+`true > false` is also an error, not `true`, since this project
+defines no ordering for booleans at all. `null` compared with any
+scalar via an ordering operator is `false`, never an error - unlike
+equality's `null == null`, which is `true` - so a sparse column's
+missing value just quietly fails a threshold check instead of erroring
+out; comparing a whole sheet or workbook is still an error even
+against `null`, the same as every other comparison involving one.
+
+`map(filter)` and `select(filter)` (see
+[ADR-0025](docs/adr/0025-map-select-filter-arguments.md)) take a
+filter expression - not a literal, unlike every other builtin's
+arguments - and run it once per array element, with `.` rebound to
+that element: `.Sheet1 | records | map(.Likes)` extracts one field
+across every record; `.Sheet1 | records | select(.Likes > 100)` keeps
+only the records clearing a threshold, unchanged. Both iterate and
+collect/filter an array directly, by themselves - unlike jq's own
+`select`, which needs the separate `.[] | select(...)` idiom, since
+this project has no `.[]` operator. `map`'s result is always a new
+array - its filter is free to transform each element into something
+else entirely - while `select` keeps each passing element exactly as
+it was. `select`'s filter must evaluate to an actual boolean; a
+non-boolean result (even a jq-style "truthy" value like `0` or `""`)
+is an error, not a guessed coercion. Both require an actual array
+(`records`'s output, or a plain row/column array) - a scalar, a single
+record, or `null` is an error. For `map`, that matches jq's own
+behavior (`jq -n 'null | map(.)'` also errors, "Cannot iterate over
+null"); for `select`, it's this project's own deliberate design, not a
+jq match - jq's `select` isn't array-iterating at all (see above), so
+it has no equivalent "requires an array" rule to match in the first
+place.
 
 A range (`.Sheet1["A3:C9"]`, see
 [ADR-0012](docs/adr/0012-range-references.md)) selects a rectangular

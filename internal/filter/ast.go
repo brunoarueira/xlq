@@ -3,17 +3,20 @@
 // docs/adr/0008-filter-grammar-v1.md (grammar corrected in
 // docs/adr/0009-correct-filter-grammar-ebnf.md; the records builtin
 // added by docs/adr/0011-header-aware-record-output.md, generalized
-// into Builtin by docs/adr/0022-extensible-builtins.md). Evaluating
+// into Builtin by docs/adr/0022-extensible-builtins.md; comparison
+// operators added by docs/adr/0024-comparison-operators.md; map/select
+// added by docs/adr/0025-map-select-filter-arguments.md). Evaluating
 // that AST against a model.Workbook is a later package's job - this one
 // only covers syntax.
 package filter
 
 // Expr is a parsed filter expression: one of Identity, Field, Index,
-// Slice, Pipe, Builtin, or Assign. What a Field, Index, or Slice node
-// actually does (sheet lookup, column or A1 cell access, row access,
-// positional slicing, ...) depends on the runtime type it's evaluated
-// against - the AST itself is deliberately untyped beyond this, per
-// ADR-0008 (Slice added by ADR-0020, Builtin by ADR-0022).
+// Slice, Pipe, Builtin, Comparison, Literal, FilterArg, or Assign. What
+// a Field, Index, or Slice node actually does (sheet lookup, column or
+// A1 cell access, row access, positional slicing, ...) depends on the
+// runtime type it's evaluated against - the AST itself is deliberately
+// untyped beyond this, per ADR-0008 (Slice added by ADR-0020, Builtin
+// by ADR-0022, Comparison/Literal by ADR-0024, FilterArg by ADR-0025).
 type Expr interface {
 	exprNode()
 }
@@ -63,17 +66,49 @@ func (Pipe) exprNode() {}
 // with no Base of its own - like Identity, it isn't a suffix on some
 // other expression, it operates on the pipeline's current value
 // directly. Args are always literals (ADR-0014's value grammar:
-// string, float64, bool, nil), never a nested filter expression -
-// that's map/select's own, separate, larger design. Like records
-// before it (ADR-0011, the only builtin before this generalization),
-// a Builtin is only valid as a pipeline step after a "|": the grammar
-// never allows one as a filter's first segment.
+// string, float64, bool, nil), never a nested filter expression - see
+// FilterArg (ADR-0025) for that. Like records before it (ADR-0011, the
+// only builtin before this generalization), a Builtin is never valid
+// as a whole filter's first segment - only after a "|", as the first
+// segment of a map/select argument (ADR-0025, e.g. "map(tonumber)"),
+// or as a comparison's right-hand operand (ADR-0024, e.g. ".A1 ==
+// tonumber").
 type Builtin struct {
 	Name string
 	Args []any
 }
 
 func (Builtin) exprNode() {}
+
+// Literal is a bare value (STRING | NUMBER | INT | true | false |
+// null) used as a comparison's right-hand operand (ADR-0024) - "the
+// number/string to compare against," not a path into the data.
+type Literal struct {
+	Value any
+}
+
+func (Literal) exprNode() {}
+
+// Comparison is "Left OP Right" (ADR-0024): ==, !=, <, >, <=, or >=.
+// Op is the operator's own text, the same pattern Builtin.Name already
+// uses rather than a separate enum type for six fixed strings.
+type Comparison struct {
+	Op          string
+	Left, Right Expr
+}
+
+func (Comparison) exprNode() {}
+
+// FilterArg is "name(arg)" (ADR-0025): a builtin whose single argument
+// is itself a recursive filter expression - unlike Builtin's own Args
+// ([]any literals, ADR-0022) - evaluated once per element of the array
+// it runs on, with "." rebound to that element. map and select.
+type FilterArg struct {
+	Name string
+	Arg  Expr
+}
+
+func (FilterArg) exprNode() {}
 
 // Assign is "path = value" (ADR-0014): in-place editing only, never
 // evaluated as a read-only query - eval.Eval rejects it outright.
