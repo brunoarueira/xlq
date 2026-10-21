@@ -132,8 +132,9 @@ var builtinNames = map[string]bool{
 // builtinNames, parsed via parseFilterArgBuiltin instead of
 // parseBuiltinArgs.
 var filterArgBuiltins = map[string]bool{
-	"map":    true,
-	"select": true,
+	"map":      true,
+	"select":   true,
+	"group_by": true, // #38
 }
 
 // parseStep parses one pipeline step after a "|": a path, a literal-arg
