@@ -1107,9 +1107,9 @@ func TestEvalGroupByInvalid(t *testing.T) {
 	}
 }
 
-// TestEvalGroupByNaN guards ADR-0027's own cubic-caught fix: a NaN key
+// TestEvalGroupByNaN guards ADR-0027's own NaN decision: a NaN key
 // must error, not silently produce a nil (and therefore data-losing)
-// group - a hand-built filter.Comparison can reach this without going
+// group - a hand-built filter.FilterArg can reach this without going
 // through tonumber at all (which would otherwise refuse "NaN" as text).
 func TestEvalGroupByNaN(t *testing.T) {
 	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{

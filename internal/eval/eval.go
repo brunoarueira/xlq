@@ -336,8 +336,9 @@ func applyBuiltin(name string, args []any, cur any) (any, error) {
 	}
 }
 
-// applyFilterArg dispatches map/select (ADR-0025), each evaluating arg
-// once per element of cur's array, with "." rebound to that element.
+// applyFilterArg dispatches map/select (ADR-0025) and group_by
+// (ADR-0027), each evaluating arg once per element of cur's array,
+// with "." rebound to that element.
 func applyFilterArg(name string, arg filter.Expr, cur any) (any, error) {
 	switch name {
 	case "map":
