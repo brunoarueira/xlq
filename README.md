@@ -29,6 +29,7 @@ xlq '.Sheet1 | records | .[0:10]' path/to/book.xlsx  # the first 10 records
 xlq '.Sheet1.B2 | tonumber' path/to/book.xlsx  # "3048" -> 3048
 xlq '.Sheet1.B2 | todate("M/D/YYYY")' path/to/book.xlsx  # "7/28/2026" -> an RFC3339 date
 xlq '.Sheet1.B2 | tonumber > 100' path/to/book.xlsx  # a comparison, true or false
+xlq '.Sheet1 | records | select(.Likes > 100)' path/to/book.xlsx  # keep matching records
 xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
 xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
 xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
@@ -139,6 +140,25 @@ defines no ordering for booleans at all. `null` compared with anything
 via an ordering operator is `false`, never an error - unlike equality's
 `null == null`, which is `true` - so a sparse column's missing value
 just quietly fails a threshold check instead of erroring out.
+
+`map(filter)` and `select(filter)` (see
+[ADR-0025](docs/adr/0025-map-select-filter-arguments.md)) take a
+filter expression - not a literal, unlike every other builtin's
+arguments - and run it once per array element, with `.` rebound to
+that element: `.Sheet1 | records | map(.Likes)` extracts one field
+across every record; `.Sheet1 | records | select(.Likes > 100)` keeps
+only the records clearing a threshold, unchanged. Both iterate and
+collect/filter an array directly, by themselves - unlike jq's own
+`select`, which needs the separate `.[] | select(...)` idiom, since
+this project has no `.[]` operator. `map`'s result is always a new
+array - its filter is free to transform each element into something
+else entirely - while `select` keeps each passing element exactly as
+it was. `select`'s filter must evaluate to an actual boolean; a
+non-boolean result (even a jq-style "truthy" value like `0` or `""`)
+is an error, not a guessed coercion. Both require an actual array
+(`records`'s output, or a plain row/column array) - a scalar, a single
+record, or `null` is an error, matching jq's own `map`/`select`
+behavior on those.
 
 A range (`.Sheet1["A3:C9"]`, see
 [ADR-0012](docs/adr/0012-range-references.md)) selects a rectangular
