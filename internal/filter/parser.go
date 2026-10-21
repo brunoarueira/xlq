@@ -26,7 +26,7 @@ import (
 //	operand        = path | builtin | value
 //	cmp_op         = "==" | "!=" | "<" | ">" | "<=" | ">="
 //	builtin        = IDENT ( "(" ( value ( "," value )* )? ")" )?
-//	filter_arg_builtin = ( "map" | "select" ) "(" filter_arg ")"
+//	filter_arg_builtin = ( "map" | "select" | "group_by" ) "(" filter_arg ")"
 //	filter_arg     = step_operand ( cmp_op operand )? ( "|" step_operand ( cmp_op operand )? )*
 //	path           = "." ( head tail* )?
 //	head           = IDENT | "[" STRING "]" | "[" INT "]" | "[" slice "]"

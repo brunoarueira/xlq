@@ -173,10 +173,12 @@ place.
 builtins - no filter-expression argument, unlike `map`/`select`; project
 a field first with `map` (`.Sheet1 | records | map(.Likes) | sum`), the
 same composition jq's own `map(.field) | add` idiom uses. Like every
-builtin, any of the three can also appear as a comparison's right-hand
-side (e.g. `.Sheet1.A1 == sum`, evaluated against the same current
-value as the comparison's own left side, not the left side's result -
-the same grammar position `tonumber`/`todate` already have). `count`
+builtin, any of the three also parses as a comparison's right-hand
+side, the same grammar position `tonumber`/`todate` already have - it
+just isn't a particularly natural fit for `sum`/`count`/`avg`
+specifically, since that position evaluates against the comparison's
+own current value, not the left side's result, and the left side is
+usually already the array these builtins need. `count`
 accepts `records`'s
 output or a plain array and returns its element count, including
 `null` elements - an array-only, jq-compatible subset of jq's own

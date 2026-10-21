@@ -38,12 +38,14 @@ Verified against real jq (1.8.2) before deciding:
 `group_by` only ever needs to answer "do these two keys belong to the
 same group," which is an equality question - it never needs to answer
 "which key comes first," an ordering question. Since this project
-already has a well-defined, unrestricted equality (`==`, ADR-0024 -
-never errors, any two values, any types), while its ordering is
-*deliberately* restricted (number/string only, erroring instead of
-guessing a cross-type ranking) specifically to avoid jq's own
-guessed-ranking behavior - building `group_by` on equality alone, and
-emitting groups in the order their key was **first encountered** in
+already has a well-defined equality (`==`, ADR-0024 - never errors on
+a value/type mismatch, for any two values of any supported type; only
+a whole sheet or workbook is a clear error, not a guessed answer),
+while its ordering is *deliberately* restricted further still
+(number/string only, erroring on anything else instead of guessing a
+cross-type ranking) specifically to avoid jq's own guessed-ranking
+behavior - building `group_by` on equality alone, and emitting groups
+in the order their key was **first encountered** in
 the input (not sorted), sidesteps needing any ordering decision for
 group keys at all. This is a deliberate divergence from jq's own
 sorted-group output, not an oversight: sorting would require either
@@ -142,10 +144,12 @@ Like `map`/`select`, `group_by` accepts `[]record` or `[]any` and
 requires a real array - a scalar, a single record, `nil`, a sheet, or
 a workbook is a clear error (verified against jq too: `jq -n '5 |
 group_by(.)'` errors "Cannot iterate over number," the same shape of
-error `map` already matches). Unlike `select`, each group preserves
-`T` (the element type of the array `group_by` ran on) - a `[]record`
-groups into a `[]any` of `[]record`s, a `[]any` groups into a `[]any`
-of `[]any`s - not flattened or transformed, since grouping doesn't
+error `map` already matches). Unlike `map` (which always returns
+`[]any`, regardless of its input's own element type), each group
+preserves `T` (the element type of the array `group_by` ran on) - a
+`[]record` groups into a `[]any` of `[]record`s, a `[]any` groups into
+a `[]any` of `[]any`s - the same type-preserving choice `select`
+already makes, not flattened or transformed, since grouping doesn't
 change what an element *is*, only how it's collected. An empty input
 array produces an empty result (zero groups), the natural
 fall-through of the loop never running.
