@@ -171,16 +171,26 @@ place.
 [ADR-0026](docs/adr/0026-sum-count-avg.md)) are zero-argument reduce
 builtins - no filter-expression argument, unlike `map`/`select`; project
 a field first with `map` (`.Sheet1 | records | map(.Likes) | sum`), the
-same composition jq's own `map(.field) | add` idiom uses. `count`
-accepts `records`'s output or a plain array and returns its element
-count, including `null` elements - an array-only, jq-compatible subset
-of jq's own polymorphic `length`. `sum` requires a plain array of
-numbers (not `records`'s output directly - summing a record has no
-single defined field); a `null` element contributes `0`, matching jq's
-own `add`, so a blank cell in a sparse column doesn't abort the sum;
-any other non-number element is a clear error. An array with no
-non-`null` numbers at all (empty, or every element `null`) sums to
-`null`, not `0`, matching jq's `add` for both cases - so "no data" and
+same composition jq's own `map(.field) | add` idiom uses. Like every
+builtin, any of the three can also appear as a comparison's right-hand
+side (e.g. `.Sheet1.A1 == sum`, evaluated against the same current
+value as the comparison's own left side, not the left side's result -
+the same grammar position `tonumber`/`todate` already have). `count`
+accepts `records`'s
+output or a plain array and returns its element count, including
+`null` elements - an array-only, jq-compatible subset of jq's own
+polymorphic `length`, which also defines a length for a string, a
+number, and an object. `sum` requires a plain array of numbers (not
+`records`'s output directly - summing a record has no single defined
+field); a `null` element contributes `0`, the same jq-inspired
+behavior jq's own `add` has for numbers - jq's `add` is itself
+polymorphic too (string/array concatenation, object merging), none of
+which `sum` here attempts, deliberately: guessing "the user must have
+meant concatenation" from an array's element type would be exactly the
+kind of cross-type guess this project otherwise refuses to make; any
+other non-number element is a clear error. An array with no non-`null`
+numbers at all (empty, or every element `null`) sums to `null`, not
+`0`, matching jq's own numeric `add` for both cases - so "no data" and
 "a genuine zero total" stay distinguishable. `avg` has no jq
 equivalent - this project's own addition - and deliberately disagrees
 with `sum` on `null`: excluded from both the total and the count used
