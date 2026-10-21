@@ -31,6 +31,7 @@ xlq, using the format described in
 | [0023](0023-explicit-date-parsing.md) | Explicit date parsing: `todate(format)` |
 | [0024](0024-comparison-operators.md) | Comparison operators: `==`, `!=`, `<`, `>`, `<=`, `>=` |
 | [0025](0025-map-select-filter-arguments.md) | `map`/`select`: higher-order filters with a filter-expression argument |
+| [0026](0026-sum-count-avg.md) | `sum`, `count`, `avg`: zero-argument reduce builtins |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
