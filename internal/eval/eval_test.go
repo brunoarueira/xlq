@@ -650,6 +650,19 @@ func TestEvalComparisonInvalid(t *testing.T) {
 	}
 }
 
+// TestEvalComparisonBogusOpWithNilOperand guards a hand-built
+// filter.Comparison with an operator the parser could never actually
+// produce (Eval is exported, so this is reachable without going
+// through Parse at all) - specifically when one operand is nil, which
+// used to short-circuit to a silent "false" before the operator was
+// ever validated (caught in review).
+func TestEvalComparisonBogusOpWithNilOperand(t *testing.T) {
+	expr := filter.Comparison{Op: "bogus", Left: filter.Literal{Value: 5.0}, Right: filter.Literal{Value: nil}}
+	if _, err := Eval(expr, model.Workbook{}); err == nil {
+		t.Error("Eval: want error for an unrecognized operator, got nil")
+	}
+}
+
 // mapSelectWorkbook is a small, dedicated fixture for map/select
 // (ADR-0025): a header row (Name, Likes) and three data rows, with
 // Likes already a real number - so map/select's own mechanics are

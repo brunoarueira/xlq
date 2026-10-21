@@ -69,8 +69,10 @@ func (Pipe) exprNode() {}
 // string, float64, bool, nil), never a nested filter expression - see
 // FilterArg (ADR-0025) for that. Like records before it (ADR-0011, the
 // only builtin before this generalization), a Builtin is never valid
-// as a whole filter's first segment - only after a "|", or (ADR-0025)
-// as the first segment of a map/select argument, e.g. "map(tonumber)".
+// as a whole filter's first segment - only after a "|", as the first
+// segment of a map/select argument (ADR-0025, e.g. "map(tonumber)"),
+// or as a comparison's right-hand operand (ADR-0024, e.g. ".A1 ==
+// tonumber").
 type Builtin struct {
 	Name string
 	Args []any

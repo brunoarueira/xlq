@@ -136,10 +136,12 @@ cell's type from its text, and silently deciding "a string always
 outranks a number" would be the same kind of guess. This includes two
 values of the *same* type when neither is a number or a string -
 `true > false` is also an error, not `true`, since this project
-defines no ordering for booleans at all. `null` compared with anything
-via an ordering operator is `false`, never an error - unlike equality's
-`null == null`, which is `true` - so a sparse column's missing value
-just quietly fails a threshold check instead of erroring out.
+defines no ordering for booleans at all. `null` compared with any
+scalar via an ordering operator is `false`, never an error - unlike
+equality's `null == null`, which is `true` - so a sparse column's
+missing value just quietly fails a threshold check instead of erroring
+out; comparing a whole sheet or workbook is still an error even
+against `null`, the same as every other comparison involving one.
 
 `map(filter)` and `select(filter)` (see
 [ADR-0025](docs/adr/0025-map-select-filter-arguments.md)) take a

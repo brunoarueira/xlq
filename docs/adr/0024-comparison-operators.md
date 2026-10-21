@@ -59,15 +59,19 @@ field clear a threshold" case is this ADR's own motivating use.
 
 ## Decision
 
-### Equality matches jq exactly: never errors, cross-type is simply unequal
+### Equality matches jq exactly: never errors on a value/type mismatch, cross-type is simply unequal
 
 `==`/`!=` compare any two values, including across types, and never
-return an error - matching jq's own behavior verified above. This is
-unambiguous and harmless regardless of type: knowing that a number and
-a string are "not equal" guesses nothing about what the user meant,
-unlike an ordering comparison would (below). `null == null` is `true`;
-`null` compared to anything else is `false`, the same uneventful case
-as any other cross-type comparison.
+return an error for that mismatch - matching jq's own behavior
+verified above. This is unambiguous and harmless regardless of type:
+knowing that a number and a string are "not equal" guesses nothing
+about what the user meant, unlike an ordering comparison would
+(below). `null == null` is `true`; `null` compared to anything else is
+`false`, the same uneventful case as any other cross-type comparison.
+Comparing a whole sheet or workbook is still an explicit error, the
+same as for ordering below (see `applyComparison`) - "never errors"
+above is about a value/type mismatch specifically, not about every
+possible operand.
 
 ### Ordering deliberately diverges from jq: a cross-type comparison (other than with `null`) is an error, not a guessed ranking
 
@@ -102,37 +106,52 @@ worth the risk of it being wrong later.
 
 ```go
 // applyComparison implements Comparison (ADR-0024): == and != never
-// error (cross-type is simply unequal, matching jq); ordering
-// (</>/<=/>=) errors on a non-null type mismatch instead of guessing a
-// ranking jq's own total type order would otherwise supply, but
-// treats null specially - compared with anything via an ordering
-// operator, including another null, it's always false, never an
-// error, so a sparse column's absent value quietly fails a threshold
-// check rather than aborting it.
+// error on a value/type mismatch (cross-type is simply unequal,
+// matching jq); ordering (</>/<=/>=) errors on a non-null type
+// mismatch instead of guessing a ranking jq's own total type order
+// would otherwise supply, but treats null specially for a scalar
+// comparison - a number or string compared with null via an ordering
+// operator, including null compared with another null, is always
+// false, never an error, so a sparse column's absent value quietly
+// fails a threshold check rather than aborting it.
 //
-// model.Sheet and model.Workbook are rejected before reflect.DeepEqual
-// ever runs on them, for both == and != - caught in review, verified
-// empirically: Sheet carries a non-nil Rows iter.Seq2 closure, and
-// Go's reflect.DeepEqual only ever considers two func values equal
-// when *both* are nil, so DeepEqual(sheet, sheet) - the exact same
-// value compared to itself - is false, not true. Comparing a whole
-// sheet or workbook was never a meaningful operation this project
-// defines anyway (the same reasoning ADR-0020 already gave for
-// excluding them from slicing), so this is a clear error pointing at
-// a specific cell or field instead, not a silently wrong answer.
+// model.Sheet and model.Workbook are always rejected before anything
+// else runs, for every operator and regardless of what the other
+// operand is, including null - Sheet carries a non-nil Rows iter.Seq2
+// closure, and Go's reflect.DeepEqual only ever considers two func
+// values equal when *both* are nil, so DeepEqual(sheet, sheet) - the
+// exact same value compared to itself - is false, not true. Comparing
+// a whole sheet or workbook was never a meaningful operation this
+// project defines anyway (the same reasoning ADR-0020 already gave for
+// excluding them from slicing), so this is a clear error pointing at a
+// specific cell or field instead of a silently wrong answer - checking
+// it unconditionally, before the null short-circuit, also avoids an
+// inconsistency a review round caught: ordering a sheet against null
+// used to silently return false instead of erroring, unlike ordering
+// two actual sheets.
 func applyComparison(op string, left, right any) (any, error) {
-	if op == "==" || op == "!=" {
-		for _, v := range []any{left, right} {
-			switch v.(type) {
-			case model.Sheet, model.Workbook:
-				return nil, fmt.Errorf("eval: cannot compare %s with %q; compare a specific cell or field instead", describeType(v), op)
-			}
+	for _, v := range []any{left, right} {
+		switch v.(type) {
+		case model.Sheet, model.Workbook:
+			return nil, fmt.Errorf("eval: cannot compare %s with %q; compare a specific cell or field instead", describeType(v), op)
 		}
+	}
+	if op == "==" || op == "!=" {
 		eq := reflect.DeepEqual(left, right)
 		if op == "!=" {
 			return !eq, nil
 		}
 		return eq, nil
+	}
+	// Validated before the null short-circuit below - otherwise an
+	// unrecognized op (only reachable via a hand-built filter.Comparison,
+	// never the parser, since Eval is exported) with a nil operand would
+	// silently return false instead of the clean error this is supposed
+	// to be (also caught in review).
+	switch op {
+	case "<", ">", "<=", ">=":
+	default:
+		return nil, fmt.Errorf("eval: unknown comparison operator %q", op)
 	}
 	if left == nil || right == nil {
 		return false, nil
@@ -143,30 +162,35 @@ func applyComparison(op string, left, right any) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("eval: cannot compare %s and %s with %q", describeType(left), describeType(right), op)
 		}
-		return compareOrdered(op, l, r), nil
+		return compareOrdered(op, l, r)
 	case string:
 		r, ok := right.(string)
 		if !ok {
 			return nil, fmt.Errorf("eval: cannot compare %s and %s with %q", describeType(left), describeType(right), op)
 		}
-		return compareOrdered(op, l, r), nil
+		return compareOrdered(op, l, r)
 	default:
 		return nil, fmt.Errorf("eval: %s does not support ordering with %q", describeType(left), op)
 	}
 }
 
-func compareOrdered[T float64 | string](op string, l, r T) bool {
+// compareOrdered evaluates op (one of <, >, <=, >=) between l and r.
+// op is only ever one of those four here - applyComparison validates
+// it upfront - but this still returns a clean error for an
+// unrecognized op rather than panicking, as a second, independent
+// safety net for this exported path.
+func compareOrdered[T float64 | string](op string, l, r T) (bool, error) {
 	switch op {
 	case "<":
-		return l < r
+		return l < r, nil
 	case ">":
-		return l > r
+		return l > r, nil
 	case "<=":
-		return l <= r
+		return l <= r, nil
 	case ">=":
-		return l >= r
+		return l >= r, nil
 	}
-	panic("unreachable")
+	return false, fmt.Errorf("eval: unknown comparison operator %q", op)
 }
 ```
 

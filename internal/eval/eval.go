@@ -769,6 +769,17 @@ func applyComparison(op string, left, right any) (any, error) {
 		}
 		return eq, nil
 	}
+	// Validated before the null short-circuit below - otherwise an
+	// unrecognized op (only reachable via a hand-built filter.Comparison,
+	// never the parser) with a nil operand would silently return false
+	// instead of the clean error this is supposed to be (caught in
+	// review: compareOrdered's own error return never got a chance to
+	// run when either operand was nil).
+	switch op {
+	case "<", ">", "<=", ">=":
+	default:
+		return nil, fmt.Errorf("eval: unknown comparison operator %q", op)
+	}
 	if left == nil || right == nil {
 		return false, nil
 	}

@@ -81,6 +81,20 @@ JSON-ready. This is a correctness fix enabled by this ADR's own
 feature existing, not a pre-existing bug - nothing before `map` could
 construct the situation it fixes.
 
+Recursion alone fixes JSON output, but not `--csv`/`--tsv`/`--table`:
+those formatters only recognize `[]map[string]any` as "a records
+table" (the exact type `[]record` flattens to), not a `[]any` that
+happens to contain maps - caught in the implementation PR's own
+review, verified against the built CLI: `--table` on `map(.)` rendered
+each record as one opaque JSON-text cell per row instead of a real
+table. So `toJSON`'s `[]any` case also promotes its result to
+`[]map[string]any` when every converted element is a `map[string]any`
+- a `[]any` can only ever get a `map[string]any` element from a
+flattened record in the first place, so this recovers the records
+shape rather than guessing one. A mixed array, or one with no
+`map[string]any` elements at all (`map(.Likes)`, the motivating
+scalar-extraction case), is unaffected and stays a plain `[]any`.
+
 ## Decision
 
 ### Grammar: `map`/`select` are pipeline steps whose argument is a nested filter expression
@@ -217,11 +231,14 @@ project's evaluator already produces (`[]record` from `records`,
 same "wrong shape, say so" choice `applySlice` already makes for the
 same two types. `nil` is **also** an error here, unlike `applySlice`
 (`case nil: return nil, nil` - a missing base silently stays absent)
-- deliberately not following that particular precedent, because jq's
-own `map`/`select` don't either: verified beforehand, `jq -n '5 |
-map(.+1)'` errors with "Cannot iterate over number," and `jq -n 'null
-| map(.)'` likewise errors with "Cannot iterate over null," not a
-silent `null` result or a guessed empty array.
+- deliberately not following that particular precedent. For `map`,
+this matches jq's own behavior directly: verified beforehand, `jq -n
+'5 | map(.+1)'` errors with "Cannot iterate over number," and `jq -n
+'null | map(.)'` likewise errors with "Cannot iterate over null," not
+a silent `null` result or a guessed empty array. For `select`, this is
+this project's own deliberate design rather than a jq match - jq's own
+`select` isn't array-iterating at all (see Context above), so it has
+no "requires an array" rule of its own to match in the first place.
 
 ```go
 func applyFilterArg(name string, arg filter.Expr, cur any) (any, error) {
