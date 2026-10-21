@@ -563,6 +563,92 @@ func TestEvalToDateMonthNameAloneIsNotAToken(t *testing.T) {
 	}
 }
 
+// comparisonWorkbook is a small, dedicated fixture for comparison
+// operators (ADR-0024): one of every input shape a comparison needs to
+// handle.
+func comparisonWorkbook() model.Workbook {
+	return model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewNumberCell(42).At(0),   // A1: number
+			model.NewNumberCell(42).At(1),   // B1: same number
+			model.NewNumberCell(100).At(2),  // C1: a bigger number
+			model.NewStringCell("42").At(3), // D1: the string "42" - not equal to the number 42
+			model.NewStringCell("abc").At(4),
+			model.NewStringCell("abd").At(5),
+			model.NewBoolCell(true).At(6),
+			model.NewBoolCell(false).At(7),
+		}},
+	})}}
+}
+
+func TestEvalComparison(t *testing.T) {
+	wb := comparisonWorkbook()
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"equal numbers", ".Sheet1.A1 == .Sheet1.B1", true},
+		{"unequal numbers", ".Sheet1.A1 == .Sheet1.C1", false},
+		{"not-equal numbers", ".Sheet1.A1 != .Sheet1.C1", true},
+		{"cross-type equality is simply unequal, not an error", ".Sheet1.A1 == .Sheet1.D1", false},
+		{"null == null", ".Sheet1.ZZ1 == .Sheet1.ZZ2", true},
+		{"null == a number is false, not an error", ".Sheet1.ZZ1 == .Sheet1.A1", false},
+		{"literal number comparison", ".Sheet1.A1 == 42", true},
+		{"literal string comparison", ".Sheet1.E1 == \"abc\"", true},
+		{"literal bool comparison", ".Sheet1.G1 == true", true},
+		{"literal null comparison", ".Sheet1.ZZ1 == null", true},
+		{"numeric ordering: less than", ".Sheet1.A1 < .Sheet1.C1", true},
+		{"numeric ordering: greater than", ".Sheet1.C1 > .Sheet1.A1", true},
+		{"numeric ordering: less-or-equal, equal case", ".Sheet1.A1 <= .Sheet1.B1", true},
+		{"numeric ordering: greater-or-equal, equal case", ".Sheet1.A1 >= .Sheet1.B1", true},
+		{"numeric ordering against a literal", ".Sheet1.A1 > 10", true},
+		{"string ordering (lexicographic)", ".Sheet1.E1 < .Sheet1.F1", true},
+		{"null ordering is always false, never an error, on the left", ".Sheet1.ZZ1 > .Sheet1.A1", false},
+		{"null ordering is always false, never an error, on the right", ".Sheet1.A1 > .Sheet1.ZZ1", false},
+		{"null ordering against null is also false", ".Sheet1.ZZ1 < .Sheet1.ZZ2", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalComparisonInvalid(t *testing.T) {
+	wb := comparisonWorkbook()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"cross-type ordering is an error, not a guessed ranking", ".Sheet1.E1 > .Sheet1.A1"},
+		{"bool ordering is an error - no established ordering for bools", ".Sheet1.G1 > .Sheet1.H1"},
+		{"comparing a whole sheet errors instead of a wrong DeepEqual answer", ".Sheet1 == .Sheet1"},
+		{"comparing a whole workbook errors the same way", ". == ."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			if _, err := Eval(expr, wb); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
 func TestEvalToDateInvalid(t *testing.T) {
 	wb := todateWorkbook()
 	cases := []struct {

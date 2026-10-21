@@ -35,6 +35,7 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -98,6 +99,18 @@ func eval(expr filter.Expr, cur any) (any, error) {
 		return eval(e.Right, left)
 	case filter.Builtin:
 		return applyBuiltin(e.Name, e.Args, cur)
+	case filter.Literal:
+		return e.Value, nil
+	case filter.Comparison:
+		left, err := eval(e.Left, cur)
+		if err != nil {
+			return nil, err
+		}
+		right, err := eval(e.Right, cur)
+		if err != nil {
+			return nil, err
+		}
+		return applyComparison(e.Op, left, right)
 	default:
 		return nil, fmt.Errorf("eval: unknown expression type %T", expr)
 	}
@@ -610,6 +623,74 @@ func applyToDate(cur any, args []any) (any, error) {
 		return nil, fmt.Errorf("eval: todate: %w", err)
 	}
 	return t.Format(time.RFC3339), nil
+}
+
+// applyComparison implements filter.Comparison (ADR-0024): == and !=
+// never error (cross-type is simply unequal, matching jq); ordering
+// (</>/<=/>=) errors on a non-null type mismatch instead of guessing a
+// ranking jq's own total type order would otherwise supply, but
+// treats null specially - compared with anything via an ordering
+// operator, including another null, it's always false, never an
+// error, so a sparse column's absent value quietly fails a threshold
+// check rather than aborting it.
+//
+// model.Sheet and model.Workbook are rejected before reflect.DeepEqual
+// ever runs on them, for both == and != - Sheet carries a non-nil Rows
+// iter.Seq2 closure, and Go's reflect.DeepEqual only ever considers
+// two func values equal when *both* are nil, so DeepEqual(sheet,
+// sheet) - the exact same value compared to itself - is false, not
+// true. Comparing a whole sheet or workbook was never a meaningful
+// operation this project defines anyway (the same reasoning ADR-0020
+// already gave for excluding them from slicing), so this is a clear
+// error pointing at a specific cell or field instead, not a silently
+// wrong answer.
+func applyComparison(op string, left, right any) (any, error) {
+	if op == "==" || op == "!=" {
+		for _, v := range []any{left, right} {
+			switch v.(type) {
+			case model.Sheet, model.Workbook:
+				return nil, fmt.Errorf("eval: cannot compare %s with %q; compare a specific cell or field instead", describeType(v), op)
+			}
+		}
+		eq := reflect.DeepEqual(left, right)
+		if op == "!=" {
+			return !eq, nil
+		}
+		return eq, nil
+	}
+	if left == nil || right == nil {
+		return false, nil
+	}
+	switch l := left.(type) {
+	case float64:
+		r, ok := right.(float64)
+		if !ok {
+			return nil, fmt.Errorf("eval: cannot compare %s and %s with %q", describeType(left), describeType(right), op)
+		}
+		return compareOrdered(op, l, r), nil
+	case string:
+		r, ok := right.(string)
+		if !ok {
+			return nil, fmt.Errorf("eval: cannot compare %s and %s with %q", describeType(left), describeType(right), op)
+		}
+		return compareOrdered(op, l, r), nil
+	default:
+		return nil, fmt.Errorf("eval: %s does not support ordering with %q", describeType(left), op)
+	}
+}
+
+func compareOrdered[T float64 | string](op string, l, r T) bool {
+	switch op {
+	case "<":
+		return l < r
+	case ">":
+		return l > r
+	case "<=":
+		return l <= r
+	case ">=":
+		return l >= r
+	}
+	panic("unreachable")
 }
 
 // record is one row produced by sheetRecords (ADR-0011/ADR-0021).
@@ -1179,6 +1260,8 @@ func describeType(v any) string {
 		return "a number"
 	case bool:
 		return "a boolean"
+	case model.Sheet:
+		return "a sheet"
 	case model.Workbook:
 		return "a workbook"
 	case []record:

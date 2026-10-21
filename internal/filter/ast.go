@@ -3,17 +3,19 @@
 // docs/adr/0008-filter-grammar-v1.md (grammar corrected in
 // docs/adr/0009-correct-filter-grammar-ebnf.md; the records builtin
 // added by docs/adr/0011-header-aware-record-output.md, generalized
-// into Builtin by docs/adr/0022-extensible-builtins.md). Evaluating
+// into Builtin by docs/adr/0022-extensible-builtins.md; comparison
+// operators added by docs/adr/0024-comparison-operators.md). Evaluating
 // that AST against a model.Workbook is a later package's job - this one
 // only covers syntax.
 package filter
 
 // Expr is a parsed filter expression: one of Identity, Field, Index,
-// Slice, Pipe, Builtin, or Assign. What a Field, Index, or Slice node
-// actually does (sheet lookup, column or A1 cell access, row access,
-// positional slicing, ...) depends on the runtime type it's evaluated
-// against - the AST itself is deliberately untyped beyond this, per
-// ADR-0008 (Slice added by ADR-0020, Builtin by ADR-0022).
+// Slice, Pipe, Builtin, Comparison, Literal, or Assign. What a Field,
+// Index, or Slice node actually does (sheet lookup, column or A1 cell
+// access, row access, positional slicing, ...) depends on the runtime
+// type it's evaluated against - the AST itself is deliberately untyped
+// beyond this, per ADR-0008 (Slice added by ADR-0020, Builtin by
+// ADR-0022, Comparison/Literal by ADR-0024).
 type Expr interface {
 	exprNode()
 }
@@ -74,6 +76,25 @@ type Builtin struct {
 }
 
 func (Builtin) exprNode() {}
+
+// Literal is a bare value (STRING | NUMBER | INT | true | false |
+// null) used as a comparison's right-hand operand (ADR-0024) - "the
+// number/string to compare against," not a path into the data.
+type Literal struct {
+	Value any
+}
+
+func (Literal) exprNode() {}
+
+// Comparison is "Left OP Right" (ADR-0024): ==, !=, <, >, <=, or >=.
+// Op is the operator's own text, the same pattern Builtin.Name already
+// uses rather than a separate enum type for six fixed strings.
+type Comparison struct {
+	Op          string
+	Left, Right Expr
+}
+
+func (Comparison) exprNode() {}
 
 // Assign is "path = value" (ADR-0014): in-place editing only, never
 // evaluated as a read-only query - eval.Eval rejects it outright.

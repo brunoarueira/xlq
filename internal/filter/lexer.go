@@ -26,6 +26,13 @@ const (
 	// ".Sheet1[5]" keeps lexing exactly as it always has, unaffected
 	// by assignment values gaining their own, separate numeric form.
 	tokNumber
+	// Comparison operators (ADR-0024).
+	tokEq // ==
+	tokNe // !=
+	tokLt // <
+	tokLe // <=
+	tokGt // >
+	tokGe // >=
 )
 
 // token is one lexical token. text is the raw identifier text, the
@@ -61,6 +68,18 @@ func (t token) describe() string {
 		return `")"`
 	case tokComma:
 		return `","`
+	case tokEq:
+		return `"=="`
+	case tokNe:
+		return `"!="`
+	case tokLt:
+		return `"<"`
+	case tokLe:
+		return `"<="`
+	case tokGt:
+		return `">"`
+	case tokGe:
+		return `">="`
 	default:
 		return fmt.Sprintf("%q", t.text)
 	}
@@ -89,8 +108,36 @@ func lex(input string) ([]token, error) {
 			toks = append(toks, token{kind: tokPipe, pos: i})
 			i++
 		case c == '=':
-			toks = append(toks, token{kind: tokEquals, pos: i})
-			i++
+			if i+1 < len(input) && input[i+1] == '=' {
+				toks = append(toks, token{kind: tokEq, pos: i})
+				i += 2
+			} else {
+				toks = append(toks, token{kind: tokEquals, pos: i})
+				i++
+			}
+		case c == '!':
+			if i+1 < len(input) && input[i+1] == '=' {
+				toks = append(toks, token{kind: tokNe, pos: i})
+				i += 2
+			} else {
+				return nil, fmt.Errorf("filter: unexpected character %q at position %d", c, i)
+			}
+		case c == '<':
+			if i+1 < len(input) && input[i+1] == '=' {
+				toks = append(toks, token{kind: tokLe, pos: i})
+				i += 2
+			} else {
+				toks = append(toks, token{kind: tokLt, pos: i})
+				i++
+			}
+		case c == '>':
+			if i+1 < len(input) && input[i+1] == '=' {
+				toks = append(toks, token{kind: tokGe, pos: i})
+				i += 2
+			} else {
+				toks = append(toks, token{kind: tokGt, pos: i})
+				i++
+			}
 		case c == ':':
 			toks = append(toks, token{kind: tokColon, pos: i})
 			i++

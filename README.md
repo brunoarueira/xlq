@@ -28,6 +28,7 @@ xlq '.Sheet1["A3:C9"]' path/to/book.xlsx  # a rectangular range
 xlq '.Sheet1 | records | .[0:10]' path/to/book.xlsx  # the first 10 records
 xlq '.Sheet1.B2 | tonumber' path/to/book.xlsx  # "3048" -> 3048
 xlq '.Sheet1.B2 | todate("M/D/YYYY")' path/to/book.xlsx  # "7/28/2026" -> an RFC3339 date
+xlq '.Sheet1.B2 | tonumber > 100' path/to/book.xlsx  # a comparison, true or false
 xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
 xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
 xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
@@ -119,6 +120,22 @@ boolean are all errors, with no "propagates as null" exception, same
 as `tonumber`. Leading/trailing whitespace is trimmed before parsing,
 matching `tonumber`'s own deviation from jq, for the same reason:
 incidental copy-paste noise, not a meaningful part of the date text.
+
+Comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`, see
+[ADR-0024](docs/adr/0024-comparison-operators.md)) work the way you'd
+expect: `.Sheet1.A1 == .Sheet1.B1`, `.Sheet1.Likes > 100`, or against a
+literal (`.Sheet1.A1 == "done"`). `==`/`!=` never error, even across
+types - a number and a string are just "not equal," matching jq
+exactly. Ordering deliberately does **not** match jq: comparing two
+different types (other than with `null`) is an error, not a guessed
+ranking - `tonumber`/`todate` already refuse to guess a cell's type
+from its text, and silently deciding "a string always outranks a
+number" would be the same kind of guess. `null` compared with anything
+via an ordering operator is `false`, never an error - unlike equality's
+`null == null`, which is `true` - so a sparse column's missing value
+just quietly fails a threshold check instead of erroring out. Comparing
+a whole sheet or workbook is a clear error, not a (meaningless) `true`
+or `false`.
 
 A range (`.Sheet1["A3:C9"]`, see
 [ADR-0012](docs/adr/0012-range-references.md)) selects a rectangular
