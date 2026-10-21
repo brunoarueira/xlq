@@ -56,9 +56,9 @@ including the error cases and the `toJSON` fix.
 
 `map`'s result is always a `[]any` (see below), and if its
 per-element filter expression evaluates to something still shaped
-like a `record` or `[]record` (e.g. `map(.)`, the identity map, or
-`map(select(...))`), that value ends up **nested inside** a `[]any`,
-rather than being the `[]any`'s own top-level type. `internal/eval`'s
+like a `record` or `[]record` (e.g. `map(.)`, the identity map), that
+value ends up **nested inside** a `[]any`, rather than being the
+`[]any`'s own top-level type. `internal/eval`'s
 `toJSON` function - the one place that ever flattens a `record`
 (`ADR-0011`'s internal `byName`/`headers` struct) into the
 `map[string]any` shape `encoding/json` can actually serialize -
@@ -92,9 +92,9 @@ filter_arg     = step_operand ( cmp_op operand )? ( "|" step_operand ( cmp_op op
 ```
 
 `filter_arg_builtin` is a new alternative for `step_operand` - valid
-wherever a builtin already is (after a `|`, inside a comparison's
-`operand`... no, see below), **not** as a whole filter's first
-segment, matching every existing builtin. `filter_arg` reuses the
+wherever a builtin already is (after a `|`), **not** as a whole
+filter's first segment, matching every existing builtin, and (see
+below) not as a comparison's `operand` either. `filter_arg` reuses the
 pipeline-step grammar recursively: its own first segment can be a
 path, a literal-arg builtin, or another `map`/`select` (nesting is
 free, not specifically useful today, but not worth forbidding either),
@@ -213,11 +213,15 @@ type FilterArg struct {
 Both `map` and `select` only operate on the two array shapes this
 project's evaluator already produces (`[]record` from `records`,
 `[]any` from a whole row/column or a slice) - a scalar, a single
-`record`, `nil`, a `model.Sheet`, or a `model.Workbook` is a clear
-error, the same "wrong shape, say so" choice `applySlice` already
-makes for the same two types plus `nil`. This also matches jq's own
-behavior verified beforehand: `jq -n '5 | map(.+1)'` errors with
-"Cannot iterate over number," not a guessed single-element array.
+`record`, a `model.Sheet`, or a `model.Workbook` is a clear error, the
+same "wrong shape, say so" choice `applySlice` already makes for the
+same two types. `nil` is **also** an error here, unlike `applySlice`
+(`case nil: return nil, nil` - a missing base silently stays absent)
+- deliberately not following that particular precedent, because jq's
+own `map`/`select` don't either: verified beforehand, `jq -n '5 |
+map(.+1)'` errors with "Cannot iterate over number," and `jq -n 'null
+| map(.)'` likewise errors with "Cannot iterate over null," not a
+silent `null` result or a guessed empty array.
 
 ```go
 func applyFilterArg(name string, arg filter.Expr, cur any) (any, error) {
