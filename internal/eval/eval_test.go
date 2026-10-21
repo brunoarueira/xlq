@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -862,6 +863,273 @@ func TestEvalSelectInvalid(t *testing.T) {
 				t.Errorf("Eval(%q): want error, got nil", tc.input)
 			}
 		})
+	}
+}
+
+// aggregatesWorkbook is a small, dedicated fixture for sum/count/avg
+// (ADR-0026): a header row (Name, Likes) and three data rows, with
+// bob's Likes cell left entirely blank - sum/avg's own sparse-column
+// handling is this fixture's whole point.
+func aggregatesWorkbook() model.Workbook {
+	return model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("Name").At(0),
+			model.NewStringCell("Likes").At(1),
+		}},
+		{Index: 1, Cells: []model.Cell{
+			model.NewStringCell("alice").At(0),
+			model.NewNumberCell(150).At(1),
+		}},
+		{Index: 2, Cells: []model.Cell{
+			model.NewStringCell("bob").At(0),
+			// Likes left blank.
+		}},
+		{Index: 3, Cells: []model.Cell{
+			model.NewStringCell("carol").At(0),
+			model.NewNumberCell(300).At(1),
+		}},
+	})}}
+}
+
+func TestEvalAggregates(t *testing.T) {
+	wb := aggregatesWorkbook()
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"count on records, including the blank row", ".Sheet1 | records | count", 3.0},
+		{"count on a mapped array, including the null", ".Sheet1 | records | map(.Likes) | count", 3.0},
+		{"sum treats the blank as 0, not an error", ".Sheet1 | records | map(.Likes) | sum", 450.0},
+		{"avg excludes the blank from the divisor, not just the total", ".Sheet1 | records | map(.Likes) | avg", 225.0},
+		{"sum of an empty select result is null, not 0", ".Sheet1 | records | select(.Likes > 100000) | map(.Likes) | sum", nil},
+		{"avg of an empty select result is null", ".Sheet1 | records | select(.Likes > 100000) | map(.Likes) | avg", nil},
+		{"count of an empty select result is 0", ".Sheet1 | records | select(.Likes > 100000) | count", 0.0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEvalSumAllNull guards ADR-0026's own cubic-caught fix: an
+// all-null, non-empty array must sum to null, not 0 - distinct from
+// (but just as important as) the already-covered literally-empty case.
+func TestEvalSumAllNull(t *testing.T) {
+	// Every row's Likes cell is entirely absent (not an empty string -
+	// a genuinely blank cell), so map(.Likes) is [null, null] - non-
+	// empty, but with no real number in it anywhere. Name stays
+	// present so records() doesn't skip these rows as entirely blank
+	// (ADR-0011).
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{model.NewStringCell("Name").At(0), model.NewStringCell("Likes").At(1)}},
+		{Index: 1, Cells: []model.Cell{model.NewStringCell("alice").At(0)}},
+		{Index: 2, Cells: []model.Cell{model.NewStringCell("bob").At(0)}},
+	})}}
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"sum of an all-null array is null, not 0", ".Sheet1 | records | map(.Likes) | sum", nil},
+		{"avg of an all-null array is null", ".Sheet1 | records | map(.Likes) | avg", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalAggregatesInvalid(t *testing.T) {
+	wb := aggregatesWorkbook()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"count requires an array, not a scalar", ".Sheet1.A1 | count"},
+		{"sum requires []any, not []record - project a field first", ".Sheet1 | records | sum"},
+		{"avg requires []any, not []record - project a field first", ".Sheet1 | records | avg"},
+		{"sum errors on a non-number, non-null element", ".Sheet1 | records | map(.Name) | sum"},
+		{"avg errors on a non-number, non-null element", ".Sheet1 | records | map(.Name) | avg"},
+		{"count on null errors, matching map/select's own precedent", ".NoSuchSheet | count"},
+		{"sum on null errors", ".NoSuchSheet | sum"},
+		{"avg on null errors", ".NoSuchSheet | avg"},
+		{"sum takes no arguments", ".Sheet1.B | sum(5)"},
+		{"count takes no arguments", ".Sheet1.B | count(5)"},
+		{"avg takes no arguments", ".Sheet1.B | avg(5)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			if _, err := Eval(expr, wb); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
+func TestEvalGroupBy(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("Name").At(0),
+			model.NewStringCell("Category").At(1),
+			model.NewStringCell("Likes").At(2),
+		}},
+		{Index: 1, Cells: []model.Cell{
+			model.NewStringCell("alice").At(0),
+			model.NewStringCell("fruit").At(1),
+			model.NewNumberCell(150).At(2),
+		}},
+		{Index: 2, Cells: []model.Cell{
+			model.NewStringCell("bob").At(0),
+			model.NewStringCell("veg").At(1),
+			model.NewNumberCell(50).At(2),
+		}},
+		{Index: 3, Cells: []model.Cell{
+			model.NewStringCell("carol").At(0),
+			model.NewStringCell("fruit").At(1),
+			model.NewNumberCell(300).At(2),
+		}},
+		{Index: 4, Cells: []model.Cell{
+			model.NewStringCell("dave").At(0),
+			model.NewStringCell("veg").At(1),
+			model.NewNumberCell(20).At(2),
+		}},
+		{Index: 5, Cells: []model.Cell{
+			model.NewStringCell("eve").At(0),
+			// Category left blank.
+			model.NewNumberCell(10).At(2),
+		}},
+	})}}
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{
+			"groups come out in first-encountered order, not sorted",
+			".Sheet1 | records | group_by(.Category) | map(.[0].Name)",
+			[]any{"alice", "bob", "eve"},
+		},
+		{
+			"each group preserves input order within it",
+			".Sheet1 | records | group_by(.Category) | map(map(.Name))",
+			[]any{[]any{"alice", "carol"}, []any{"bob", "dave"}, []any{"eve"}},
+		},
+		{
+			"group_by composes with count to size each group",
+			".Sheet1 | records | group_by(.Category) | map(count)",
+			[]any{2.0, 2.0, 1.0},
+		},
+		{
+			"group_by composes with map+sum to total each group",
+			".Sheet1 | records | group_by(.Category) | map(map(.Likes) | sum)",
+			[]any{450.0, 70.0, 10.0},
+		},
+		{
+			"a null Category groups on its own, not an error",
+			".Sheet1 | records | group_by(.Category) | map(.[0].Name) | .[2]",
+			"eve",
+		},
+		{
+			"group_by on a plain []any groups by identity",
+			".Sheet1.A[1:] | group_by(.)",
+			[]any{[]any{"alice"}, []any{"bob"}, []any{"carol"}, []any{"dave"}, []any{"eve"}},
+		},
+		{
+			"group_by on an empty select result is an empty array",
+			".Sheet1 | records | select(.Name == \"nonexistent\") | group_by(.Category)",
+			[]any{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalGroupByInvalid(t *testing.T) {
+	wb := mapSelectWorkbook()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"group_by requires an array, not a scalar", ".Sheet1.A1 | group_by(.)"},
+		{"group_by on null errors, matching map/select's own precedent", ".NoSuchSheet | group_by(.)"},
+		{"a record key is rejected - no single field to group by", ".Sheet1 | records | group_by(.)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			if _, err := Eval(expr, wb); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
+// TestEvalGroupByNaN guards ADR-0027's own NaN decision: a NaN key
+// must error, not silently produce a nil (and therefore data-losing)
+// group - a hand-built filter.FilterArg can reach this without going
+// through tonumber at all (which would otherwise refuse "NaN" as text).
+func TestEvalGroupByNaN(t *testing.T) {
+	wb := model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{model.NewNumberCell(1).At(0)}},
+		{Index: 1, Cells: []model.Cell{model.NewNumberCell(2).At(0)}},
+	})}}
+	// group_by(0.0 / 0.0)-equivalent: no arithmetic exists in the
+	// grammar to produce NaN, so build the FilterArg directly.
+	nan := filter.Literal{Value: math.NaN()}
+	expr := filter.FilterArg{
+		Name: "group_by",
+		Arg:  nan,
+	}
+	base, err := filter.Parse(".Sheet1.A")
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	full := filter.Pipe{Left: base, Right: expr}
+	if _, err := Eval(full, wb); err == nil {
+		t.Error("Eval: want error for a NaN group key, got nil")
 	}
 }
 

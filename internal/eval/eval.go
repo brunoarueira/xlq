@@ -35,6 +35,7 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -311,6 +312,21 @@ func applyBuiltin(name string, args []any, cur any) (any, error) {
 		return applyToNumber(cur)
 	case "todate":
 		return applyToDate(cur, args)
+	case "sum":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("eval: sum takes no arguments, got %d", len(args))
+		}
+		return applySum(cur)
+	case "count":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("eval: count takes no arguments, got %d", len(args))
+		}
+		return applyCount(cur)
+	case "avg":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("eval: avg takes no arguments, got %d", len(args))
+		}
+		return applyAvg(cur)
 	default:
 		// Unreachable today: internal/filter's own builtinNames set
 		// already rejects any other name at parse time. Kept as a
@@ -320,14 +336,17 @@ func applyBuiltin(name string, args []any, cur any) (any, error) {
 	}
 }
 
-// applyFilterArg dispatches map/select (ADR-0025), each evaluating arg
-// once per element of cur's array, with "." rebound to that element.
+// applyFilterArg dispatches map/select (ADR-0025) and group_by
+// (ADR-0027), each evaluating arg once per element of cur's array,
+// with "." rebound to that element.
 func applyFilterArg(name string, arg filter.Expr, cur any) (any, error) {
 	switch name {
 	case "map":
 		return applyMap(arg, cur)
 	case "select":
 		return applySelect(arg, cur)
+	case "group_by":
+		return applyGroupBy(arg, cur)
 	default:
 		// Unreachable today: internal/filter's own filterArgBuiltins set
 		// already rejects any other name at parse time, the same
@@ -414,6 +433,152 @@ func selectOver[T any](arg filter.Expr, elems []T) ([]T, error) {
 		}
 	}
 	return result, nil
+}
+
+// applyGroupBy implements "group_by(arg)" (ADR-0027): arg is evaluated
+// once per element of cur, with "." rebound to that element, and
+// elements sharing an equal key are collected into the same sub-array
+// - requires []record or []any, the same "wrong shape, say so" choice
+// map/select already make.
+func applyGroupBy(arg filter.Expr, cur any) (any, error) {
+	switch v := cur.(type) {
+	case []record:
+		return groupByOver(arg, v)
+	case []any:
+		return groupByOver(arg, v)
+	default:
+		return nil, fmt.Errorf("eval: group_by requires an array, got %s", describeType(cur))
+	}
+}
+
+// groupByOver groups elems by arg's per-element result, in the order
+// each distinct key was first encountered - not sorted by key, the
+// deliberate divergence from jq's own group_by ADR-0027 decided, since
+// sorting would need an ordering decision for group keys this project
+// otherwise avoids entirely by using equality (via a real Go map,
+// hence the key-type restriction below) instead.
+func groupByOver[T any](arg filter.Expr, elems []T) ([]any, error) {
+	var order []any
+	groups := map[any][]T{}
+	for _, elem := range elems {
+		key, err := eval(arg, elem)
+		if err != nil {
+			return nil, err
+		}
+		switch n := key.(type) {
+		case float64:
+			if math.IsNaN(n) {
+				// NaN != NaN, including itself, so a map[any]... can
+				// never retrieve a NaN key back out again - every NaN
+				// would silently become its own unreachable group,
+				// read back as a nil slice rather than the elements
+				// actually grouped there (verified empirically before
+				// deciding this, in ADR-0027).
+				return nil, fmt.Errorf("eval: group_by: NaN cannot be used as a group key")
+			}
+		case string, bool, nil:
+		default:
+			return nil, fmt.Errorf("eval: group_by: %s cannot be used as a group key", describeType(key))
+		}
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], elem)
+	}
+	result := make([]any, len(order))
+	for i, key := range order {
+		result[i] = groups[key]
+	}
+	return result, nil
+}
+
+// applyCount implements "count" (ADR-0026): the element count of cur,
+// any array shape - []record or []any, an array-only, jq-compatible
+// subset of jq's own "length" (which is polymorphic - a string's
+// character count, a number's absolute value, an object's key count -
+// none of which this project's count does). Includes null elements: a
+// blank cell is still a row or array position, not an absent one.
+func applyCount(cur any) (any, error) {
+	switch v := cur.(type) {
+	case []record:
+		return float64(len(v)), nil
+	case []any:
+		return float64(len(v)), nil
+	default:
+		return nil, fmt.Errorf("eval: count requires an array, got %s", describeType(cur))
+	}
+}
+
+// applySum implements "sum" (ADR-0026): []any only, not []record -
+// summing a record directly has no single defined field to sum, so
+// project one first (map(.Likes) | sum), the same reasoning that
+// already applies to applyAvg below. null elements contribute 0,
+// matching jq's own "add" (verified: "[1,null,3] | add" is 4) - a
+// blank cell in a sparse column shouldn't abort the whole sum, the
+// same reasoning ADR-0024 already used for null in an ordering
+// comparison. Any other non-number element is a clear error, not a
+// guessed 0 - jq-inspired, but deliberately numbers-only, unlike jq's
+// own polymorphic "add" (string/array concatenation, object merging).
+// An array with no non-null numbers at all - empty, or every element
+// null - sums to null, not 0, matching jq's own "add" for both
+// (verified: "[] | add" and "[null,null] | add" are both null; a
+// number only appears once a real element does, "[null,5,null] | add"
+// is 5) - so "no data" and "a genuine zero total" stay distinguishable.
+func applySum(cur any) (any, error) {
+	v, ok := cur.([]any)
+	if !ok {
+		return nil, fmt.Errorf("eval: sum requires an array of numbers, got %s; project a field first, e.g. map(.Likes) | sum", describeType(cur))
+	}
+	var total float64
+	var sawNumber bool
+	for _, elem := range v {
+		switch n := elem.(type) {
+		case float64:
+			total += n
+			sawNumber = true
+		case nil:
+			// Contributes 0 - see doc comment above.
+		default:
+			return nil, fmt.Errorf("eval: sum: %s is not a number", describeType(elem))
+		}
+	}
+	if !sawNumber {
+		return nil, nil
+	}
+	return total, nil
+}
+
+// applyAvg implements "avg" (ADR-0026): jq has no equivalent to verify
+// against - this project's own addition. Unlike sum, null elements are
+// excluded from both the running total *and* the count used to divide
+// (not treated as a 0 contribution): averaging a sparse column should
+// reflect the values actually present, not be pulled down by every
+// blank cell counting as a zero data point. An array with no non-null
+// numbers (including an empty array) averages to null, the same "no
+// data" signal sum uses, rather than a divide-by-zero error. Any other
+// non-number, non-null element is a clear error, the same as sum.
+func applyAvg(cur any) (any, error) {
+	v, ok := cur.([]any)
+	if !ok {
+		return nil, fmt.Errorf("eval: avg requires an array of numbers, got %s; project a field first, e.g. map(.Likes) | avg", describeType(cur))
+	}
+	var total float64
+	var count int
+	for _, elem := range v {
+		switch n := elem.(type) {
+		case float64:
+			total += n
+			count++
+		case nil:
+			// Excluded from both total and count - see doc comment above.
+		default:
+			return nil, fmt.Errorf("eval: avg: %s is not a number", describeType(elem))
+		}
+	}
+	if count == 0 {
+		return nil, nil
+	}
+	return total / float64(count), nil
 }
 
 // applyRecords implements the "records" builtin (ADR-0011): an array of

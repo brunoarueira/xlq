@@ -30,6 +30,8 @@ xlq '.Sheet1.B2 | tonumber' path/to/book.xlsx  # "3048" -> 3048
 xlq '.Sheet1.B2 | todate("M/D/YYYY")' path/to/book.xlsx  # "7/28/2026" -> an RFC3339 date
 xlq '.Sheet1.B2 | tonumber > 100' path/to/book.xlsx  # a comparison, true or false
 xlq '.Sheet1 | records | select(.Likes > 100)' path/to/book.xlsx  # keep matching records
+xlq '.Sheet1 | records | map(.Likes) | sum' path/to/book.xlsx  # total a column
+xlq '.Sheet1 | records | group_by(.Category) | map(count)' path/to/book.xlsx  # size each group
 xlq '.Sheet1' path/to/book.csv            # same filters work on csv, tsv, ods
 xlq --input-format csv '.Sheet1' path/to/export.txt  # misnamed file
 xlq --delimiter ';' '.Sheet1' path/to/export.csv  # non-comma csv
@@ -165,6 +167,59 @@ null"); for `select`, it's this project's own deliberate design, not a
 jq match - jq's `select` isn't array-iterating at all (see above), so
 it has no equivalent "requires an array" rule to match in the first
 place.
+
+`sum`, `count`, and `avg` (see
+[ADR-0026](docs/adr/0026-sum-count-avg.md)) are zero-argument reduce
+builtins - no filter-expression argument, unlike `map`/`select`; project
+a field first with `map` (`.Sheet1 | records | map(.Likes) | sum`), the
+same composition jq's own `map(.field) | add` idiom uses. Like every
+builtin, any of the three also parses as a comparison's right-hand
+side, the same grammar position `tonumber`/`todate` already have - it
+just isn't a particularly natural fit for `sum`/`count`/`avg`
+specifically, since that position evaluates against the comparison's
+own current value, not the left side's result, and the left side is
+usually already the array these builtins need. `count`
+accepts `records`'s
+output or a plain array and returns its element count, including
+`null` elements - an array-only, jq-compatible subset of jq's own
+polymorphic `length`, which also defines a length for a string, a
+number, and an object. `sum` requires a plain array of numbers (not
+`records`'s output directly - summing a record has no single defined
+field); a `null` element contributes `0`, the same jq-inspired
+behavior jq's own `add` has for numbers - jq's `add` is itself
+polymorphic too (string/array concatenation, object merging), none of
+which `sum` here attempts, deliberately: guessing "the user must have
+meant concatenation" from an array's element type would be exactly the
+kind of cross-type guess this project otherwise refuses to make; any
+other non-number element is a clear error. An array with no non-`null`
+numbers at all (empty, or every element `null`) sums to `null`, not
+`0`, matching jq's own numeric `add` for both cases - so "no data" and
+"a genuine zero total" stay distinguishable. `avg` has no jq
+equivalent - this project's own addition - and deliberately disagrees
+with `sum` on `null`: excluded from both the total and the count used
+to divide, not treated as a zero contribution, since averaging a
+sparse column should reflect the values actually present.
+
+`group_by(filter)` (see [ADR-0027](docs/adr/0027-group-by.md)) groups
+an array's elements by the filter's per-element result:
+`.Sheet1 | records | group_by(.Category)` returns an array of arrays,
+one per distinct `Category` value, each holding the matching records
+in their original order. Unlike jq's own `group_by`, the groups come
+out in the order their key was **first encountered**, not sorted by
+key - sorting would mean adopting an ordering over group keys, and this
+project's own ordering is deliberately restricted (number/string only,
+ADR-0024) specifically to avoid guessing a ranking across types the
+way jq's own total ordering does. Grouping by equality instead sidesteps
+that question entirely, and keeps `true`/`false`/`null` available as
+group keys, not just numbers and strings. A record, an array, a sheet,
+or a workbook can't be used as a group key - project a scalar field
+first, the same restriction `sum`/`avg` already have. `group_by`
+composes with `map` to aggregate each group, e.g.
+`group_by(.Category) | map(count)` to size each group, or
+`group_by(.Category) | map(map(.Likes) | sum)` to total each one.
+`--csv`/`--table` render each group as a single JSON-text row, not a
+nested table - there's no single obvious flat tabular form for a
+grouped result, so JSON remains the more useful way to consume one.
 
 A range (`.Sheet1["A3:C9"]`, see
 [ADR-0012](docs/adr/0012-range-references.md)) selects a rectangular

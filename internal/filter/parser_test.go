@@ -249,6 +249,51 @@ func TestParseValid(t *testing.T) {
 			},
 		},
 		{
+			"sum builtin after a pipe (#38)",
+			".Sheet1.B | sum",
+			Pipe{Field{Field{Identity{}, "Sheet1"}, "B"}, Builtin{Name: "sum"}},
+		},
+		{
+			"count builtin after a pipe (#38)",
+			".Sheet1 | records | count",
+			Pipe{Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}}, Builtin{Name: "count"}},
+		},
+		{
+			"avg builtin after a pipe (#38)",
+			".Sheet1.B | avg",
+			Pipe{Field{Field{Identity{}, "Sheet1"}, "B"}, Builtin{Name: "avg"}},
+		},
+		{
+			"sum composes after map",
+			".Sheet1 | records | map(.Likes) | sum",
+			Pipe{
+				Pipe{
+					Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+					FilterArg{Name: "map", Arg: Field{Identity{}, "Likes"}},
+				},
+				Builtin{Name: "sum"},
+			},
+		},
+		{
+			"group_by with a field-access argument (#38)",
+			".Sheet1 | records | group_by(.Category)",
+			Pipe{
+				Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+				FilterArg{Name: "group_by", Arg: Field{Identity{}, "Category"}},
+			},
+		},
+		{
+			"group_by composes with map to aggregate each group",
+			".Sheet1 | records | group_by(.Category) | map(count)",
+			Pipe{
+				Pipe{
+					Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+					FilterArg{Name: "group_by", Arg: Field{Identity{}, "Category"}},
+				},
+				FilterArg{Name: "map", Arg: Builtin{Name: "count"}},
+			},
+		},
+		{
 			"whitespace between tokens is insignificant",
 			" .  Sheet1 . A1 ",
 			Field{Field{Identity{}, "Sheet1"}, "A1"},
