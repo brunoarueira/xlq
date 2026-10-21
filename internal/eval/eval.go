@@ -35,6 +35,7 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -335,14 +336,17 @@ func applyBuiltin(name string, args []any, cur any) (any, error) {
 	}
 }
 
-// applyFilterArg dispatches map/select (ADR-0025), each evaluating arg
-// once per element of cur's array, with "." rebound to that element.
+// applyFilterArg dispatches map/select (ADR-0025) and group_by
+// (ADR-0027), each evaluating arg once per element of cur's array,
+// with "." rebound to that element.
 func applyFilterArg(name string, arg filter.Expr, cur any) (any, error) {
 	switch name {
 	case "map":
 		return applyMap(arg, cur)
 	case "select":
 		return applySelect(arg, cur)
+	case "group_by":
+		return applyGroupBy(arg, cur)
 	default:
 		// Unreachable today: internal/filter's own filterArgBuiltins set
 		// already rejects any other name at parse time, the same
@@ -427,6 +431,63 @@ func selectOver[T any](arg filter.Expr, elems []T) ([]T, error) {
 		if b {
 			result = append(result, elem)
 		}
+	}
+	return result, nil
+}
+
+// applyGroupBy implements "group_by(arg)" (ADR-0027): arg is evaluated
+// once per element of cur, with "." rebound to that element, and
+// elements sharing an equal key are collected into the same sub-array
+// - requires []record or []any, the same "wrong shape, say so" choice
+// map/select already make.
+func applyGroupBy(arg filter.Expr, cur any) (any, error) {
+	switch v := cur.(type) {
+	case []record:
+		return groupByOver(arg, v)
+	case []any:
+		return groupByOver(arg, v)
+	default:
+		return nil, fmt.Errorf("eval: group_by requires an array, got %s", describeType(cur))
+	}
+}
+
+// groupByOver groups elems by arg's per-element result, in the order
+// each distinct key was first encountered - not sorted by key, the
+// deliberate divergence from jq's own group_by ADR-0027 decided, since
+// sorting would need an ordering decision for group keys this project
+// otherwise avoids entirely by using equality (via a real Go map,
+// hence the key-type restriction below) instead.
+func groupByOver[T any](arg filter.Expr, elems []T) ([]any, error) {
+	var order []any
+	groups := map[any][]T{}
+	for _, elem := range elems {
+		key, err := eval(arg, elem)
+		if err != nil {
+			return nil, err
+		}
+		switch n := key.(type) {
+		case float64:
+			if math.IsNaN(n) {
+				// NaN != NaN, including itself, so a map[any]... can
+				// never retrieve a NaN key back out again - every NaN
+				// would silently become its own unreachable group,
+				// read back as a nil slice rather than the elements
+				// actually grouped there (verified empirically before
+				// deciding this, in ADR-0027).
+				return nil, fmt.Errorf("eval: group_by: NaN cannot be used as a group key")
+			}
+		case string, bool, nil:
+		default:
+			return nil, fmt.Errorf("eval: group_by: %s cannot be used as a group key", describeType(key))
+		}
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], elem)
+	}
+	result := make([]any, len(order))
+	for i, key := range order {
+		result[i] = groups[key]
 	}
 	return result, nil
 }

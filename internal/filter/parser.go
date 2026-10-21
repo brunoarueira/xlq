@@ -13,9 +13,10 @@ import (
 // by docs/adr/0022-extensible-builtins.md), the assignment form added
 // by docs/adr/0014-in-place-editing.md, the slice form added by
 // docs/adr/0020-array-slicing.md, the comparison form added by
-// docs/adr/0024-comparison-operators.md, and the map/select
+// docs/adr/0024-comparison-operators.md, the map/select
 // filter-expression-argument form added by
-// docs/adr/0025-map-select-filter-arguments.md:
+// docs/adr/0025-map-select-filter-arguments.md, and group_by, which
+// reuses that same form unchanged (docs/adr/0027-group-by.md):
 //
 //	filter         = pipeline | assignment
 //	pipeline       = first ( "|" step )*
@@ -132,8 +133,9 @@ var builtinNames = map[string]bool{
 // builtinNames, parsed via parseFilterArgBuiltin instead of
 // parseBuiltinArgs.
 var filterArgBuiltins = map[string]bool{
-	"map":    true,
-	"select": true,
+	"map":      true,
+	"select":   true,
+	"group_by": true, // #38
 }
 
 // parseStep parses one pipeline step after a "|": a path, a literal-arg
@@ -165,11 +167,11 @@ func (p *parser) parseStep() (Expr, error) {
 	return p.maybeComparison(left)
 }
 
-// parseFilterArgBuiltin parses "name(filter)" (ADR-0025): map or
-// select, where the parenthesized argument is a recursive filter
-// expression - never omitted, since (unlike parseBuiltinArgs' literal
-// arguments) there's no meaningful "zero arguments" default for a
-// predicate or transform.
+// parseFilterArgBuiltin parses "name(filter)" (ADR-0025, ADR-0027):
+// map, select, or group_by, where the parenthesized argument is a
+// recursive filter expression - never omitted, since (unlike
+// parseBuiltinArgs' literal arguments) there's no meaningful "zero
+// arguments" default for a predicate, transform, or key selector.
 func (p *parser) parseFilterArgBuiltin() (Expr, error) {
 	name := p.advance().text
 	if p.peek().kind != tokLParen {
@@ -187,15 +189,15 @@ func (p *parser) parseFilterArgBuiltin() (Expr, error) {
 	return FilterArg{Name: name, Arg: arg}, nil
 }
 
-// parseFilterArgExpr parses the pipeline inside a map/select's
-// parentheses (ADR-0025): structurally identical to Parse's own
-// pipeline loop, except its first segment is parsed via parseStep (a
-// path, a builtin, or a nested map/select, each optionally compared),
-// not parsePath - unlike a whole filter's own first segment, a
-// filter-expression argument's "." is already bound to one array
-// element by the time it runs, so starting from a bare builtin (e.g.
-// "map(tonumber)", converting each element directly) is meaningful
-// here in a way it isn't at the top level.
+// parseFilterArgExpr parses the pipeline inside a map/select/group_by's
+// parentheses (ADR-0025, ADR-0027): structurally identical to Parse's
+// own pipeline loop, except its first segment is parsed via parseStep
+// (a path, a builtin, or a nested filter-arg builtin, each optionally
+// compared), not parsePath - unlike a whole filter's own first
+// segment, a filter-expression argument's "." is already bound to one
+// array element by the time it runs, so starting from a bare builtin
+// (e.g. "map(tonumber)", converting each element directly) is
+// meaningful here in a way it isn't at the top level.
 func (p *parser) parseFilterArgExpr() (Expr, error) {
 	expr, err := p.parseStep()
 	if err != nil {

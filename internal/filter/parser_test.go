@@ -275,6 +275,25 @@ func TestParseValid(t *testing.T) {
 			},
 		},
 		{
+			"group_by with a field-access argument (#38)",
+			".Sheet1 | records | group_by(.Category)",
+			Pipe{
+				Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+				FilterArg{Name: "group_by", Arg: Field{Identity{}, "Category"}},
+			},
+		},
+		{
+			"group_by composes with map to aggregate each group",
+			".Sheet1 | records | group_by(.Category) | map(count)",
+			Pipe{
+				Pipe{
+					Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+					FilterArg{Name: "group_by", Arg: Field{Identity{}, "Category"}},
+				},
+				FilterArg{Name: "map", Arg: Builtin{Name: "count"}},
+			},
+		},
+		{
 			"whitespace between tokens is insignificant",
 			" .  Sheet1 . A1 ",
 			Field{Field{Identity{}, "Sheet1"}, "A1"},
