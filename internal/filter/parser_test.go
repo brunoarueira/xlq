@@ -139,6 +139,59 @@ func TestParseValid(t *testing.T) {
 			Pipe{Field{Field{Identity{}, "Sheet1"}, "A1"}, Builtin{Name: "todate", Args: []any{"M/D/YYYY"}}},
 		},
 		{
+			"comparison between two paths, as a filter's first segment (ADR-0024)",
+			".A1 == .B1",
+			Comparison{"==", Field{Identity{}, "A1"}, Field{Identity{}, "B1"}},
+		},
+		{
+			"comparison against a literal number",
+			".Sheet1.Likes > 100",
+			Comparison{">", Field{Field{Identity{}, "Sheet1"}, "Likes"}, Literal{100.0}},
+		},
+		{
+			"comparison against a literal string",
+			`.A1 == "hello"`,
+			Comparison{"==", Field{Identity{}, "A1"}, Literal{"hello"}},
+		},
+		{
+			"comparison against a literal bool",
+			".A1 != true",
+			Comparison{"!=", Field{Identity{}, "A1"}, Literal{true}},
+		},
+		{
+			"comparison against a literal null",
+			".A1 == null",
+			Comparison{"==", Field{Identity{}, "A1"}, Literal{nil}},
+		},
+		{
+			"\"<\" lexes and parses",
+			".A1 < .B1",
+			Comparison{"<", Field{Identity{}, "A1"}, Field{Identity{}, "B1"}},
+		},
+		{
+			"\"<=\" lexes and parses",
+			".A1 <= .B1",
+			Comparison{"<=", Field{Identity{}, "A1"}, Field{Identity{}, "B1"}},
+		},
+		{
+			"\">=\" lexes and parses",
+			".A1 >= .B1",
+			Comparison{">=", Field{Identity{}, "A1"}, Field{Identity{}, "B1"}},
+		},
+		{
+			"comparison after a pipe, left side a builtin (ADR-0024)",
+			".A1 | tonumber == 5",
+			Pipe{Field{Identity{}, "A1"}, Comparison{"==", Builtin{Name: "tonumber"}, Literal{5.0}}},
+		},
+		{
+			"comparison composes with further pipeline steps",
+			".Sheet1 | records | .[0].Likes > 100",
+			Pipe{
+				Pipe{Field{Identity{}, "Sheet1"}, Builtin{Name: "records"}},
+				Comparison{">", Field{Index{Identity{}, 0}, "Likes"}, Literal{100.0}},
+			},
+		},
+		{
 			"whitespace between tokens is insignificant",
 			" .  Sheet1 . A1 ",
 			Field{Field{Identity{}, "Sheet1"}, "A1"},
@@ -244,7 +297,11 @@ func TestParseInvalid(t *testing.T) {
 		{"assignment with no value after =", ".Sheet1.A1 = "},
 		{"assignment value must be a recognized literal, not an arbitrary ident", ".Sheet1.A1 = banana"},
 		{"assignment with trailing garbage after the value", `.Sheet1.A1 = "x" extra`},
-		{"double equals has no value on the right of the first", `.Sheet1.A1 == "x"`},
+		{"comparison chaining isn't supported (ADR-0024)", `.A1 == .B1 == .C1`},
+		{"a literal can't start a filter's first segment", "100 == .A1"},
+		{"a lone \"!\" is never valid (only \"!=\" is)", ".A1 ! .B1"},
+		{"a comparison operator with nothing on the right", ".A1 =="},
+		{"and/or/not aren't supported (ADR-0024 explicitly defers them)", ".A1 == true and .B1 == false"},
 		{"assignment target can't itself contain a pipe", `.Sheet1 | records = "x"`},
 		{"unterminated slice", ".Sheet1[1:"},
 		{"slice with a string bound", `.Sheet1[1:"x"]`},
