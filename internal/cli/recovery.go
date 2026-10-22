@@ -35,9 +35,13 @@ import (
 // that parse step, which runs before any temp file exists), so a
 // genuinely malicious file won't trigger it - a stray xlq-tmp-*.xlsx
 // left in the target directory next to a real file that's just slow
-// to save is the realistic worst case, never a corrupted or
-// partially-written target file (WriteCell only ever renames over it
-// after the save and a re-open verification both succeed).
+// to save is the realistic worst case. On Unix, where os.Rename within
+// a directory is atomic, the target file itself is never left
+// corrupted or partially written either way. On Windows, Go's own
+// os.Rename docs say the same-directory case isn't atomic there - a
+// pre-existing property of WriteCell's rename-based write (ADR-0014),
+// unrelated to and unchanged by this timeout, and out of this ADR's
+// scope to fix.
 //
 // Does not help with a Go fatal error (a stack overflow, an
 // out-of-memory kill) - recover() can't catch those in any goroutine.

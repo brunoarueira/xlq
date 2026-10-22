@@ -73,13 +73,17 @@ practice this window only opens once `WriteCell`'s own
 - every real advisory's panic/hang risk is in that parse step, which
 runs before any temp file exists - so a genuinely malicious file won't
 trigger this; a stray `xlq-tmp-*.xlsx` left next to a real file that's
-just slow to save is the realistic worst case, and the real target
-file is never corrupted or partially written either way (`WriteCell`
-only renames over it after the save and a re-open verification both
-succeed). Accepted as a known, narrow limitation rather than engineered
-around - there's no way to cancel the blocked excelize call to let it
-clean up after itself, and any workaround that tries to sweep the temp
-file from outside the abandoned goroutine would just race it.
+just slow to save is the realistic worst case. On Unix, where
+`os.Rename` within one directory is atomic, the target file itself is
+never left corrupted or partially written either way. On Windows,
+Go's own `os.Rename` docs state the same-directory case isn't atomic
+there - a pre-existing property of `WriteCell`'s rename-based write
+(ADR-0014), unrelated to and unchanged by this ADR's timeout, and out
+of scope to fix here. Accepted as a known, narrow limitation rather
+than engineered around - there's no way to cancel the blocked excelize
+call to let it clean up after itself, and any workaround that tries to
+sweep the temp file from outside the abandoned goroutine would just
+race it.
 `timeout <= 0` disables the deadline entirely (waits on the channel
 with no `select`), for a user who explicitly wants to wait out a
 genuinely huge, legitimate file. A `withRecoveryErr` wraps the same
