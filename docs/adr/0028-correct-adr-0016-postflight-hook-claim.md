@@ -26,11 +26,11 @@ decision, and describes it as "confirmed via a local snapshot build"
 real but insufficient: a snapshot build only confirms GoReleaser can
 *render* the cask file without erroring; it never attempts an actual
 `brew install`, so it couldn't have caught a hook that renders fine
-but fails at install time. The fix - `if OS.mac? system_command
-"/usr/bin/xattr", args: [...] end` - was verified more thoroughly this
-time: a real `brew install` via a disposable local tap, confirming the
-binary installs, runs, and has its `com.apple.quarantine` attribute
-actually stripped (`xattr -l` on the installed binary shows no such
+but fails at install time. The corrected hook (shown in the Decision
+section below) was verified more thoroughly this time: a real `brew
+install` via a disposable local tap, confirming the binary installs,
+runs, and has its `com.apple.quarantine` attribute actually stripped
+(`xattr -l` on the installed binary shows no such
 entry).
 
 Per `CONTRIBUTING.md`'s own convention, an accepted ADR isn't edited -
