@@ -90,8 +90,11 @@ jobs:
       # "go install .../govulncheck@latest" internally, with no input
       # to pin that - pinning the action's own version doesn't pin the
       # scanner it runs, so results wouldn't be reproducible the way
-      # every other tool in this workflow already is. Installing a
-      # pinned version ourselves avoids that.
+      # every other *action* in this workflow is already pinned by
+      # commit SHA (golangci-lint's own tool version is the one
+      # existing exception, via "version: latest" below - unrelated to
+      # this job, not a precedent to match). Installing a pinned
+      # version ourselves avoids that for this one.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -119,11 +122,13 @@ jobs:
       # - so treating exit 3 as blocking would stay permanently red
       # until excelize ships a fix, independent of anything xlq itself
       # does. This still provides the "catch new/future advisories
-      # automatically, on every push" value #53 wants (a *new*
-      # advisory, or a stdlib one like GO-2026-6088, still fails this
-      # check the moment its own vulnerable code becomes reachable
-      # from code that wasn't already flagged). Revisit once excelize
-      # ships a release or the known findings are otherwise resolved.
+      # automatically, on every push" value #53 wants - any exit-3
+      # result (new or already-known) is a warning, not a failure, so
+      # a *new* advisory, or a stdlib one like GO-2026-6088, still
+      # surfaces immediately as a visible annotation the moment its
+      # own vulnerable code becomes reachable, even though it doesn't
+      # fail the job either. Revisit once excelize ships a release or
+      # the known findings are otherwise resolved.
       - name: govulncheck
         run: |
           govulncheck ./... && exit 0
