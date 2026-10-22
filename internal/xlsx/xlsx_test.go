@@ -481,6 +481,69 @@ func TestReadErrorProducingFormula(t *testing.T) {
 	}
 }
 
+// TestReadMutuallyReferencingAnchorArrayFormulas guards #49/ADR-0029: two
+// array formulas whose ANCHORARRAY calls reference each other used to
+// recurse unboundedly inside excelize's CalcCellValue, ending in a Go
+// fatal error (stack overflow, not a panic - recover() can't catch
+// it), per GHSA-wp2g-vpjj-g53r. Verified directly before this test was
+// added: on the excelize version this project depended on before
+// ADR-0029's pin, this exact workbook crashed the whole test binary,
+// not just failed a test.
+func TestReadMutuallyReferencingAnchorArrayFormulas(t *testing.T) {
+	path := build(t, func(f *excelize.File) {
+		must(t, f.SetCellValue("Sheet1", "A1", "safe"))
+
+		if _, err := f.NewSheet("Sheet2"); err != nil {
+			t.Fatalf("NewSheet: %v", err)
+		}
+		arrayType := excelize.STCellFormulaTypeArray
+		refA, refB := "A1:A1", "B1:B1"
+		must(t, f.SetCellFormula("Sheet2", "A1", "_xlfn.ANCHORARRAY($B$1)", excelize.FormulaOpts{Type: &arrayType, Ref: &refA}))
+		must(t, f.SetCellFormula("Sheet2", "B1", "_xlfn.ANCHORARRAY($A$1)", excelize.FormulaOpts{Type: &arrayType, Ref: &refB}))
+	})
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	// A sheet never ranged over is never read at all (ADR-0018) - a
+	// query that only touches Sheet1 is unaffected by Sheet2's poison
+	// regardless of this fix, confirming that narrower-than-#49's-own-
+	// claim blast radius too.
+	sheet1 := rowsOf(t, wb.Sheets[0])
+	if len(sheet1) != 1 || len(sheet1[0].Cells) != 1 {
+		t.Fatalf("Sheet1 rows = %#v, want one row with one cell", sheet1)
+	}
+	if v, ok := sheet1[0].Cells[0].StringValue(); !ok || v != "safe" {
+		t.Errorf("Sheet1.A1 = (%q, %v), want (\"safe\", true)", v, ok)
+	}
+
+	// Actually ranging over the poisoned sheet is the real regression
+	// guard: this used to never return at all. Asserting Sheet2 was
+	// found and its row actually holds both formula cells, not just
+	// that the loop completed - a missing Sheet2 would let this pass
+	// without ever exercising the regression path at all.
+	var sheet2 *model.Sheet
+	for i := range wb.Sheets {
+		if wb.Sheets[i].Name == "Sheet2" {
+			sheet2 = &wb.Sheets[i]
+			break
+		}
+	}
+	if sheet2 == nil {
+		t.Fatal("Sheet2 not found in wb.Sheets")
+	}
+	rows := rowsOf(t, *sheet2)
+	if len(rows) != 1 || len(rows[0].Cells) != 2 {
+		t.Fatalf("Sheet2 rows = %#v, want one row with both formula cells (A1, B1)", rows)
+	}
+	for _, c := range rows[0].Cells {
+		if !c.IsFormula() {
+			t.Errorf("Sheet2 cell at column %d: IsFormula() = false, want true", c.Column)
+		}
+	}
+}
+
 func TestReadCachedFormulaStringResult(t *testing.T) {
 	// excelize's own write API can't attach a cached result to a formula
 	// (SetCellValue after SetCellFormula clears the formula instead), so
