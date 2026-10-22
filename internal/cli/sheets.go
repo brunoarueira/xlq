@@ -29,7 +29,7 @@ func newSheetsCommand() *cobra.Command {
 			// track (e.g. a malformed encrypted workbook's CFB/OLE
 			// parsing) - wrapped for the same reason runFilter wraps
 			// input.Read.
-			names, err := withRecovery(readTimeout(cmd), func() ([]string, error) {
+			names, err := withRecovery("listing sheets", readTimeout(cmd), func() ([]string, error) {
 				return input.SheetNames(args[0], format, delim)
 			})
 			if err != nil {

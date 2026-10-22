@@ -43,7 +43,7 @@ func runInPlace(filterSrc, path string, format input.Format, delim rune, timeout
 	if err != nil {
 		return err
 	}
-	return withRecoveryErr(timeout, func() error {
+	return withRecoveryErr("writing", timeout, func() error {
 		return xlsx.WriteCell(path, sheet, cellRef, assign.Value)
 	})
 }

@@ -46,19 +46,40 @@ wrapping just their `Read` call is already complete for them.
 
 ## Decision
 
-A generic `withRecovery[T any](timeout time.Duration, fn func() (T,
-error)) (T, error)` helper (`internal/cli/recovery.go`) runs `fn` in
-its own goroutine, recovering any panic there into a clean error
-(`internal error while parsing (the file may be corrupt or malformed):
-<panic value>`) and racing it against `timeout` via `select`. A
-goroutine is required for the timeout half regardless (there's no way
-to cancel a running call from outside it), and `recover()` only ever
-catches a panic in the goroutine where it occurs, so the two
-mechanisms share one wrapper naturally rather than needing separate
-machinery. If `timeout` fires first, `fn`'s goroutine is abandoned, not
-killed (Go has no way to force that) - acceptable for a short-lived CLI
-process that reports the error and exits right after, unlike a
-long-running service where a leaked goroutine would accumulate.
+A generic `withRecovery[T any](operation string, timeout time.Duration,
+fn func() (T, error)) (T, error)` helper (`internal/cli/recovery.go`)
+runs `fn` in its own goroutine, recovering any panic there into a clean
+error (`internal error while <operation> (the file may be corrupt or
+malformed): <panic value>`) and racing it against `timeout` via
+`select`. `operation` ("reading", "evaluating", "writing", "listing
+sheets") names what `fn` is actually doing, since the three call sites
+below wrap genuinely different operations and a single generic wording
+would mislabel, say, a `-i` write as "reading." A goroutine is required
+for the timeout half regardless (there's no way to cancel a running
+call from outside it), and `recover()` only ever catches a panic in the
+goroutine where it occurs, so the two mechanisms share one wrapper
+naturally rather than needing separate machinery. If `timeout` fires
+first, `fn`'s goroutine is abandoned, not killed (Go has no way to
+force that) - acceptable for a short-lived CLI process that reports the
+error and exits right after, unlike a long-running service where a
+leaked goroutine would accumulate. One concrete consequence of
+abandoning rather than killing: if `fn` is `xlsx.WriteCell` and it
+times out after creating its own temp file but before renaming it over
+the real one, that temp file's cleanup (a `defer` inside the abandoned
+goroutine) never runs, since `main` calls `os.Exit` as soon as this
+returns an error, which skips every pending `defer` in the process. In
+practice this window only opens once `WriteCell`'s own
+`excelize.OpenFile` on the real file has already returned successfully
+- every real advisory's panic/hang risk is in that parse step, which
+runs before any temp file exists - so a genuinely malicious file won't
+trigger this; a stray `xlq-tmp-*.xlsx` left next to a real file that's
+just slow to save is the realistic worst case, and the real target
+file is never corrupted or partially written either way (`WriteCell`
+only renames over it after the save and a re-open verification both
+succeed). Accepted as a known, narrow limitation rather than engineered
+around - there's no way to cancel the blocked excelize call to let it
+clean up after itself, and any workaround that tries to sweep the temp
+file from outside the abandoned goroutine would just race it.
 `timeout <= 0` disables the deadline entirely (waits on the channel
 with no `select`), for a user who explicitly wants to wait out a
 genuinely huge, legitimate file. A `withRecoveryErr` wraps the same
@@ -66,8 +87,12 @@ thing for a call that only returns an error (`xlsx.WriteCell`), to
 avoid every such call site naming an unused type parameter.
 
 Does **not** help with a Go fatal error (a stack overflow, an
-out-of-memory kill) - `recover()` can't catch those in any goroutine;
-that's ADR-0029's separate problem, already addressed there.
+out-of-memory kill) - `recover()` can't catch those in any goroutine.
+ADR-0029 fixed one specific stack-overflow-causing formula pattern
+(mutually referencing `ANCHORARRAY` formulas); it did not address this
+fatal-error class in general, and nothing in this ADR does either - a
+stack overflow from any other cause, or an OOM kill, are just as
+uncatchable as before.
 
 Three call sites get wrapped, each independently (not combined into
 one call, since each wrapped call already fully protects its own
@@ -79,7 +104,13 @@ panic/hang risk regardless of what else is wrapped):
   have worked too, but wrapping them separately matches the issue's
   own "wrap the read path" framing as closely as the real architecture
   allows, and keeps each wrapped region's own panic attributable to
-  "reading" vs "evaluating" rather than blurring the two.
+  "reading" vs "evaluating" rather than blurring the two. The two calls
+  share one deadline computed once per file (`timeoutRemaining`), not
+  `--timeout` restarted from its own start for each - otherwise a
+  single file could run for close to twice `--timeout` (reading right
+  up to the limit, then evaluating for another full timeout's worth),
+  despite the flag's own documented meaning as one wall-clock budget
+  for the whole file.
 - `runInPlace` (`internal/cli/inplace.go`): `xlsx.WriteCell`, which
   opens and re-saves the file - the same excelize internals a
   read-only filter's own open/parse step risks.
@@ -100,16 +131,29 @@ disables it.
 
 Verified directly, not just unit-tested in isolation:
 
-- A dedicated test (`TestWithRecoveryCatchesPanicNotJustInTheOutermostCall`)
-  simulates a panic happening deep inside a call the way `eval.Eval`'s
-  own lazy iteration would, confirming the wrapper's placement
-  reasoning actually holds, not just that `recover()` works in the
-  trivial case.
-- A timeout test confirms the call returns promptly at the deadline,
-  not after the slow call eventually finishes on its own.
+- A dedicated test (`TestWithRecoveryCatchesPanicDuringLazyEvalIteration`)
+  builds a real `model.Workbook` whose `Sheet.Rows` iterator panics on
+  iteration and drives it through the real `eval.Eval` - not a
+  synthetic callback that panics immediately, which would prove nothing
+  beyond what `recover()`'s own documented semantics already guarantee
+  regardless of call depth. This would catch a regression that removed
+  or misplaced the second `withRecovery` call, which a same-depth
+  synthetic panic could not.
+- A timeout test confirms the call returns before the slow call's own
+  completion signal fires, checked via a channel the slow call closes
+  after sleeping rather than an absolute elapsed-time threshold - the
+  latter can flake on a CI runner that merely pauses the test process
+  for a moment, independent of whether the timeout logic itself is
+  correct.
 - A zero-timeout test confirms the "0 disables it" convention actually
   waits out a slow-but-successful call rather than imposing some
   implicit floor.
+- A `timeoutRemaining` test confirms its three cases directly: disabled
+  stays disabled, a future deadline yields roughly the time left, and
+  an already-past deadline (reading consumed the whole shared budget)
+  yields a small positive duration rather than 0 or negative, which
+  `withRecovery` would otherwise misread as "disabled" instead of
+  "expired."
 - Ran the real CLI end to end: normal reads/edits/`sheets` listing are
   completely unaffected; an absurdly short `--timeout 1ns` against a
   trivial file correctly produces the clean timeout message and a
