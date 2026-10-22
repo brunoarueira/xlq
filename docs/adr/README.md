@@ -21,7 +21,7 @@ xlq, using the format described in
 | [0013](0013-csv-tsv-output.md) | CSV/TSV output: flattening rules, header row, delimiter |
 | [0014](0014-in-place-editing.md) | In-place `.xlsx` editing: assignment grammar and the write path |
 | [0015](0015-config-file-for-default-flags.md) | Config file for default flags: location, format, precedence |
-| [0016](0016-homebrew-publishing.md) | Homebrew package publishing via GoReleaser (supersedes ADR-0006's "not yet") |
+| [0016](0016-homebrew-publishing.md) | Homebrew package publishing via GoReleaser (supersedes ADR-0006's "not yet", see ADR-0028) |
 | [0017](0017-multiple-input-files.md) | Multiple input files in one invocation: map, not slurp |
 | [0018](0018-streaming-xlsx-reader.md) | Streaming xlsx reader: lazy `Sheet.Rows` via Go iterators (supersedes ADR-0007/0008/0011/0012's `Dimensions()`, see ADR-0019) |
 | [0019](0019-correct-adr-0018-streaming-reader-claims.md) | Correct ADR-0018's streaming-reader claims |
@@ -33,6 +33,7 @@ xlq, using the format described in
 | [0025](0025-map-select-filter-arguments.md) | `map`/`select`: higher-order filters with a filter-expression argument |
 | [0026](0026-sum-count-avg.md) | `sum`, `count`, `avg`: zero-argument reduce builtins |
 | [0027](0027-group-by.md) | `group_by(f)`: grouping by equality, in first-encountered order |
+| [0028](0028-correct-adr-0016-postflight-hook-claim.md) | Correct ADR-0016's postflight hook claim |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is

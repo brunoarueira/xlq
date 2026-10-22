@@ -59,18 +59,19 @@ homebrew_casks:
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/brunoarueira/xlq"
-    description: "A jq/yq-style command-line processor for spreadsheet files (.xlsx, .csv, .tsv, .ods)"
+    description: "Command-line spreadsheet processor for .xlsx/.csv/.tsv/.ods, jq/yq-style"
     commit_author:
       name: github-actions[bot]
       email: github-actions[bot]@users.noreply.github.com
-    # xlq's binaries aren't signed/notarized (see docs/adr/0016-homebrew-publishing.md).
-    # Without this, macOS quarantines a browser/brew-downloaded binary
-    # and Gatekeeper refuses to run it at all ("xlq is damaged and
-    # cannot be opened") - not a cosmetic nicety, per GoReleaser's own
-    # docs on this exact hook.
+    # xlq's binaries aren't signed/notarized (see docs/adr/0016-homebrew-publishing.md,
+    # corrected by docs/adr/0028-correct-adr-0016-postflight-hook-claim.md
+    # for this hook's own syntax). Without this, macOS quarantines a
+    # browser/brew-downloaded binary and Gatekeeper refuses to run it
+    # at all ("xlq is damaged and cannot be opened") - not a cosmetic
+    # nicety, per GoReleaser's own docs on this exact hook.
     hooks:
       post:
         install: |
-          on_macos do
-            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/xlq"]
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/xlq"]
           end
