@@ -3,12 +3,19 @@ package cli
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/brunoarueira/xlq/internal/input"
 	"github.com/brunoarueira/xlq/internal/version"
 )
+
+// defaultReadTimeout is generous on purpose: its job is catching a
+// genuine hang (an infinite loop, an adversarial file), not rushing a
+// legitimately large one - there's no size cap yet (#51) that would
+// make a slow-but-honest file impossible in the first place.
+const defaultReadTimeout = 2 * time.Minute
 
 // adrURL is the base of a stable link to an ADR's own file, for any
 // text that ships inside the compiled binary (--help, flag
@@ -90,6 +97,7 @@ func NewRootCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			timeout := readTimeout(cmd)
 			if inPlace {
 				if compactData || compactJSON || rawOutput || table || csvOut || tsvOut {
 					return fmt.Errorf("--in-place cannot be combined with --compact/--compact-output/--raw-output/--table/--csv/--tsv - an in-place edit prints nothing")
@@ -97,9 +105,9 @@ func NewRootCommand() *cobra.Command {
 				if len(args) != 2 {
 					return fmt.Errorf("--in-place requires exactly one file, got %d", len(args)-1)
 				}
-				return runInPlace(args[0], args[1], format, delim)
+				return runInPlace(args[0], args[1], format, delim, timeout)
 			}
-			return runFilter(cmd, args[0], args[1:], format, delim, outputOptions{
+			return runFilter(cmd, args[0], args[1:], format, delim, timeout, outputOptions{
 				compactData: compactData,
 				compactJSON: compactJSON,
 				rawOutput:   rawOutput,
@@ -118,6 +126,7 @@ func NewRootCommand() *cobra.Command {
 	root.Flags().BoolP("in-place", "i", false, `edit the .xlsx file in place: <filter> must be an assignment, e.g. '.Sheet1.A1 = "value"' (see `+adrURL+`0014-in-place-editing.md); prints nothing on success`)
 	root.PersistentFlags().String("input-format", "", "input format: xlsx, csv, tsv, or ods (default: detected from the file extension)")
 	root.PersistentFlags().String("delimiter", "", "field delimiter override for csv/tsv input, exactly one character (default: comma for csv, tab for tsv)")
+	root.PersistentFlags().Duration("timeout", defaultReadTimeout, "wall-clock limit for reading and evaluating a file, e.g. 30s or 2m - a hang in a corrupt or adversarial file can't block past this (see "+adrURL+"0030-recover-and-timeout-the-read-path.md); 0 disables it")
 	root.PersistentFlags().String("config", "", "config file path (default: os.UserConfigDir()/xlq/config.yaml; see "+adrURL+"0015-config-file-for-default-flags.md for which flags it can default and how)")
 	root.SetVersionTemplate("xlq {{.Version}}\n")
 	root.AddCommand(newSheetsCommand())
@@ -165,4 +174,15 @@ func inputDelimiter(cmd *cobra.Command) (rune, error) {
 		return 0, fmt.Errorf("--delimiter must be exactly one character, got %q", s)
 	}
 	return runes[0], nil
+}
+
+// readTimeout reads cmd's --timeout flag (inherited from the root
+// command's PersistentFlags, same as --input-format/--delimiter). A
+// negative value (not just 0) also disables it, same as withRecovery's
+// own convention - Cobra's Duration type parses "-1s" fine, and
+// rejecting it here would just be one more way to say "no timeout"
+// that this already handles correctly by accident otherwise.
+func readTimeout(cmd *cobra.Command) time.Duration {
+	d, _ := cmd.Flags().GetDuration("timeout")
+	return d
 }

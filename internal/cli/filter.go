@@ -3,12 +3,14 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/brunoarueira/xlq/internal/eval"
 	"github.com/brunoarueira/xlq/internal/filter"
 	"github.com/brunoarueira/xlq/internal/input"
+	"github.com/brunoarueira/xlq/internal/model"
 	"github.com/brunoarueira/xlq/internal/output"
 )
 
@@ -87,7 +89,7 @@ func (o outputOptions) validate(fileCount int) error {
 // the top-level result is a JSON array of each path's own result, in
 // argument order, and a read/eval error names which path (by position
 // and value) failed.
-func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format input.Format, delim rune, opts outputOptions) error {
+func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format input.Format, delim rune, timeout time.Duration, opts outputOptions) error {
 	if err := opts.validate(len(paths)); err != nil {
 		return err
 	}
@@ -99,7 +101,29 @@ func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format inpu
 
 	results := make([]any, len(paths))
 	for i, path := range paths {
-		wb, err := input.Read(path, format, delim)
+		// Each wrapped separately, not as one combined step: xlsx
+		// reading is lazy (docs/adr/0018-streaming-xlsx-reader.md) -
+		// input.Read still opens and parses the workbook eagerly
+		// (excelize.OpenFile, GetWorkbookProps), but defers actually
+		// decoding any sheet's row data until something ranges over
+		// that Sheet's Rows, which happens inside eval.Eval, not inside
+		// Read. So most of excelize's own panic/hang-prone work (row
+		// scanning, CalcCellValue, ...) happens during the second
+		// wrapped call below, not the first. csv/ods read everything
+		// eagerly, so this is belt-and-suspenders for them, but it's
+		// the only correct place to catch it for xlsx (#50,
+		// docs/adr/0030-recover-and-timeout-the-read-path.md).
+		//
+		// Both calls share one deadline computed once per file, not
+		// timeout each restarted from its own start - otherwise a
+		// single file could run for close to 2x --timeout (reading
+		// right up to the limit, then evaluating for another full
+		// timeout's worth) despite --timeout's own documented meaning
+		// as one wall-clock budget for the whole file.
+		deadline := time.Now().Add(timeout)
+		wb, err := withRecovery("reading", timeout, func() (model.Workbook, error) {
+			return input.Read(path, format, delim)
+		})
 		if err != nil {
 			if len(paths) > 1 {
 				return fmt.Errorf("file %d (%s): %w", i+1, path, err)
@@ -107,7 +131,9 @@ func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format inpu
 			return err
 		}
 
-		r, err := eval.Eval(expr, wb)
+		r, err := withRecovery("evaluating", timeoutRemaining(timeout, deadline), func() (any, error) {
+			return eval.Eval(expr, wb)
+		})
 		if err != nil {
 			if len(paths) > 1 {
 				return fmt.Errorf("file %d (%s): %w", i+1, path, err)
