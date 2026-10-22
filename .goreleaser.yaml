@@ -59,7 +59,7 @@ homebrew_casks:
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/brunoarueira/xlq"
-    description: "A jq/yq-style command-line processor for spreadsheet files (.xlsx, .csv, .tsv, .ods)"
+    description: "Command-line spreadsheet processor for .xlsx/.csv/.tsv/.ods, jq/yq-style"
     commit_author:
       name: github-actions[bot]
       email: github-actions[bot]@users.noreply.github.com
@@ -67,10 +67,16 @@ homebrew_casks:
     # Without this, macOS quarantines a browser/brew-downloaded binary
     # and Gatekeeper refuses to run it at all ("xlq is damaged and
     # cannot be opened") - not a cosmetic nicety, per GoReleaser's own
-    # docs on this exact hook.
+    # docs on this exact hook. on_macos/run (not if OS.mac?/system_command)
+    # would look equally plausible but is wrong here: on_macos is only
+    # valid in a cask's main body, not inside a postflight block, and
+    # the plain postflight DSL doesn't expose "run" - only
+    # "system_command" - verified empirically (brew install actually
+    # failed and rolled back the whole cask with the original on_macos
+    # version, confirmed fixed by a real install with this one).
     hooks:
       post:
         install: |
-          on_macos do
-            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/xlq"]
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/xlq"]
           end
