@@ -34,6 +34,7 @@ xlq, using the format described in
 | [0026](0026-sum-count-avg.md) | `sum`, `count`, `avg`: zero-argument reduce builtins |
 | [0027](0027-group-by.md) | `group_by(f)`: grouping by equality, in first-encountered order |
 | [0028](0028-correct-adr-0016-postflight-hook-claim.md) | Correct ADR-0016's postflight hook claim |
+| [0029](0029-excelize-pseudo-version-pin.md) | Pin excelize to an unreleased commit, fixing #49 and most of #50 |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
