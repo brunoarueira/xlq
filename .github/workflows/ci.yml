@@ -134,7 +134,7 @@ jobs:
           govulncheck ./... && exit 0
           code=$?
           if [ "$code" -eq 3 ]; then
-            echo "::warning::govulncheck found reachable vulnerabilities - expected until excelize ships a fix, see #52"
+            echo "::warning::govulncheck found reachable vulnerabilities - see the job log above for which ones; known excelize advisories are tracked in #52, but check whether this run includes something new before assuming it's already covered"
             exit 0
           fi
           echo "::error::govulncheck exited $code (not just vulnerability findings) - treating as a real failure"
