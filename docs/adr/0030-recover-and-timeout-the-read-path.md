@@ -137,7 +137,17 @@ a real malicious file the way ADR-0029's did.
   flag-only for now; adding it to the config file is straightforward
   follow-up if ever wanted, not bundled in here to keep this change
   narrowly scoped to #50's own ask.
-- Doesn't close #51 (memory ceiling) or the two excelize items this
-  doesn't touch (the 4 panic advisories without a reachable call path
-  per `govulncheck`, and the `spinCount` hang) - those stay open,
-  unaffected by this ADR either way.
+- This closes #50. The 4 excelize panic advisories `govulncheck` can't
+  prove reachable, and the remaining `spinCount` hang, aren't
+  individually *patched* the way ADR-0029's dependency bump patched
+  four others - but unlike a dependency patch, `recover()`/timeout
+  aren't advisory-specific: they catch *any* panic or hang in the
+  wrapped calls, regardless of which bug (known, unreachable-per-
+  govulncheck, or not yet discovered) causes it. Concretely: all 4
+  remaining advisories are plain panics with no other side effect, so
+  `recover()` fully neutralizes them as a DoS risk if they ever did
+  trigger; the `spinCount` hang happens inside `excelize.OpenFile`,
+  which is itself inside the synchronous part of `input.Read` that
+  this ADR's timeout already wraps, so it's bounded too. That leaves
+  #51 (memory ceiling) as the one still-open, genuinely separate
+  concern this doesn't touch.
