@@ -63,17 +63,12 @@ homebrew_casks:
     commit_author:
       name: github-actions[bot]
       email: github-actions[bot]@users.noreply.github.com
-    # xlq's binaries aren't signed/notarized (see docs/adr/0016-homebrew-publishing.md).
-    # Without this, macOS quarantines a browser/brew-downloaded binary
-    # and Gatekeeper refuses to run it at all ("xlq is damaged and
-    # cannot be opened") - not a cosmetic nicety, per GoReleaser's own
-    # docs on this exact hook. on_macos/run (not if OS.mac?/system_command)
-    # would look equally plausible but is wrong here: on_macos is only
-    # valid in a cask's main body, not inside a postflight block, and
-    # the plain postflight DSL doesn't expose "run" - only
-    # "system_command" - verified empirically (brew install actually
-    # failed and rolled back the whole cask with the original on_macos
-    # version, confirmed fixed by a real install with this one).
+    # xlq's binaries aren't signed/notarized (see docs/adr/0016-homebrew-publishing.md,
+    # corrected by docs/adr/0028-correct-adr-0016-postflight-hook-claim.md
+    # for this hook's own syntax). Without this, macOS quarantines a
+    # browser/brew-downloaded binary and Gatekeeper refuses to run it
+    # at all ("xlq is damaged and cannot be opened") - not a cosmetic
+    # nicety, per GoReleaser's own docs on this exact hook.
     hooks:
       post:
         install: |

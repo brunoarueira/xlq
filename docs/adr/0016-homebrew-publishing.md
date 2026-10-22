@@ -86,31 +86,16 @@ to run a quarantined, unsigned binary at all - not a rough edge, per
 GoReleaser's own `homebrew_casks` docs: "Not following this might lead
 to your app or binary not running," surfacing to the user as "xlq is
 damaged and cannot be opened." A `hooks.post.install` block (compiles
-to a `postflight do ... end` in the generated cask) strips it:
-`if OS.mac? system_command "/usr/bin/xattr", args: ["-dr",
-"com.apple.quarantine", "#{staged_path}/xlq"] end` - `staged_path` is
-Homebrew's own Cask DSL method for the install directory inside a
-hook, not a GoReleaser template variable (an earlier draft of this
-hook used a `{{ .StagedPath }}` GoReleaser template placeholder
-instead, following GoReleaser's current docs - that field doesn't
-exist in the pinned CLI version, v2.18.3, caught immediately by
-`goreleaser check` failing; the docs describe a newer, not-yet-released
-schema).
-
-A first version of this hook used `on_macos do run ... end` instead,
-confirmed only via a local snapshot build (`goreleaser release
---skip=publish`) - which checks that GoReleaser itself renders the
-cask without erroring, not that the result actually installs. It
-doesn't: `on_macos` is a cask DSL helper valid in a cask's main body,
-not inside a `postflight` block, and plain `postflight` doesn't expose
-a `run` method either (only `system_command` does) - `brew install`
-with that version failed outright and rolled back the whole cask,
-caught only once a real install was actually attempted, backfilling
-v0.2.0's cask after the fact (no release had shipped through this
-pipeline yet to catch it sooner). Verified the fix the same way: a real
-`brew install` of the corrected cask succeeds, the binary runs, and the
-quarantine attribute is gone (`xattr -l` on the installed binary shows
-no `com.apple.quarantine` entry).
+to a `postflight do ... end` in the generated cask, confirmed via a
+local snapshot build) strips it: `on_macos do run "/usr/bin/xattr",
+args: ["-dr", "com.apple.quarantine", "#{staged_path}/xlq"] end` -
+`staged_path` is Homebrew's own Cask DSL method for the install
+directory inside a hook, not a GoReleaser template variable (an
+earlier draft of this hook used a `{{ .StagedPath }}` GoReleaser
+template placeholder instead, following GoReleaser's current docs -
+that field doesn't exist in the pinned CLI version, v2.18.3, caught
+immediately by `goreleaser check` failing; the docs describe a newer,
+not-yet-released schema).
 
 This bypasses Gatekeeper's verification rather than fixing its root
 cause (no code signing), a tradeoff explicitly called out by
