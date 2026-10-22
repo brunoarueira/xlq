@@ -71,3 +71,71 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: latest
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Complements Dependabot (#53): Dependabot only ever proposes a
+      # version bump, so it can't flag a dependency already pinned to
+      # a version with a known advisory and no newer release to bump
+      # to - exactly excelize's situation as of #52. govulncheck also
+      # does call-graph analysis, so it only flags an advisory whose
+      # vulnerable code is actually reachable from xlq's own code, not
+      # every CVE anywhere in the dependency tree.
+      #
+      # Steps written out explicitly, not via a third-party composite
+      # action: golang/govulncheck-action (tried first) always runs
+      # "go install .../govulncheck@latest" internally, with no input
+      # to pin that - pinning the action's own version doesn't pin the
+      # scanner it runs, so results wouldn't be reproducible the way
+      # every other *action* in this workflow is already pinned by
+      # commit SHA (golangci-lint's own tool version is the one
+      # existing exception, via "version: latest" below - unrelated to
+      # this job, not a precedent to match). Installing a pinned
+      # version ourselves avoids that for this one.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+
+      # Deliberately non-blocking right now, but only for the specific
+      # "vulnerabilities found" case (govulncheck's own documented
+      # exit code 3), not for a tool/infrastructure failure (any other
+      # non-zero exit) - a bare continue-on-error on the whole step
+      # would also swallow a broken scanner or a network failure,
+      # making the job look like it passed when it never actually ran.
+      # As of #52, 4 excelize advisories are reachable with no fixed
+      # release to bump to yet, and recover()/timeout-style mitigations
+      # (#49/#50) don't remove a call from govulncheck's static
+      # reachability analysis the way actually dropping the call would
+      # - so treating exit 3 as blocking would stay permanently red
+      # until excelize ships a fix, independent of anything xlq itself
+      # does. This still provides the "catch new/future advisories
+      # automatically, on every push" value #53 wants - any exit-3
+      # result (new or already-known) is a warning, not a failure, so
+      # a *new* advisory, or a stdlib one like GO-2026-6088, still
+      # surfaces immediately as a visible annotation the moment its
+      # own vulnerable code becomes reachable, even though it doesn't
+      # fail the job either. Revisit once excelize ships a release or
+      # the known findings are otherwise resolved.
+      - name: govulncheck
+        run: |
+          govulncheck ./... && exit 0
+          code=$?
+          if [ "$code" -eq 3 ]; then
+            echo "::warning::govulncheck found reachable vulnerabilities - see the job log above for which ones; known excelize advisories are tracked in #52, but check whether this run includes something new before assuming it's already covered"
+            exit 0
+          fi
+          echo "::error::govulncheck exited $code (not just vulnerability findings) - treating as a real failure"
+          exit "$code"
