@@ -519,12 +519,28 @@ func TestReadMutuallyReferencingAnchorArrayFormulas(t *testing.T) {
 	}
 
 	// Actually ranging over the poisoned sheet is the real regression
-	// guard: this used to never return at all.
-	for _, s := range wb.Sheets {
-		if s.Name != "Sheet2" {
-			continue
+	// guard: this used to never return at all. Asserting Sheet2 was
+	// found and its row actually holds both formula cells, not just
+	// that the loop completed - a missing Sheet2 would let this pass
+	// without ever exercising the regression path at all.
+	var sheet2 *model.Sheet
+	for i := range wb.Sheets {
+		if wb.Sheets[i].Name == "Sheet2" {
+			sheet2 = &wb.Sheets[i]
+			break
 		}
-		_ = rowsOf(t, s)
+	}
+	if sheet2 == nil {
+		t.Fatal("Sheet2 not found in wb.Sheets")
+	}
+	rows := rowsOf(t, *sheet2)
+	if len(rows) != 1 || len(rows[0].Cells) != 2 {
+		t.Fatalf("Sheet2 rows = %#v, want one row with both formula cells (A1, B1)", rows)
+	}
+	for _, c := range rows[0].Cells {
+		if !c.IsFormula() {
+			t.Errorf("Sheet2 cell at column %d: IsFormula() = false, want true", c.Column)
+		}
 	}
 }
 

@@ -97,14 +97,19 @@ exactly what it claims to, with zero regressions in xlq's own test
 suite.
 
 This is explicitly a **temporary** pin, not a standing practice:
-revisit it the moment excelize ships any tagged release `>=
-v2.11.1-0.20260930021559-01a9ff32fb3c` (checked via `go list -m
--versions github.com/xuri/excelize/v2` - already run as part of #52's
-own standing watch, no new process needed) and switch to that tagged
-version instead, keeping the same verification this ADR used (rebuild,
-full test suite, `govulncheck`, re-run the malicious-workbook
-regression test added alongside this ADR) rather than trusting the
-version bump blindly.
+revisit it the moment excelize ships any new tagged release (checked
+via `go list -m -versions github.com/xuri/excelize/v2` - already run
+as part of #52's own standing watch, no new process needed). A higher
+version *number* alone doesn't establish that the tagged commit
+actually includes this fix - a release can be cut from a point in
+history that doesn't descend from `01a9ff32fb3c` at all. Confirm it
+does (`git merge-base --is-ancestor 01a9ff32fb3c <release-tag>` against
+excelize's own repository, or equivalently checking the release's own
+changelog/commit log for this fix) before switching, then switch to
+that tagged version and re-verify exactly the way this ADR did
+(rebuild, full test suite, `govulncheck`, the malicious-workbook
+regression test added alongside this ADR) rather than trusting either
+the version number or the ancestry check alone.
 
 Transitive dependencies `go get` pulled in alongside this pin
 (`github.com/richardlehane/mscfb`, `github.com/xuri/efp`,
