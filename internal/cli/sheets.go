@@ -30,7 +30,7 @@ func newSheetsCommand() *cobra.Command {
 			// parsing) - wrapped for the same reason runFilter wraps
 			// input.Read.
 			names, err := withRecovery("listing sheets", readTimeout(cmd), func() ([]string, error) {
-				return input.SheetNames(args[0], format, delim)
+				return input.SheetNames(args[0], format, delim, maxFileSize(cmd))
 			})
 			if err != nil {
 				return err

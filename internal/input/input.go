@@ -76,8 +76,11 @@ func ResolveFormat(path string, format Format) (Format, error) {
 // overrides the field delimiter for csv/tsv input (0 keeps each
 // format's own default - a comma for csv, a tab for tsv); a non-zero
 // delim for any other format is an error, since xlsx/ods have no
-// delimiter concept to override at all.
-func Read(path string, format Format, delim rune) (model.Workbook, error) {
+// delimiter concept to override at all. maxSize rejects path outright
+// if it's already larger than this on disk, and (for xlsx) also bounds
+// how large excelize will let the workbook decompress to in memory -
+// 0 or negative disables both (docs/adr/0031-memory-ceiling-for-untrusted-files.md).
+func Read(path string, format Format, delim rune, maxSize int64) (model.Workbook, error) {
 	format, err := resolve(path, format)
 	if err != nil {
 		return model.Workbook{}, err
@@ -85,9 +88,12 @@ func Read(path string, format Format, delim rune) (model.Workbook, error) {
 	if err := validateDelimiter(format, delim); err != nil {
 		return model.Workbook{}, err
 	}
+	if err := checkFileSize(path, maxSize); err != nil {
+		return model.Workbook{}, err
+	}
 	switch format {
 	case XLSX:
-		return xlsx.Read(path)
+		return xlsx.Read(path, maxSize)
 	case CSV:
 		return csv.ReadWithDelimiter(path, delimOrDefault(delim, ','))
 	case TSV:
@@ -111,8 +117,11 @@ func Read(path string, format Format, delim rune) (model.Workbook, error) {
 // SheetName - known without parsing the file, but its existence is
 // still checked, so a missing csv/tsv file errors here the same way a
 // missing xlsx or ods one does; ods has no fast path of its own yet,
-// so this reads the whole file just to list its sheets.
-func SheetNames(path string, format Format, delim rune) ([]string, error) {
+// so this reads the whole file just to list its sheets. maxSize is the
+// same pre-flight size ceiling Read applies - rejecting path outright
+// if it's already too big on disk, even for a format/operation that
+// wouldn't otherwise read far enough to risk much memory on its own.
+func SheetNames(path string, format Format, delim rune, maxSize int64) ([]string, error) {
 	format, err := resolve(path, format)
 	if err != nil {
 		return nil, err
@@ -120,9 +129,12 @@ func SheetNames(path string, format Format, delim rune) ([]string, error) {
 	if err := validateDelimiter(format, delim); err != nil {
 		return nil, err
 	}
+	if err := checkFileSize(path, maxSize); err != nil {
+		return nil, err
+	}
 	switch format {
 	case XLSX:
-		return xlsx.SheetNames(path)
+		return xlsx.SheetNames(path, maxSize)
 	case CSV, TSV:
 		if err := checkReadableFile(path); err != nil {
 			return nil, err
@@ -178,6 +190,31 @@ func delimOrDefault(delim, def rune) rune {
 		return def
 	}
 	return delim
+}
+
+// checkFileSize rejects path outright if it's already larger than
+// maxSize on disk, before any reader opens or parses it at all -
+// maxSize <= 0 disables this check entirely (#51,
+// docs/adr/0031-memory-ceiling-for-untrusted-files.md). This alone
+// isn't sufficient protection for a zip-based format (xlsx, ods): a
+// small file can still decompress to something huge, which is why
+// xlsx.Read/SheetNames separately bound excelize's own unzip size via
+// maxSize too, and ods has its own independent maxContentXMLSize. This
+// check's job is the cheap, uniform first pass - reject a file that's
+// already too big before even trying to open it, regardless of
+// format - not the only one.
+func checkFileSize(path string, maxSize int64) error {
+	if maxSize <= 0 {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("input: %w", err)
+	}
+	if info.Size() > maxSize {
+		return fmt.Errorf("input: %q is %d bytes, over the %d byte --max-size limit", path, info.Size(), maxSize)
+	}
+	return nil
 }
 
 // checkReadableFile confirms path exists, is a regular file, and is

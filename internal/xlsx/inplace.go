@@ -131,13 +131,30 @@ func ResolveTarget(target filter.Expr) (sheet, cellRef string, err error) {
 // the symlink with a regular file, silently breaking it and leaving
 // whatever it actually pointed at untouched, rather than updating the
 // file the symlink was there to reach.
-func WriteCell(path, sheet, cellRef string, value any) error {
+//
+// maxSize bounds path's own on-disk size, checked before opening it at
+// all, and (via excelizeOptions) how large excelize will let it
+// decompress to in memory - <= 0 disables both (#51,
+// docs/adr/0031-memory-ceiling-for-untrusted-files.md). Unlike the
+// read path, WriteCell has no shared dispatcher (internal/input) to
+// apply this for it, so it checks for itself.
+func WriteCell(path, sheet, cellRef string, value any, maxSize int64) error {
 	realPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return fmt.Errorf("xlsx: resolve %q: %w", path, err)
 	}
 
-	f, err := excelize.OpenFile(realPath)
+	if maxSize > 0 {
+		info, err := os.Stat(realPath)
+		if err != nil {
+			return fmt.Errorf("xlsx: stat %q: %w", path, err)
+		}
+		if info.Size() > maxSize {
+			return fmt.Errorf("xlsx: %q is %d bytes, over the %d byte --max-size limit", path, info.Size(), maxSize)
+		}
+	}
+
+	f, err := excelize.OpenFile(realPath, excelizeOptions(maxSize))
 	if err != nil {
 		return fmt.Errorf("xlsx: open %q: %w", path, err)
 	}
@@ -174,7 +191,7 @@ func WriteCell(path, sheet, cellRef string, value any) error {
 		return fmt.Errorf("xlsx: save: %w", err)
 	}
 
-	verify, err := excelize.OpenFile(tmpPath)
+	verify, err := excelize.OpenFile(tmpPath, excelizeOptions(maxSize))
 	if err != nil {
 		return fmt.Errorf("xlsx: verify written file: %w", err)
 	}

@@ -134,7 +134,7 @@ func TestReadDetectsByExtension(t *testing.T) {
 	buildODS(t, odsPath, wrapODSSpreadsheet(odsTableXML))
 
 	for _, path := range []string{xlsxPath, csvPath, tsvPath, odsPath} {
-		if _, err := Read(path, "", 0); err != nil {
+		if _, err := Read(path, "", 0, 0); err != nil {
 			t.Errorf("Read(%q, \"\") returned error: %v", path, err)
 		}
 	}
@@ -145,7 +145,7 @@ func TestReadUnknownExtensionErrors(t *testing.T) {
 	if err := os.WriteFile(path, []byte("a,b\n1,2\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	_, err := Read(path, "", 0)
+	_, err := Read(path, "", 0, 0)
 	if err == nil {
 		t.Fatal("Read with an unrecognized extension: want error, got nil")
 	}
@@ -161,7 +161,7 @@ func TestReadExplicitFormatOverridesExtension(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "misnamed.txt")
 	buildCSV(t, path, "a,b\n1,2\n")
 
-	wb, err := Read(path, CSV, 0)
+	wb, err := Read(path, CSV, 0, 0)
 	if err != nil {
 		t.Fatalf("Read(%q, CSV): %v", path, err)
 	}
@@ -173,7 +173,7 @@ func TestReadExplicitFormatOverridesExtension(t *testing.T) {
 func TestReadInvalidExplicitFormat(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "book.csv")
 	buildCSV(t, path, "a,b\n1,2\n")
-	if _, err := Read(path, Format("yaml"), 0); err == nil {
+	if _, err := Read(path, Format("yaml"), 0, 0); err == nil {
 		t.Error(`Read with format "yaml": want error, got nil`)
 	}
 }
@@ -187,7 +187,7 @@ func TestReadDelimiterOverride(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "book.csv")
 	buildCSV(t, path, "a;b\n1;2\n")
 
-	wb, err := Read(path, "", ';')
+	wb, err := Read(path, "", ';', 0)
 	if err != nil {
 		t.Fatalf("Read(%q, \"\", ';'): %v", path, err)
 	}
@@ -208,7 +208,7 @@ func TestReadDelimiterOverridesTSVDefaultToo(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "book.tsv")
 	buildCSV(t, path, "a;b\n1;2\n")
 
-	wb, err := Read(path, "", ';')
+	wb, err := Read(path, "", ';', 0)
 	if err != nil {
 		t.Fatalf("Read(%q, \"\", ';'): %v", path, err)
 	}
@@ -229,13 +229,13 @@ func TestReadDelimiterRejectedForXLSXAndODS(t *testing.T) {
 
 	xlsxPath := filepath.Join(dir, "book.xlsx")
 	buildXLSX(t, xlsxPath)
-	if _, err := Read(xlsxPath, "", ';'); err == nil {
+	if _, err := Read(xlsxPath, "", ';', 0); err == nil {
 		t.Error("Read(xlsx, delim=';'): want error, got nil")
 	}
 
 	odsPath := filepath.Join(dir, "book.ods")
 	buildODS(t, odsPath, wrapODSSpreadsheet(odsTableXML))
-	if _, err := Read(odsPath, "", ';'); err == nil {
+	if _, err := Read(odsPath, "", ';', 0); err == nil {
 		t.Error("Read(ods, delim=';'): want error, got nil")
 	}
 }
@@ -247,7 +247,7 @@ func TestReadDelimiterRejectedForXLSXAndODS(t *testing.T) {
 func TestSheetNamesDelimiterRejectedForXLSX(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "book.xlsx")
 	buildXLSX(t, path)
-	if _, err := SheetNames(path, "", ';'); err == nil {
+	if _, err := SheetNames(path, "", ';', 0); err == nil {
 		t.Error("SheetNames(xlsx, delim=';'): want error, got nil")
 	}
 }
@@ -263,10 +263,10 @@ func TestDelimiterInvalidCharactersRejected(t *testing.T) {
 	buildCSV(t, path, "a,b\n1,2\n")
 
 	for _, delim := range []rune{'"', '\r', '\n', utf8.RuneError} {
-		if _, err := Read(path, "", delim); err == nil {
+		if _, err := Read(path, "", delim, 0); err == nil {
 			t.Errorf("Read(delim=%q): want error, got nil", delim)
 		}
-		if _, err := SheetNames(path, "", delim); err == nil {
+		if _, err := SheetNames(path, "", delim, 0); err == nil {
 			t.Errorf("SheetNames(delim=%q): want error, got nil", delim)
 		}
 	}
@@ -277,7 +277,7 @@ func TestSheetNamesDetectsByExtensionAndFormat(t *testing.T) {
 
 	xlsxPath := filepath.Join(dir, "book.xlsx")
 	buildXLSX(t, xlsxPath)
-	got, err := SheetNames(xlsxPath, "", 0)
+	got, err := SheetNames(xlsxPath, "", 0, 0)
 	if err != nil {
 		t.Fatalf("SheetNames(xlsx): %v", err)
 	}
@@ -287,7 +287,7 @@ func TestSheetNamesDetectsByExtensionAndFormat(t *testing.T) {
 
 	csvPath := filepath.Join(dir, "book.csv")
 	buildCSV(t, csvPath, "a,b\n1,2\n")
-	got, err = SheetNames(csvPath, "", 0)
+	got, err = SheetNames(csvPath, "", 0, 0)
 	if err != nil {
 		t.Fatalf("SheetNames(csv): %v", err)
 	}
@@ -297,7 +297,7 @@ func TestSheetNamesDetectsByExtensionAndFormat(t *testing.T) {
 
 	odsPath := filepath.Join(dir, "book.ods")
 	buildODS(t, odsPath, wrapODSSpreadsheet(odsTableXML))
-	got, err = SheetNames(odsPath, "", 0)
+	got, err = SheetNames(odsPath, "", 0, 0)
 	if err != nil {
 		t.Fatalf("SheetNames(ods): %v", err)
 	}
@@ -313,7 +313,7 @@ func TestSheetNamesDetectsByExtensionAndFormat(t *testing.T) {
 // "Sheet1" for a file that was never there.
 func TestSheetNamesCSVStillChecksFileExists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.csv")
-	if _, err := SheetNames(path, "", 0); err == nil {
+	if _, err := SheetNames(path, "", 0, 0); err == nil {
 		t.Error("SheetNames on a missing .csv file: want error, got nil")
 	}
 }
@@ -329,7 +329,7 @@ func TestSheetNamesCSVRejectsDirectory(t *testing.T) {
 	if err := os.Mkdir(path, 0o755); err != nil {
 		t.Fatalf("Mkdir: %v", err)
 	}
-	if _, err := SheetNames(path, "", 0); err == nil {
+	if _, err := SheetNames(path, "", 0, 0); err == nil {
 		t.Error("SheetNames on a directory named *.csv: want error, got nil")
 	}
 }
@@ -339,7 +339,50 @@ func TestSheetNamesUnknownExtensionErrors(t *testing.T) {
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if _, err := SheetNames(path, "", 0); err == nil {
+	if _, err := SheetNames(path, "", 0, 0); err == nil {
 		t.Error("SheetNames with an unrecognized extension: want error, got nil")
+	}
+}
+
+// TestReadRejectsOversizedFile guards the cheap, uniform first layer
+// of #51's memory ceiling (docs/adr/0031-memory-ceiling-for-untrusted-files.md):
+// a file already too large on disk is rejected before any reader even
+// opens it, regardless of format - csv is enough to demonstrate this,
+// since checkFileSize runs the same way ahead of every format's own
+// switch case.
+func TestReadRejectsOversizedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.csv")
+	buildCSV(t, path, "a,b\n1,2\n")
+
+	if _, err := Read(path, "", 0, 4); err == nil {
+		t.Fatal("Read with maxSize=4 against a larger file: want error, got nil")
+	} else if !strings.Contains(err.Error(), "--max-size") {
+		t.Errorf("error = %q, want it to mention --max-size", err)
+	}
+}
+
+// TestReadMaxSizeZeroDisablesSizeCheck confirms maxSize<=0 disables
+// checkFileSize entirely, the same "0 means no limit" convention
+// --timeout already uses (#50).
+func TestReadMaxSizeZeroDisablesSizeCheck(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.csv")
+	buildCSV(t, path, "a,b\n1,2\n")
+
+	if _, err := Read(path, "", 0, 0); err != nil {
+		t.Errorf("Read with maxSize=0: %v", err)
+	}
+}
+
+// TestSheetNamesRejectsOversizedFile confirms SheetNames applies the
+// same pre-flight size check Read does, not just for xlsx (which also
+// separately bounds excelize's own decompression - see
+// internal/xlsx's own tests) but uniformly before the format switch,
+// same as Read.
+func TestSheetNamesRejectsOversizedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.csv")
+	buildCSV(t, path, "a,b\n1,2\n")
+
+	if _, err := SheetNames(path, "", 0, 4); err == nil {
+		t.Fatal("SheetNames with maxSize=4 against a larger file: want error, got nil")
 	}
 }

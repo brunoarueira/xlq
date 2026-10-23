@@ -36,6 +36,7 @@ xlq, using the format described in
 | [0028](0028-correct-adr-0016-postflight-hook-claim.md) | Correct ADR-0016's postflight hook claim |
 | [0029](0029-excelize-pseudo-version-pin.md) | Pin excelize to an unreleased commit, fixing #49 and most of #50 |
 | [0030](0030-recover-and-timeout-the-read-path.md) | Recover from panics and bound reads with a wall-clock timeout |
+| [0031](0031-memory-ceiling-for-untrusted-files.md) | Memory ceiling for untrusted xlsx/csv files |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is

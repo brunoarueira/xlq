@@ -25,7 +25,7 @@ func TestSheetNamesCSVRejectsFIFOWithoutHanging(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := SheetNames(path, "", 0)
+		_, err := SheetNames(path, "", 0, 0)
 		done <- err
 	}()
 

@@ -89,7 +89,7 @@ func (o outputOptions) validate(fileCount int) error {
 // the top-level result is a JSON array of each path's own result, in
 // argument order, and a read/eval error names which path (by position
 // and value) failed.
-func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format input.Format, delim rune, timeout time.Duration, opts outputOptions) error {
+func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format input.Format, delim rune, timeout time.Duration, maxSize int64, opts outputOptions) error {
 	if err := opts.validate(len(paths)); err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format inpu
 		// as one wall-clock budget for the whole file.
 		deadline := time.Now().Add(timeout)
 		wb, err := withRecovery("reading", timeout, func() (model.Workbook, error) {
-			return input.Read(path, format, delim)
+			return input.Read(path, format, delim, maxSize)
 		})
 		if err != nil {
 			if len(paths) > 1 {

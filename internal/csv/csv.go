@@ -28,6 +28,24 @@ import (
 // SheetName is the fixed name given to a CSV/TSV file's single sheet.
 const SheetName = "Sheet1"
 
+// maxMaterializedCells bounds how many cells a read will ever
+// materialize into memory, matching internal/ods's own
+// maxMaterializedCells value (duplicated, not shared, since this
+// package has no dependency on internal/ods) - one consistent "this is
+// clearly not a legitimate v1-sized file" ceiling across formats (#51,
+// docs/adr/0031-memory-ceiling-for-untrusted-files.md). Unlike xlsx/ods,
+// csv has no compression step that could make a small on-disk file
+// expand far past its own size, so --max-size's pre-flight byte check
+// (internal/input's checkFileSize) already bounds raw content size for
+// csv - this exists for the separate risk that same check can't catch:
+// a file within the byte limit but built from an enormous number of
+// tiny fields/rows, where each materialized model.Cell/model.Row's own
+// struct overhead (far more than the 1-2 bytes such a field holds)
+// dominates actual memory use.
+// A var, not a const, so a test can lower it temporarily rather than
+// writing a genuinely 10-million-cell fixture to exercise this path.
+var maxMaterializedCells = 10_000_000
+
 // Read opens the CSV file at path (comma-delimited) and converts it into
 // a single-sheet model.Workbook.
 func Read(path string) (model.Workbook, error) {
@@ -59,6 +77,7 @@ func ReadWithDelimiter(path string, delim rune) (model.Workbook, error) {
 	r.Comma = delim
 
 	var rows []model.Row
+	totalCells := 0
 	for rowIndex := 0; ; rowIndex++ {
 		record, err := r.Read()
 		if err == io.EOF {
@@ -66,6 +85,11 @@ func ReadWithDelimiter(path string, delim rune) (model.Workbook, error) {
 		}
 		if err != nil {
 			return model.Workbook{}, fmt.Errorf("read %q: %w", path, err)
+		}
+
+		totalCells += len(record)
+		if totalCells > maxMaterializedCells {
+			return model.Workbook{}, fmt.Errorf("read %q: workbook would materialize over %d cells, over the limit for a v1 read", path, maxMaterializedCells)
 		}
 
 		cells := make([]model.Cell, len(record))

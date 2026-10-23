@@ -81,8 +81,75 @@ func dimensions(t *testing.T, sheet model.Sheet) (rows, cols int) {
 }
 
 func TestReadMissingFile(t *testing.T) {
-	if _, err := Read(filepath.Join(t.TempDir(), "missing.xlsx")); err == nil {
+	if _, err := Read(filepath.Join(t.TempDir(), "missing.xlsx"), 0); err == nil {
 		t.Fatal("Read() with a missing file: want error, got nil")
+	}
+}
+
+// buildHighlyCompressible writes rows cells, each the same string
+// value, to a fresh workbook - small on disk (the zip container
+// compresses such repetitive XML markup extremely well - excelize's
+// own shared-string table also means the string's own content is
+// stored once regardless of row count, so the decompressed size comes
+// from accumulated per-cell XML structure, not the string value
+// itself) but large once excelize decompresses it: the shape of risk a
+// real small-on-disk zip bomb poses (#51,
+// docs/adr/0031-memory-ceiling-for-untrusted-files.md), without
+// needing an actual malicious file to demonstrate the mechanism.
+func buildHighlyCompressible(t *testing.T, rows int) string {
+	t.Helper()
+	path := build(t, func(f *excelize.File) {
+		for row := 1; row <= rows; row++ {
+			cell, err := excelize.CoordinatesToCellName(1, row)
+			if err != nil {
+				t.Fatalf("CoordinatesToCellName: %v", err)
+			}
+			if err := f.SetCellValue("Sheet1", cell, "A"); err != nil {
+				t.Fatalf("SetCellValue: %v", err)
+			}
+		}
+	})
+	if info, err := os.Stat(path); err != nil || info.Size() > 512<<10 {
+		t.Fatalf("fixture isn't small on disk as expected: %+v, %v", info, err)
+	}
+	return path
+}
+
+// TestReadRejectsOversizedDecompressedContent guards the actual reason
+// maxSize is passed to excelize.Options rather than just checked
+// against the file's own on-disk size: a pre-flight size check alone
+// (internal/input's checkFileSize) can't catch this fixture at all,
+// since it's small on disk - only excelize's own UnzipSizeLimit,
+// applied once it starts decompressing the workbook, catches it.
+func TestReadRejectsOversizedDecompressedContent(t *testing.T) {
+	path := buildHighlyCompressible(t, 60000) // well under 512 KiB on disk, over 1 MiB decompressed
+
+	if _, err := Read(path, 1<<20); err == nil {
+		t.Fatal("Read with maxSize=1MiB against a small-on-disk, highly compressible file: want error, got nil")
+	} else if !strings.Contains(err.Error(), "unzip size exceeds") {
+		t.Errorf("error = %q, want it to mention excelize's own unzip size limit", err)
+	}
+}
+
+// TestReadMaxSizeZeroDisablesDecompressionLimit confirms the same
+// fixture that TestReadRejectsOversizedDecompressedContent rejects at
+// a 1MiB ceiling reads successfully when maxSize is 0 - excelize's own
+// generous built-in defaults (16 GiB/16 MiB) apply instead of some
+// implicit floor sneaking in regardless of the "0 disables it"
+// convention.
+func TestReadMaxSizeZeroDisablesDecompressionLimit(t *testing.T) {
+	path := buildHighlyCompressible(t, 60000)
+
+	wb, err := Read(path, 0)
+	if err != nil {
+		t.Fatalf("Read with maxSize=0: %v", err)
+	}
+	rows, err := model.CollectRows(wb.Sheets[0])
+	if err != nil {
+		t.Fatalf("CollectRows: %v", err)
+	}
+	if len(rows) != 60000 {
+		t.Errorf("len(rows) = %d, want 60000", len(rows))
 	}
 }
 
@@ -93,7 +160,7 @@ func TestReadSheetNamesInOrder(t *testing.T) {
 		}
 	})
 
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -109,7 +176,7 @@ func TestReadStringCell(t *testing.T) {
 	path := build(t, func(f *excelize.File) {
 		must(t, f.SetCellValue("Sheet1", "A1", "hello"))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -126,7 +193,7 @@ func TestReadNumberCell(t *testing.T) {
 	path := build(t, func(f *excelize.File) {
 		must(t, f.SetCellValue("Sheet1", "A1", 42.5))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -144,7 +211,7 @@ func TestReadBoolCell(t *testing.T) {
 		must(t, f.SetCellValue("Sheet1", "A1", true))
 		must(t, f.SetCellValue("Sheet1", "B1", false))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -174,7 +241,7 @@ func TestReadDateCell(t *testing.T) {
 		must(t, f.SetCellValue("Sheet1", "A1", want))
 		must(t, f.SetCellStyle("Sheet1", "A1", "A1", styleID))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -204,7 +271,7 @@ func TestReadISODateCell(t *testing.T) {
 		`<c r="A1" t="d"><v>2026-09-25T00:00:00</v></c>`,
 	)
 
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -237,7 +304,7 @@ func TestReadLiveFormulaDateResult(t *testing.T) {
 		must(t, f.SetCellFormula("Sheet1", "B1", "A1"))
 		must(t, f.SetCellStyle("Sheet1", "B1", "B1", styleID))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -265,7 +332,7 @@ func TestReadLiveFormulaBoolResult(t *testing.T) {
 	path := build(t, func(f *excelize.File) {
 		must(t, f.SetCellFormula("Sheet1", "A1", "1=1"))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -289,7 +356,7 @@ func TestReadFormulaCell(t *testing.T) {
 		// "="; that's purely a UI convention.
 		must(t, f.SetCellFormula("Sheet1", "C1", "A1+B1"))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -312,7 +379,7 @@ func TestReadFormulaEvaluatingBlank(t *testing.T) {
 	path := build(t, func(f *excelize.File) {
 		must(t, f.SetCellFormula("Sheet1", "A1", `""`))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -335,7 +402,7 @@ func TestReadSparseSheet(t *testing.T) {
 		must(t, f.SetCellValue("Sheet1", "A1", "corner"))
 		must(t, f.SetCellValue("Sheet1", "C3", 9.0))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -418,7 +485,7 @@ func TestReadFormattedNumberCell(t *testing.T) {
 		must(t, f.SetCellValue("Sheet1", "A1", 1234.5))
 		must(t, f.SetCellStyle("Sheet1", "A1", "A1", styleID))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -448,7 +515,7 @@ func TestReadHiddenFormatCell(t *testing.T) {
 		must(t, f.SetCellStyle("Sheet1", "A1", "A1", styleID))
 		must(t, f.SetCellValue("Sheet1", "B1", "visible"))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -465,7 +532,7 @@ func TestReadErrorProducingFormula(t *testing.T) {
 	path := build(t, func(f *excelize.File) {
 		must(t, f.SetCellFormula("Sheet1", "A1", "1/0"))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -501,7 +568,7 @@ func TestReadMutuallyReferencingAnchorArrayFormulas(t *testing.T) {
 		must(t, f.SetCellFormula("Sheet2", "A1", "_xlfn.ANCHORARRAY($B$1)", excelize.FormulaOpts{Type: &arrayType, Ref: &refA}))
 		must(t, f.SetCellFormula("Sheet2", "B1", "_xlfn.ANCHORARRAY($A$1)", excelize.FormulaOpts{Type: &arrayType, Ref: &refB}))
 	})
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -559,7 +626,7 @@ func TestReadCachedFormulaStringResult(t *testing.T) {
 		`<c r="A1" t="str"><f>&#34;123&#34;</f><v>123</v></c>`,
 	)
 
-	wb, err := Read(path)
+	wb, err := Read(path, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -584,7 +651,7 @@ func TestSheetNames(t *testing.T) {
 			t.Fatalf("NewSheet: %v", err)
 		}
 	})
-	names, err := SheetNames(path)
+	names, err := SheetNames(path, 0)
 	if err != nil {
 		t.Fatalf("SheetNames: %v", err)
 	}
@@ -595,8 +662,50 @@ func TestSheetNames(t *testing.T) {
 }
 
 func TestSheetNamesMissingFile(t *testing.T) {
-	if _, err := SheetNames(filepath.Join(t.TempDir(), "missing.xlsx")); err == nil {
+	if _, err := SheetNames(filepath.Join(t.TempDir(), "missing.xlsx"), 0); err == nil {
 		t.Fatal("SheetNames() with a missing file: want error, got nil")
+	}
+}
+
+// TestSheetNamesRejectsOversizedDecompressedContent guards SheetNames
+// against the same decompression-based risk Read's own
+// TestReadRejectsOversizedDecompressedContent does - SheetNames skips
+// parsing any cell data, but excelize.OpenFile alone still risks it
+// (#51, docs/adr/0031-memory-ceiling-for-untrusted-files.md).
+func TestSheetNamesRejectsOversizedDecompressedContent(t *testing.T) {
+	path := buildHighlyCompressible(t, 60000)
+
+	if _, err := SheetNames(path, 1<<20); err == nil {
+		t.Fatal("SheetNames with maxSize=1MiB against a ~5MB-decompressed file: want error, got nil")
+	} else if !strings.Contains(err.Error(), "unzip size exceeds") {
+		t.Errorf("error = %q, want it to mention excelize's own unzip size limit", err)
+	}
+}
+
+// TestExcelizeOptionsCapsXMLLimitAtMaxSize guards the one subtlety in
+// excelizeOptions worth a dedicated test: excelize.OpenFile itself
+// rejects UnzipXMLSizeLimit > UnzipSizeLimit outright, so a maxSize
+// smaller than unzipXMLSizeLimit's own fixed default must cap the XML
+// limit down to maxSize too, not pass the fixed default through
+// unconditionally.
+func TestExcelizeOptionsCapsXMLLimitAtMaxSize(t *testing.T) {
+	small := int64(1 << 10) // far below unzipXMLSizeLimit's own 16 MiB default
+	opts := excelizeOptions(small)
+	if opts.UnzipSizeLimit != small {
+		t.Errorf("UnzipSizeLimit = %d, want %d", opts.UnzipSizeLimit, small)
+	}
+	if opts.UnzipXMLSizeLimit != small {
+		t.Errorf("UnzipXMLSizeLimit = %d, want %d (capped at maxSize, not the fixed 16MiB default)", opts.UnzipXMLSizeLimit, small)
+	}
+
+	large := int64(1 << 30) // well above unzipXMLSizeLimit's own 16 MiB default
+	opts2 := excelizeOptions(large)
+	if opts2.UnzipXMLSizeLimit != unzipXMLSizeLimit {
+		t.Errorf("UnzipXMLSizeLimit = %d, want the fixed %d default (maxSize is large enough not to cap it)", opts2.UnzipXMLSizeLimit, unzipXMLSizeLimit)
+	}
+
+	if disabled := excelizeOptions(0); disabled != (excelize.Options{}) {
+		t.Errorf("excelizeOptions(0) = %+v, want the zero Options (disabled)", disabled)
 	}
 }
 

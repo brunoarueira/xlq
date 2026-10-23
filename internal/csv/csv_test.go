@@ -3,6 +3,7 @@ package csv
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/brunoarueira/xlq/internal/model"
@@ -233,5 +234,44 @@ func TestReadWithDelimiterSemicolon(t *testing.T) {
 func TestReadWithDelimiterMissingFile(t *testing.T) {
 	if _, err := ReadWithDelimiter(filepath.Join(t.TempDir(), "missing.csv"), ';'); err == nil {
 		t.Fatal("ReadWithDelimiter() with a missing file: want error, got nil")
+	}
+}
+
+// TestReadRejectsOverMaxMaterializedCells guards #51's cell-count cap
+// (docs/adr/0031-memory-ceiling-for-untrusted-files.md): a file within
+// --max-size's own byte limit but built from an enormous number of
+// tiny fields, where each materialized model.Cell/model.Row's own
+// struct overhead - not the file's raw byte size - is what actually
+// risks memory. maxMaterializedCells is temporarily lowered rather
+// than writing a genuinely 10-million-cell fixture.
+func TestReadRejectsOverMaxMaterializedCells(t *testing.T) {
+	old := maxMaterializedCells
+	maxMaterializedCells = 5
+	defer func() { maxMaterializedCells = old }()
+
+	path := writeFixture(t, "big.csv", "a,b,c\n1,2,3\n4,5,6\n")
+	if _, err := Read(path); err == nil {
+		t.Fatal("Read over the materialized-cell cap: want error, got nil")
+	} else if !strings.Contains(err.Error(), "over the limit") {
+		t.Errorf("error = %q, want it to mention the cell limit", err)
+	}
+}
+
+// TestReadWithinMaxMaterializedCellsStillSucceeds confirms the cap
+// only rejects a file once it's actually exceeded, not a file right at
+// (or under) the limit - a fixture with exactly as many cells as the
+// (lowered, for this test) cap allows must still read successfully.
+func TestReadWithinMaxMaterializedCellsStillSucceeds(t *testing.T) {
+	old := maxMaterializedCells
+	maxMaterializedCells = 6 // exactly 2 rows x 3 cols below
+	defer func() { maxMaterializedCells = old }()
+
+	path := writeFixture(t, "ok.csv", "a,b,c\n1,2,3\n")
+	wb, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read at exactly the materialized-cell cap: %v", err)
+	}
+	if len(wb.Sheets) != 1 {
+		t.Fatalf("len(wb.Sheets) = %d, want 1", len(wb.Sheets))
 	}
 }
