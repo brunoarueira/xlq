@@ -18,7 +18,11 @@ import (
 // and panic recovery (#50, docs/adr/0030-recover-and-timeout-the-read-path.md)
 // wrap xlsx.WriteCell, which opens and re-saves the file - the same
 // excelize internals a read-only filter's own open/parse step risks.
-func runInPlace(filterSrc, path string, format input.Format, delim rune, timeout time.Duration) error {
+// maxSize (#51, docs/adr/0031-memory-ceiling-for-untrusted-files.md) is
+// passed straight through to WriteCell, which checks it directly -
+// -i has no shared dispatcher (internal/input) to apply it on its
+// behalf the way a read-only filter's input.Read does.
+func runInPlace(filterSrc, path string, format input.Format, delim rune, timeout time.Duration, maxSize int64) error {
 	resolved, err := input.ResolveFormat(path, format)
 	if err != nil {
 		return err
@@ -44,6 +48,6 @@ func runInPlace(filterSrc, path string, format input.Format, delim rune, timeout
 		return err
 	}
 	return withRecoveryErr("writing", timeout, func() error {
-		return xlsx.WriteCell(path, sheet, cellRef, assign.Value)
+		return xlsx.WriteCell(path, sheet, cellRef, assign.Value, maxSize)
 	})
 }

@@ -86,7 +86,7 @@ func TestWriteCellSetsValueAndPreservesOtherContent(t *testing.T) {
 		}
 	})
 
-	if err := WriteCell(path, "Sheet1", "A1", "updated"); err != nil {
+	if err := WriteCell(path, "Sheet1", "A1", "updated", 0); err != nil {
 		t.Fatalf("WriteCell: %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestWriteCellValueTypes(t *testing.T) {
 				}
 			})
 
-			if err := WriteCell(path, "Sheet1", "A1", tc.value); err != nil {
+			if err := WriteCell(path, "Sheet1", "A1", tc.value, 0); err != nil {
 				t.Fatalf("WriteCell: %v", err)
 			}
 
@@ -171,7 +171,7 @@ func TestWriteCellSheetNameCaseInsensitiveFallback(t *testing.T) {
 	// lowercase "sheet1" must still resolve to it, matching the read
 	// path's own findSheet semantics (exact match wins, otherwise the
 	// first case-insensitive match).
-	if err := WriteCell(path, "sheet1", "A1", "updated"); err != nil {
+	if err := WriteCell(path, "sheet1", "A1", "updated", 0); err != nil {
 		t.Fatalf("WriteCell: %v", err)
 	}
 
@@ -197,7 +197,7 @@ func TestWriteCellUnknownSheetRejected(t *testing.T) {
 		}
 	})
 
-	if err := WriteCell(path, "NoSuchSheet", "A1", "x"); err == nil {
+	if err := WriteCell(path, "NoSuchSheet", "A1", "x", 0); err == nil {
 		t.Error("WriteCell with an unknown sheet: want error, got nil")
 	}
 }
@@ -217,7 +217,7 @@ func TestWriteCellLeavesOriginalUntouchedOnFailure(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 
-	if err := WriteCell(path, "NoSuchSheet", "A1", "x"); err == nil {
+	if err := WriteCell(path, "NoSuchSheet", "A1", "x", 0); err == nil {
 		t.Fatal("WriteCell with an unknown sheet: want error, got nil")
 	}
 
@@ -265,7 +265,7 @@ func TestWriteCellFollowsSymlink(t *testing.T) {
 		t.Fatalf("Symlink: %v", err)
 	}
 
-	if err := WriteCell(linkPath, "Sheet1", "A1", "updated"); err != nil {
+	if err := WriteCell(linkPath, "Sheet1", "A1", "updated", 0); err != nil {
 		t.Fatalf("WriteCell: %v", err)
 	}
 
@@ -335,7 +335,7 @@ func TestWriteCellFailureAfterStagingLeavesOriginalUntouched(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 
-	err = WriteCell(path, "Sheet1", "A1", "updated")
+	err = WriteCell(path, "Sheet1", "A1", "updated", 0)
 	if err == nil {
 		t.Fatal("WriteCell with an over-long temp path: want error, got nil")
 	}
@@ -376,7 +376,7 @@ func TestWriteCellPreservesFileMode(t *testing.T) {
 		t.Fatalf("Chmod: %v", err)
 	}
 
-	if err := WriteCell(path, "Sheet1", "A1", "updated"); err != nil {
+	if err := WriteCell(path, "Sheet1", "A1", "updated", 0); err != nil {
 		t.Fatalf("WriteCell: %v", err)
 	}
 

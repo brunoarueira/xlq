@@ -39,9 +39,39 @@ import (
 	"github.com/brunoarueira/xlq/internal/model"
 )
 
-// Read opens the .xlsx file at path and converts it into a model.Workbook.
-func Read(path string) (model.Workbook, error) {
-	f, err := excelize.OpenFile(path)
+// unzipXMLSizeLimit caps how large a single worksheet's XML (or the
+// shared string table) excelize will hold in memory before spilling it
+// to a temporary file instead - excelize's own default is 16 MiB; kept
+// as its own fixed ceiling, separate from and never above maxSize
+// (excelize.OpenFile rejects UnzipXMLSizeLimit > UnzipSizeLimit), so
+// even a workbook within maxSize keeps its peak memory down rather
+// than loading every worksheet into memory at once regardless of
+// maxSize's own value.
+const unzipXMLSizeLimit = 16 << 20
+
+// excelizeOptions returns the excelize.Options that bound how large a
+// workbook excelize will let itself decompress to in memory, from
+// maxSize (#51, docs/adr/0031-memory-ceiling-for-untrusted-files.md).
+// maxSize <= 0 returns the zero Options, which leaves excelize's own
+// generous built-in defaults (16 GiB/16 MiB) in place rather than
+// imposing no limit at all literally - there's no "unset" sentinel
+// excelize itself recognizes other than its own defaults.
+func excelizeOptions(maxSize int64) excelize.Options {
+	if maxSize <= 0 {
+		return excelize.Options{}
+	}
+	xmlLimit := int64(unzipXMLSizeLimit)
+	if xmlLimit > maxSize {
+		xmlLimit = maxSize
+	}
+	return excelize.Options{UnzipSizeLimit: maxSize, UnzipXMLSizeLimit: xmlLimit}
+}
+
+// Read opens the .xlsx file at path and converts it into a
+// model.Workbook. maxSize bounds how large excelize will let the
+// workbook decompress to in memory; <= 0 disables that bound (#51).
+func Read(path string, maxSize int64) (model.Workbook, error) {
+	f, err := excelize.OpenFile(path, excelizeOptions(maxSize))
 	if err != nil {
 		return model.Workbook{}, fmt.Errorf("open %q: %w", path, err)
 	}
@@ -63,7 +93,7 @@ func Read(path string) (model.Workbook, error) {
 
 	var wb model.Workbook
 	for _, name := range f.GetSheetList() {
-		wb.Sheets = append(wb.Sheets, lazySheet(path, name, date1904, dateStyles))
+		wb.Sheets = append(wb.Sheets, lazySheet(path, name, date1904, dateStyles, maxSize))
 	}
 	return wb, nil
 }
@@ -71,9 +101,12 @@ func Read(path string) (model.Workbook, error) {
 // SheetNames returns the worksheet, chart sheet, and dialog sheet names of
 // the .xlsx file at path, in workbook order. Unlike Read, it doesn't parse
 // any cell data, so it stays cheap and doesn't fail on a sheet whose cells
-// (e.g. an uncomputable formula) Read would choke on.
-func SheetNames(path string) ([]string, error) {
-	f, err := excelize.OpenFile(path)
+// (e.g. an uncomputable formula) Read would choke on. maxSize is the same
+// bound Read applies (#51) - SheetNames still calls excelize.OpenFile,
+// which alone risks the same decompression-based memory blowup even
+// though it never reads a row.
+func SheetNames(path string, maxSize int64) ([]string, error) {
+	f, err := excelize.OpenFile(path, excelizeOptions(maxSize))
 	if err != nil {
 		return nil, fmt.Errorf("open %q: %w", path, err)
 	}
@@ -92,12 +125,13 @@ func SheetNames(path string) ([]string, error) {
 // was chosen, and for the trade-off it accepts: Read's own upfront
 // open (for the sheet list and workbook properties) plus one more per
 // sheet actually ranged over, so a query touching N sheets opens the
-// file N+1 times in total, not N.
-func lazySheet(path, name string, date1904 bool, dateStyles map[int]bool) model.Sheet {
+// file N+1 times in total, not N. maxSize (#51) is applied to this
+// fresh open the same way Read applies it to its own.
+func lazySheet(path, name string, date1904 bool, dateStyles map[int]bool, maxSize int64) model.Sheet {
 	return model.Sheet{
 		Name: name,
 		Rows: func(yield func(model.Row, error) bool) {
-			f, err := excelize.OpenFile(path)
+			f, err := excelize.OpenFile(path, excelizeOptions(maxSize))
 			if err != nil {
 				yield(model.Row{}, fmt.Errorf("open %q: %w", path, err))
 				return

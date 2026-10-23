@@ -13,9 +13,17 @@ import (
 
 // defaultReadTimeout is generous on purpose: its job is catching a
 // genuine hang (an infinite loop, an adversarial file), not rushing a
-// legitimately large one - there's no size cap yet (#51) that would
-// make a slow-but-honest file impossible in the first place.
+// legitimately large one.
 const defaultReadTimeout = 2 * time.Minute
+
+// defaultMaxFileSize bounds how large a file any reader will attempt,
+// and (for xlsx specifically) how large excelize will let a workbook
+// decompress to in memory (docs/adr/0031-memory-ceiling-for-untrusted-files.md).
+// 256 MiB matches internal/ods's own existing, independently-chosen
+// maxContentXMLSize, for one consistent "this is clearly not a
+// legitimate v1-sized file" ceiling across every format rather than a
+// different magic number per reader.
+const defaultMaxFileSize = 256 << 20
 
 // adrURL is the base of a stable link to an ADR's own file, for any
 // text that ships inside the compiled binary (--help, flag
@@ -98,6 +106,7 @@ func NewRootCommand() *cobra.Command {
 				return err
 			}
 			timeout := readTimeout(cmd)
+			maxSize := maxFileSize(cmd)
 			if inPlace {
 				if compactData || compactJSON || rawOutput || table || csvOut || tsvOut {
 					return fmt.Errorf("--in-place cannot be combined with --compact/--compact-output/--raw-output/--table/--csv/--tsv - an in-place edit prints nothing")
@@ -105,9 +114,9 @@ func NewRootCommand() *cobra.Command {
 				if len(args) != 2 {
 					return fmt.Errorf("--in-place requires exactly one file, got %d", len(args)-1)
 				}
-				return runInPlace(args[0], args[1], format, delim, timeout)
+				return runInPlace(args[0], args[1], format, delim, timeout, maxSize)
 			}
-			return runFilter(cmd, args[0], args[1:], format, delim, timeout, outputOptions{
+			return runFilter(cmd, args[0], args[1:], format, delim, timeout, maxSize, outputOptions{
 				compactData: compactData,
 				compactJSON: compactJSON,
 				rawOutput:   rawOutput,
@@ -127,6 +136,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().String("input-format", "", "input format: xlsx, csv, tsv, or ods (default: detected from the file extension)")
 	root.PersistentFlags().String("delimiter", "", "field delimiter override for csv/tsv input, exactly one character (default: comma for csv, tab for tsv)")
 	root.PersistentFlags().Duration("timeout", defaultReadTimeout, "wall-clock limit for reading and evaluating a file, e.g. 30s or 2m - a hang in a corrupt or adversarial file can't block past this (see "+adrURL+"0030-recover-and-timeout-the-read-path.md); 0 disables it")
+	root.PersistentFlags().Int64("max-size", defaultMaxFileSize, "maximum file size in bytes xlq will attempt to read, and (for xlsx) the most excelize will let a workbook decompress to in memory - default 268435456 (256 MiB); 0 disables it (see "+adrURL+"0031-memory-ceiling-for-untrusted-files.md)")
 	root.PersistentFlags().String("config", "", "config file path (default: os.UserConfigDir()/xlq/config.yaml; see "+adrURL+"0015-config-file-for-default-flags.md for which flags it can default and how)")
 	root.SetVersionTemplate("xlq {{.Version}}\n")
 	root.AddCommand(newSheetsCommand())
@@ -185,4 +195,12 @@ func inputDelimiter(cmd *cobra.Command) (rune, error) {
 func readTimeout(cmd *cobra.Command) time.Duration {
 	d, _ := cmd.Flags().GetDuration("timeout")
 	return d
+}
+
+// maxFileSize reads cmd's --max-size flag (inherited from the root
+// command's PersistentFlags, same as --timeout). A negative value also
+// disables it, same convention as readTimeout.
+func maxFileSize(cmd *cobra.Command) int64 {
+	n, _ := cmd.Flags().GetInt64("max-size")
+	return n
 }

@@ -22,7 +22,7 @@ func TestSheetNames(t *testing.T) {
 		t.Fatalf("SaveAs: %v", err)
 	}
 
-	got, err := input.SheetNames(path, "", 0)
+	got, err := input.SheetNames(path, "", 0, 0)
 	if err != nil {
 		t.Fatalf("input.SheetNames: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestSheetNames(t *testing.T) {
 }
 
 func TestSheetNamesMissingFile(t *testing.T) {
-	if _, err := input.SheetNames(filepath.Join(t.TempDir(), "missing.xlsx"), "", 0); err == nil {
+	if _, err := input.SheetNames(filepath.Join(t.TempDir(), "missing.xlsx"), "", 0, 0); err == nil {
 		t.Fatal("input.SheetNames() with a missing file: want error, got nil")
 	}
 }
