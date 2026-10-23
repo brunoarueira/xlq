@@ -192,24 +192,37 @@ func delimOrDefault(delim, def rune) rune {
 	return delim
 }
 
-// checkFileSize rejects path outright if it's already larger than
-// maxSize on disk, before any reader opens or parses it at all -
-// maxSize <= 0 disables this check entirely (#51,
-// docs/adr/0031-memory-ceiling-for-untrusted-files.md). This alone
-// isn't sufficient protection for a zip-based format (xlsx, ods): a
-// small file can still decompress to something huge, which is why
-// xlsx.Read/SheetNames separately bound excelize's own unzip size via
-// maxSize too, and ods has its own independent maxContentXMLSize. This
-// check's job is the cheap, uniform first pass - reject a file that's
-// already too big before even trying to open it, regardless of
-// format - not the only one.
+// checkFileSize rejects path outright if it's a FIFO, device, or other
+// non-regular file, or if it's already larger than maxSize on disk -
+// before any reader opens or parses it at all. The non-regular-file
+// check is unconditional, even with maxSize <= 0 ("disabled" only
+// means no byte ceiling, not "block indefinitely on a pipe is fine"):
+// os.Stat reports a FIFO's size as 0 regardless of how much data a
+// writer eventually feeds it, so without this, checkFileSize's own
+// size check would always pass for one, and csv/xlsx/ods would then
+// try to read from it - blocking until a writer connects, or
+// streaming an unbounded amount of data once one does, exactly the
+// risk maxSize exists to bound in the first place. maxSize <= 0 only
+// disables the size comparison itself (#51,
+// docs/adr/0031-memory-ceiling-for-untrusted-files.md). The size check
+// alone isn't sufficient protection for a zip-based format (xlsx,
+// ods): a small file can still decompress to something huge, which is
+// why xlsx.Read/SheetNames separately bound excelize's own unzip size
+// via maxSize too, and ods has its own independent maxContentXMLSize.
+// This check's job is the cheap, uniform first pass - reject a file
+// that's already too big, or not a kind of file size even means
+// anything for, before even trying to open it, regardless of format -
+// not the only layer.
 func checkFileSize(path string, maxSize int64) error {
-	if maxSize <= 0 {
-		return nil
-	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("input: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("input: %q is not a regular file", path)
+	}
+	if maxSize <= 0 {
+		return nil
 	}
 	if info.Size() > maxSize {
 		return fmt.Errorf("input: %q is %d bytes, over the %d byte --max-size limit", path, info.Size(), maxSize)

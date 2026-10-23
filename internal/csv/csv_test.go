@@ -275,3 +275,52 @@ func TestReadWithinMaxMaterializedCellsStillSucceeds(t *testing.T) {
 		t.Fatalf("len(wb.Sheets) = %d, want 1", len(wb.Sheets))
 	}
 }
+
+// TestReadRejectsSingleOversizedRecord guards the gap a cubic-dev-ai
+// review caught in maxMaterializedCells's own first version: it was
+// checked only after encoding/csv.Reader.Read returned a full record,
+// so a single record with more fields than the cap would already have
+// paid that whole allocation cost before the check ever ran. One
+// unbroken line (no newline at all) with more fields than the
+// (lowered) cap must still be rejected - not just many separate
+// smaller records, which TestReadRejectsOverMaxMaterializedCells
+// already covers.
+func TestReadRejectsSingleOversizedRecord(t *testing.T) {
+	old := maxMaterializedCells
+	maxMaterializedCells = 5
+	defer func() { maxMaterializedCells = old }()
+
+	path := writeFixture(t, "oneline.csv", strings.Repeat("x,", 50))
+	if _, err := Read(path); err == nil {
+		t.Fatal("Read with a single record over the materialized-cell cap: want error, got nil")
+	} else if !strings.Contains(err.Error(), "over the limit") {
+		t.Errorf("error = %q, want it to mention the field/cell limit", err)
+	}
+}
+
+// TestFieldCountLimitedReaderStopsAtLimit unit-tests
+// fieldCountLimitedReader directly: given a source with far more
+// delimiters than max, its very first Read call - not some later one,
+// and not only once the underlying source is fully drained - must
+// already report the error, proving it detects the violation while
+// streaming rather than only after a caller (encoding/csv.Reader, in
+// ReadWithDelimiter's real usage) has already materialized everything.
+func TestFieldCountLimitedReaderStopsAtLimit(t *testing.T) {
+	src := strings.NewReader(strings.Repeat("1,", 1000))
+	r := &fieldCountLimitedReader{r: src, delim: ',', max: 5}
+
+	buf := make([]byte, 2000)
+	_, err := r.Read(buf)
+	if err == nil {
+		t.Fatal("Read: want an error once the delimiter count exceeds max within the first Read call, got nil")
+	}
+	if !strings.Contains(err.Error(), "over the limit") {
+		t.Errorf("error = %q, want it to mention the limit", err)
+	}
+
+	// Once tripped, it must keep failing on every subsequent call too,
+	// not just the one call where the limit was first exceeded.
+	if _, err := r.Read(buf); err == nil {
+		t.Error("Read after already tripping the limit: want it to keep failing, got nil")
+	}
+}

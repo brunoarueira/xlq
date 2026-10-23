@@ -84,19 +84,49 @@ uniform mechanism:
    temp file rather than holding every worksheet in memory at once
    regardless of the overall limit.
 3. **A cell-count cap for csv**, a new `maxMaterializedCells = 10_000_000`
-   constant in `internal/csv` (duplicated from ods's own value, not
-   shared - this package has no dependency on `internal/ods` - for one
-   consistent number, same spirit as #50's own duplicated
-   `cellRefPattern`/`columnIndex` precedent in `internal/xlsx`). Fixed,
-   not tied to `--max-size`: this guards a different axis (cell count,
-   not byte size) that a byte-oriented flag has no natural value for,
-   matching ods's own choice to keep its two layers independent of each
+   package variable in `internal/csv` (duplicated from ods's own value,
+   not shared - this package has no dependency on `internal/ods` - for
+   one consistent number, same spirit as #50's own duplicated
+   `cellRefPattern`/`columnIndex` precedent in `internal/xlsx`; a
+   variable rather than a constant only so a test can lower it
+   temporarily instead of writing a genuinely 10-million-cell fixture).
+   Fixed at its default, not tied to `--max-size`: this guards a
+   different axis (cell count, not byte size) that a byte-oriented flag
+   has no natural value for, matching ods's own choice to keep its two
+   layers independent of each
    other.
 
-`maxSize <= 0` disables layers 1 and 2 (falls through to excelize's own
-defaults for layer 2, not to "no limit at all" literally - there's no
-sentinel excelize itself recognizes for that). Layer 3 is unconditional,
-matching ods's own `maxMaterializedCells` having no disable path either.
+`maxSize <= 0` disables layer 2 (falls through to excelize's own
+defaults, not to "no limit at all" literally - there's no sentinel
+excelize itself recognizes for that) and the *size comparison* half of
+layer 1. Layer 1's other half - rejecting a non-regular file (FIFO,
+device, socket) outright - is unconditional even then: `0` means "no
+byte ceiling," not "block indefinitely on a pipe is fine." This matters
+concretely because `os.Stat` reports a FIFO's size as `0` regardless of
+how much data a writer eventually feeds it - without the unconditional
+check, `checkFileSize`'s size comparison would always pass for one
+(`0` is never `> maxSize`), and the actual reader would then block in
+`os.Open` waiting for a writer, or stream an unbounded amount once one
+connects, the exact risk `--max-size` exists to bound in the first
+place. Layer 3 (csv's cell-count cap) is unconditional outright,
+matching ods's own `maxMaterializedCells` having no disable path
+either - but layer 3 has its own gap worth calling out: checking
+`totalCells` only after `encoding/csv.Reader.Read` returns means a
+*single* record with millions of fields has already paid that whole
+allocation cost before the check ever runs (confirmed directly: a
+`Reader` with `FieldsPerRecord` set to reject nearly everything still
+blocked reading an unbounded single record rather than failing as
+soon as the field count was exceeded - `encoding/csv` has no hook to
+interrupt a record mid-parse). A new `fieldCountLimitedReader` wraps
+the source reader, counting delimiter bytes as they stream in and
+failing as soon as the running total exceeds the cap - before
+`encoding/csv` can finish parsing whatever record those delimiters
+belong to, not after. Scoped to a single-byte delimiter (every
+delimiter this project's own documentation and tests ever specify is -
+comma, tab, semicolon) to avoid a general multi-byte streaming matcher
+for a combination that has never come up; `totalCells`'s own
+cross-record accumulation still catches "many small records" either
+way, regardless of delimiter width.
 
 Verified directly, not just unit-tested in isolation:
 
@@ -121,7 +151,20 @@ Verified directly, not just unit-tested in isolation:
   exactly this) rather than writing a genuinely 10-million-cell
   fixture; `TestReadWithinMaxMaterializedCellsStillSucceeds` confirms
   the boundary itself isn't off by one.
-- The full existing test suite (608 tests after this ADR's own 14 new
+- `TestReadRejectsFIFOWithoutHanging` and the pre-existing
+  `TestSheetNamesCSVRejectsFIFOWithoutHanging` build a real FIFO via
+  `syscall.Mkfifo` (confirmed first with a plain `stat` that it really
+  does report size `0`) and confirm `Read`/`SheetNames` reject it
+  promptly rather than hanging - run with a 2-second deadline so a
+  regression back to opening-before-checking would fail the test
+  instead of blocking the whole run.
+- A scratch program confirmed `encoding/csv.Reader` has no hook to
+  interrupt a record mid-parse (a `Reader` with `FieldsPerRecord` set
+  to reject nearly everything still blocked indefinitely reading an
+  artificially unbounded single record, rather than failing as soon as
+  the field count was exceeded), before settling on
+  `fieldCountLimitedReader` as the fix.
+- The full existing test suite (610 tests after this ADR's own 16 new
   ones) passes unmodified with every call site's signature change -
   every existing call passes `maxSize=0`, preserving prior behavior
   exactly.

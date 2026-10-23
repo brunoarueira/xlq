@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"unicode/utf8"
 
 	"github.com/brunoarueira/xlq/internal/model"
 )
@@ -73,7 +74,27 @@ func ReadWithDelimiter(path string, delim rune) (model.Workbook, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	r := stdcsv.NewReader(stripBOM(f))
+	src := stripBOM(f)
+	// encoding/csv.Reader.Read fully parses one record before ever
+	// checking anything about it - confirmed directly (a Reader whose
+	// FieldsPerRecord was set to reject nearly everything still blocked
+	// reading an unbounded single record rather than failing as soon as
+	// the field count was exceeded) - so a single record with millions
+	// of fields would already have paid that whole allocation cost
+	// before totalCells's own post-hoc check below ever runs. Wrapping
+	// the source reader to count delim occurrences as bytes stream in,
+	// not after a record completes, closes that gap - restricted to a
+	// single-byte delim (every delimiter this project's own
+	// documentation and tests ever specify is: comma, tab, semicolon)
+	// to avoid a general multi-byte streaming matcher for a
+	// combination (multi-byte delim exercising this specific gap) that
+	// has never come up; totalCells's own cross-record accumulation
+	// below still catches "many small records" regardless of delim
+	// width either way.
+	if utf8.RuneLen(delim) == 1 {
+		src = &fieldCountLimitedReader{r: src, delim: byte(delim), max: maxMaterializedCells}
+	}
+	r := stdcsv.NewReader(src)
 	r.Comma = delim
 
 	var rows []model.Row
@@ -104,6 +125,48 @@ func ReadWithDelimiter(path string, delim rune) (model.Workbook, error) {
 	}
 
 	return model.Workbook{Sheets: []model.Sheet{model.NewSheet(SheetName, rows)}}, nil
+}
+
+// fieldCountLimitedReader wraps r, counting delim bytes as they stream
+// through Read and failing as soon as the running total exceeds max -
+// before encoding/csv.Reader can finish parsing whatever record those
+// delimiters belong to, not after (#51,
+// docs/adr/0031-memory-ceiling-for-untrusted-files.md). The count is
+// never reset between records, so it also naturally bounds the total
+// across the whole file, the same thing ReadWithDelimiter's own
+// totalCells separately tracks post-hoc - the two overlap rather than
+// one subsuming the other, since this wrapper only exists for a
+// single-byte delim.
+type fieldCountLimitedReader struct {
+	r     io.Reader
+	delim byte
+	count int
+	max   int
+	// tripped sticks once set, so every call after the limit is first
+	// exceeded keeps failing the same way - not just the one call where
+	// it was first detected - regardless of how encoding/csv's own
+	// buffered reading retries after an (n>0, err!=nil) return, or
+	// whether a later chunk happens to contain no further delim bytes
+	// of its own to re-trip on.
+	tripped error
+}
+
+func (f *fieldCountLimitedReader) Read(p []byte) (int, error) {
+	if f.tripped != nil {
+		return 0, f.tripped
+	}
+	n, err := f.r.Read(p)
+	for _, b := range p[:n] {
+		if b != f.delim {
+			continue
+		}
+		f.count++
+		if f.count > f.max {
+			f.tripped = fmt.Errorf("a single record contains over %d delimiter-separated fields, over the limit for a v1 read", f.max)
+			return n, f.tripped
+		}
+	}
+	return n, err
 }
 
 var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
