@@ -104,11 +104,16 @@ device, socket) outright - is unconditional even then: `0` means "no
 byte ceiling," not "block indefinitely on a pipe is fine." This matters
 concretely because `os.Stat` reports a FIFO's size as `0` regardless of
 how much data a writer eventually feeds it - without the unconditional
-check, `checkFileSize`'s size comparison would always pass for one
-(`0` is never `> maxSize`), and the actual reader would then block in
-`os.Open` waiting for a writer, or stream an unbounded amount once one
-connects, the exact risk `--max-size` exists to bound in the first
-place. Layer 3 (csv's cell-count cap) is unconditional outright,
+check, a size comparison alone would always pass for one (`0` is never
+`> maxSize`), and the actual reader would then block in `os.Open`
+waiting for a writer, or stream an unbounded amount once one connects,
+the exact risk `--max-size` exists to bound in the first place.
+`xlsx.WriteCell`'s own pre-flight check mirrors this exactly, not just
+`checkFileSize` - a cubic-dev-ai review caught a first version of
+`WriteCell` that only compared `Size()`, with no regular-file check at
+all, meaning `-i` against a FIFO bypassed this guard entirely even
+though the read path's own `checkFileSize` already had it. Layer 3
+(csv's cell-count cap) is unconditional outright,
 matching ods's own `maxMaterializedCells` having no disable path
 either - but layer 3 has its own gap worth calling out: checking
 `totalCells` only after `encoding/csv.Reader.Read` returns means a
@@ -118,13 +123,26 @@ allocation cost before the check ever runs (confirmed directly: a
 blocked reading an unbounded single record rather than failing as
 soon as the field count was exceeded - `encoding/csv` has no hook to
 interrupt a record mid-parse). A new `fieldCountLimitedReader` wraps
-the source reader, counting delimiter bytes as they stream in and
-failing as soon as the running total exceeds the cap - before
-`encoding/csv` can finish parsing whatever record those delimiters
-belong to, not after. Scoped to a single-byte delimiter (every
-delimiter this project's own documentation and tests ever specify is -
-comma, tab, semicolon) to avoid a general multi-byte streaming matcher
-for a combination that has never come up; `totalCells`'s own
+the source reader, counting delimiter bytes *outside any quoted
+field* as they stream in and failing as soon as the running total
+exceeds the cap - before `encoding/csv` can finish parsing whatever
+record those delimiters belong to, not after. "Outside any quoted
+field" matters concretely: a first version counted every delimiter
+byte unconditionally, which a cubic-dev-ai review caught rejecting
+valid CSV whose one field happens to hold a long comma-separated blob
+as though it were that many separate fields - `"a,b,c,d,e",x,y` is 2
+real fields, not 6. The reader tracks RFC 4180 quoting (a field
+starting with `"` runs until the next `"` not immediately followed by
+another `"`, which is a literal escaped quote) well enough to avoid
+that specific false positive, without needing to fully replicate
+`encoding/csv`'s own parsing - it's deliberately forgiving rather than
+a strict validator, so a delimiter is only ever excluded from the
+count when it's unambiguously inside an open, unescaped quote; nothing
+ambiguous is ever silently under-counted into passing. Scoped to a
+single-byte delimiter (every delimiter this project's own
+documentation and tests ever specify is - comma, tab, semicolon) to
+avoid a general multi-byte streaming matcher for a combination that
+has never come up; `totalCells`'s own
 cross-record accumulation still catches "many small records" either
 way, regardless of delimiter width.
 
@@ -151,23 +169,41 @@ Verified directly, not just unit-tested in isolation:
   exactly this) rather than writing a genuinely 10-million-cell
   fixture; `TestReadWithinMaxMaterializedCellsStillSucceeds` confirms
   the boundary itself isn't off by one.
-- `TestReadRejectsFIFOWithoutHanging` and the pre-existing
-  `TestSheetNamesCSVRejectsFIFOWithoutHanging` build a real FIFO via
-  `syscall.Mkfifo` (confirmed first with a plain `stat` that it really
-  does report size `0`) and confirm `Read`/`SheetNames` reject it
-  promptly rather than hanging - run with a 2-second deadline so a
-  regression back to opening-before-checking would fail the test
-  instead of blocking the whole run.
+- A plain `stat` on a real FIFO confirmed it does report size `0`
+  before relying on that to explain the bug.
 - A scratch program confirmed `encoding/csv.Reader` has no hook to
   interrupt a record mid-parse (a `Reader` with `FieldsPerRecord` set
   to reject nearly everything still blocked indefinitely reading an
   artificially unbounded single record, rather than failing as soon as
   the field count was exceeded), before settling on
   `fieldCountLimitedReader` as the fix.
-- The full existing test suite (610 tests after this ADR's own 16 new
+- `TestFieldCountLimitedReaderIgnoresDelimitersInQuotedFields` and
+  `TestFieldCountLimitedReaderHandlesEscapedQuotes` guard the quoting
+  fix directly: a field with 4 literal commas inside quotes, and a
+  field with a doubled (escaped) quote, both read successfully at a
+  cap far below their own raw comma count.
+  `TestFieldCountLimitedReaderStillCountsDelimitersAfterQuotedField`
+  confirms the reader correctly resumes counting once a quoted field
+  actually closes, rather than getting stuck thinking it's still
+  inside one. `TestReadWithManyDelimitersInsideOneQuotedFieldStillSucceeds`
+  repeats the same guard through the real `Read` entry point, not just
+  the wrapper's own unit tests.
+- `TestReadRejectsFIFOWithoutHanging` (for `Read`) and
+  `TestWriteCellRejectsFIFOWithoutHanging` (for `-i`'s own `WriteCell`)
+  build a real FIFO via `syscall.Mkfifo` and confirm both reject it
+  promptly rather than hanging, each run with a 2-second deadline so a
+  regression fails the one test instead of blocking the whole run.
+- The full existing test suite (616 tests after this ADR's own 18 new
   ones) passes unmodified with every call site's signature change -
   every existing call passes `maxSize=0`, preserving prior behavior
-  exactly.
+  for every *regular* file exactly. The one deliberate exception: a
+  FIFO/device/socket is now always rejected, even at `maxSize=0` - see
+  the non-regular-file reasoning above. No existing test exercised a
+  non-regular file against `Read` or `WriteCell` before this (the one
+  pre-existing FIFO test, `TestSheetNamesCSVRejectsFIFOWithoutHanging`,
+  covers `SheetNames`'s own already-separate `checkReadableFile` path,
+  unchanged by this ADR), so this exception doesn't contradict "passes
+  unmodified" above - it's new coverage, not a changed assertion.
 
 ## Consequences
 

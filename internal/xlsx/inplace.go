@@ -144,14 +144,22 @@ func WriteCell(path, sheet, cellRef string, value any, maxSize int64) error {
 		return fmt.Errorf("xlsx: resolve %q: %w", path, err)
 	}
 
-	if maxSize > 0 {
-		info, err := os.Stat(realPath)
-		if err != nil {
-			return fmt.Errorf("xlsx: stat %q: %w", path, err)
-		}
-		if info.Size() > maxSize {
-			return fmt.Errorf("xlsx: %q is %d bytes, over the %d byte --max-size limit", path, info.Size(), maxSize)
-		}
+	// Unconditional, even with maxSize <= 0 - matching
+	// internal/input.checkFileSize's own reasoning exactly: os.Stat
+	// reports a FIFO's size as 0 regardless of how much data a writer
+	// eventually feeds it, so a size-only check would always pass for
+	// one even with --max-size set, and excelize.OpenFile below would
+	// then block waiting for a writer, or stream an unbounded amount
+	// once one connects.
+	info, err := os.Stat(realPath)
+	if err != nil {
+		return fmt.Errorf("xlsx: stat %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("xlsx: %q is not a regular file", path)
+	}
+	if maxSize > 0 && info.Size() > maxSize {
+		return fmt.Errorf("xlsx: %q is %d bytes, over the %d byte --max-size limit", path, info.Size(), maxSize)
 	}
 
 	f, err := excelize.OpenFile(realPath, excelizeOptions(maxSize))
@@ -167,11 +175,6 @@ func WriteCell(path, sheet, cellRef string, value any, maxSize int64) error {
 
 	if err := f.SetCellValue(resolvedSheet, cellRef, value); err != nil {
 		return fmt.Errorf("xlsx: set %s!%s: %w", resolvedSheet, cellRef, err)
-	}
-
-	info, err := os.Stat(realPath)
-	if err != nil {
-		return fmt.Errorf("xlsx: stat %q: %w", path, err)
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(realPath), "xlq-tmp-*.xlsx")
