@@ -1,0 +1,20 @@
+title: xlq
+url: "https://brunoarueira.github.io"
+baseurl: "/xlq"
+description: >-
+  A command-line spreadsheet processor in the spirit of jq and yq - slice,
+  filter, and transform .xlsx, .csv, .tsv, and .ods files from the shell.
+theme: minima
+show_excerpts: false
+
+# adr/ is contributor-facing design history (see CONTRIBUTING.md), not part
+# of the public docs site - GitHub's own repo browser already renders it
+# fine for anyone who wants it; it just shouldn't show up in the site's own
+# nav/sitemap alongside the user-facing pages below.
+exclude:
+  - adr/
+
+header_pages:
+  - quickstart.md
+  - reference.md
+  - examples.md
