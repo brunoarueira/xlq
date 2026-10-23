@@ -28,6 +28,13 @@ xlq '.Sheet1' path/to/book.xlsx        # a whole sheet, as a 2D array
 xlq '.Sheet1 | .B2' path/to/book.xlsx  # same cell, piped
 ```
 
+A sheet name is a plain identifier (`.Sheet1`), so one containing a space
+or other non-identifier character needs the bracket-string form instead:
+
+```sh
+xlq '.["TOP POSTS"] | records | .[0].G' path/to/book.xlsx
+```
+
 ### Ranges
 
 A range ([ADR-0012](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0012-range-references.md))
