@@ -5,6 +5,9 @@
 # Narrative: group_by + map + sum totals Revenue per Category, then
 # the companion command gets the matching category names - since the
 # totals come back as an unlabeled array in first-encountered order.
+# sales.xlsx stores Revenue as text (the same real-world export quirk
+# the hero demo's Likes column has), so tonumber is load-bearing here
+# too, not a no-op on already-numeric data.
 
 Output ../../assets/img/group-by.gif
 
