@@ -9,6 +9,8 @@ single static binary for slicing, filtering, and transforming spreadsheet
 data (`.xlsx`, `.csv`, `.tsv`, `.ods`) from the shell - no Excel, no
 throwaway script, no macro.
 
+![xlq fixing a "SUM comes out as 0" export, in one command](assets/img/hero.gif)
+
 ## Why
 
 Spreadsheet exports break in the same handful of ways, over and over:
