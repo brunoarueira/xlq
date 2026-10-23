@@ -10,9 +10,13 @@ show_excerpts: false
 # adr/ is contributor-facing design history (see CONTRIBUTING.md), not part
 # of the public docs site - GitHub's own repo browser already renders it
 # fine for anyone who wants it; it just shouldn't show up in the site's own
-# nav/sitemap alongside the user-facing pages below.
+# nav/sitemap alongside the user-facing pages below. vhs/ holds the source
+# .tape scripts and fixture files used to generate the GIFs under
+# assets/img/ (see #113) - the generated output is published, the source
+# material that generates it isn't.
 exclude:
   - adr/
+  - vhs/
 
 header_pages:
   - quickstart.md

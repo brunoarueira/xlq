@@ -51,6 +51,8 @@ reader is quote-aware, so a filter just reads the right column:
 xlq '.Sheet1 | records | select(.Revenue | tonumber > 10000)' report.csv
 ```
 
+![xlq correctly filtering a CSV row whose field contains a literal comma](assets/img/quoted-csv.gif)
+
 ## "I need one sheet out of this workbook as a CSV, no Excel"
 
 A narrow, common enough need that multiple dedicated `xlsx2csv`-style
@@ -79,6 +81,8 @@ names in the same order, if you need both:
 ```sh
 xlq '.Sheet1 | records | group_by(.Category) | map(.[0].Category)' sales.xlsx
 ```
+
+![xlq grouping and totaling revenue by category, then listing the matching category names](assets/img/group-by.gif)
 
 ## "How many rows match this condition?"
 
