@@ -43,7 +43,7 @@ brew install brunoarueira/tap/xlq
 
 Prebuilt binaries (macOS, Linux, Windows) are attached to each
 [release](https://github.com/brunoarueira/xlq/releases). Or build from
-source with Go 1.24+:
+source with Go 1.26.10+:
 
 ```sh
 go install github.com/brunoarueira/xlq/cmd/xlq@latest

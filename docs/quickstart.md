@@ -39,10 +39,14 @@ xlq '.Sheet1 | records' report.xlsx
 
 ```json
 [
-  { "Category": "Shoes", "Revenue": "1200" },
-  { "Category": "Shirts", "Revenue": "850" }
+  { "Category": "Shoes", "Revenue": 1200 },
+  { "Category": "Shirts", "Revenue": 850 }
 ]
 ```
+
+(A genuine numeric cell in `.xlsx` reads back as a bare JSON number. A
+CSV/text export often stores the same value as a string instead - see
+[`tonumber`](reference.html#conversions) for converting it explicitly.)
 
 ## Filter and total a column
 

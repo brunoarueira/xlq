@@ -57,17 +57,28 @@ A narrow, common enough need that multiple dedicated `xlsx2csv`-style
 tools exist just for this:
 
 ```sh
-xlq --csv '.Q3 Report | records' book.xlsx > q3.csv
+xlq --csv '.["Q3 Report"] | records' book.xlsx > q3.csv
 ```
 
-## "A quick pivot-style total by category, without opening Excel"
+A sheet name with a space needs the bracket-string form
+(`.["Q3 Report"]`, not `.Q3 Report`) - see the [Reference](reference.html#addressing).
+
+## "A quick total by category, without opening Excel"
 
 ```sh
 xlq '.Sheet1 | records | group_by(.Category) | map(map(.Revenue | tonumber) | sum)' sales.xlsx
 ```
 
-Groups by `Category`, then sums `Revenue` within each group - the same
-job dedicated CLI pivot tools exist for.
+Groups by `Category`, then sums `Revenue` within each group - but the
+result is an unlabeled array of totals in first-encountered category
+order (`group_by` doesn't sort, and there's no object-construction
+syntax to reattach each category's name to its own total). Pair it with
+`group_by(.Category) | map(.[0].Category)` to get the matching category
+names in the same order, if you need both:
+
+```sh
+xlq '.Sheet1 | records | group_by(.Category) | map(.[0].Category)' sales.xlsx
+```
 
 ## "How many rows match this condition?"
 

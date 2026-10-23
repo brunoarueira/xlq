@@ -75,7 +75,8 @@ An already-numeric value passes through unchanged; anything that can't be
 parsed as a number - including `null` and a boolean, which don't get the
 "propagates as null" treatment field/index access has - is an error, not a
 silent `null`, matching jq's own `tonumber`. Only a plain decimal number is
-accepted (an optional sign, digits, an optional fraction, an optional
+accepted (an optional minus sign - no leading `+` - digits, an optional
+fraction, an optional
 exponent) - `"NaN"`, `"Inf"`/`"Infinity"`, and a hex float like `"0x1p2"`
 are all rejected too, even though Go's own number parser would otherwise
 accept them, since none of those is a number a spreadsheet cell's text
@@ -189,7 +190,15 @@ are zero-argument reduce builtins - no filter-expression argument, unlike
 xlq '.Sheet1 | records | map(.Likes) | sum' path/to/book.xlsx
 ```
 
-the same composition jq's own `map(.field) | add` idiom uses. `count`
+the same composition jq's own `map(.field) | add` idiom uses. Like every
+builtin, any of the three also parses as a comparison's right-hand side,
+the same grammar position `tonumber`/`todate` already have - it just
+isn't a particularly natural fit for `sum`/`count`/`avg` specifically,
+since that position evaluates against **the comparison's own current
+input** (the whole filter's starting value), not the left operand's
+result - the left side is usually already the array these builtins need,
+so a right-hand `sum` doesn't operate on it the way it might look like it
+would. `count`
 accepts `records`'s output or a plain array and returns its element count,
 including `null` elements - an array-only, jq-compatible subset of jq's
 own polymorphic `length`, which also defines a length for a string, a
@@ -392,10 +401,14 @@ xlq completion bash > $(brew --prefix)/etc/bash_completion.d/xlq
 ## Config file
 
 ([ADR-0015](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0015-config-file-for-default-flags.md))
-a YAML file can set defaults for the input/output flags - every flag xlq
-has except `-i`/`--in-place`, which can never be config-defaulted at all -
-so a flag you'd otherwise pass on every invocation can be set once
-instead. By default it's read from `os.UserConfigDir()/xlq/config.yaml` -
+a YAML file can set defaults for the eight flags listed below - every
+input/output flag that existed when this mechanism was built, though not
+`--timeout`/`--max-size` (added later, in
+[ADR-0030](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0030-recover-and-timeout-the-read-path.md)/[ADR-0031](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0031-memory-ceiling-for-untrusted-files.md),
+neither of which extended the config schema) or, of course,
+`-i`/`--in-place`, which can never be config-defaulted at all - so a flag
+you'd otherwise pass on every invocation can be set once instead. By
+default it's read from `os.UserConfigDir()/xlq/config.yaml` -
 `$XDG_CONFIG_HOME/xlq/config.yaml` (or `~/.config/xlq/config.yaml` if
 `$XDG_CONFIG_HOME` is unset) on Linux, `~/Library/Application
 Support/xlq/config.yaml` on macOS, `%AppData%\xlq\config.yaml` on Windows -
