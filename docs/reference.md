@@ -134,6 +134,8 @@ copy-paste noise, not a meaningful part of the date text.
 
 ## String builtins
 
+### `upper` / `lower` / `trim`
+
 ([ADR-0033](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0033-upper-lower-trim.md))
 `upper`, `lower`, and `trim` are zero-argument string transforms, useful for
 normalizing a field before writing it to a database or calling an API that
@@ -161,10 +163,41 @@ holding `"  a   b  "` becomes `"a   b"`, not `"a b"`. All three require a
 string input and error on anything else, including `null` - no "propagates
 as null" exception, the same rule `tonumber`/`todate` already follow.
 
-More string builtins (`snake_case`, `camel_case`, `replace`) and a way to
-apply one of these to `records`' own keys (`headers(f)`) are tracked in
-[#124](https://github.com/brunoarueira/xlq/issues/124) and
-[#125](https://github.com/brunoarueira/xlq/issues/125).
+### `snake_case` / `camel_case`
+
+([ADR-0034](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0034-snake-case-camel-case.md))
+convert between word-boundary casing styles - useful for the same header-
+and field-cleanup cases as `upper`/`lower`/`trim`, when the source and
+target casing conventions actually differ:
+
+```sh
+xlq '.Sheet1.A1 | snake_case' path/to/book.xlsx  # "PriorityOrder" -> "priority_order"
+xlq '.Sheet1.A1 | camel_case' path/to/book.xlsx  # "priority_order" -> "priorityOrder"
+```
+
+Both split the input into words on any non-letter-non-digit separator
+(space, `-`, `_`, ...) and on two further boundaries within a run of
+letters/digits: before an uppercase letter directly following a lowercase
+letter or digit (`priorityOrder` -> `priority`/`Order`, `q3Report` ->
+`q3`/`Report`), and before the last letter of an all-uppercase run when
+it's immediately followed by a lowercase letter (`HTTPServer` ->
+`HTTP`/`Server` - without this rule, an acronym followed by a word
+wouldn't split at all). A standalone acronym with nothing lowercase after
+it (`URL`) stays one word. `snake_case` lowercases every word and joins
+with `_`; `camel_case` lowercases every word and capitalizes all but the
+first, with no separator - so `camel_case`'s first word is always fully
+lowercase, even for a single all-uppercase input (`URL` -> `url`, not
+`uRL`). Both are Unicode-aware, matching `upper`/`lower`, and both error
+on a non-string input, including `null`, the same rule every string
+builtin here follows.
+
+### `replace(old, new)`
+
+Tracked in [#124](https://github.com/brunoarueira/xlq/issues/124) -
+not yet implemented.
+
+More on applying one of these to `records`' own keys (`headers(f)`) is
+tracked in [#125](https://github.com/brunoarueira/xlq/issues/125).
 
 ## Comparisons
 

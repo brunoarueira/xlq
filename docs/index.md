@@ -55,8 +55,9 @@ go install github.com/brunoarueira/xlq/cmd/xlq@latest
 
 Early, but the core loop works - reading, filtering, and a handful of
 builtins (`records`, `map`, `select`, `sum`/`count`/`avg`, `group_by`,
-`tonumber`, `todate`, `upper`/`lower`/`trim`) cover a lot of real-world
-spreadsheet wrangling already. General arithmetic between cells and formula introspection aren't
-implemented yet. See the [Reference](reference.html) for exactly what's
+`tonumber`, `todate`, `upper`/`lower`/`trim`, `snake_case`/`camel_case`)
+cover a lot of real-world spreadsheet wrangling already. General
+arithmetic between cells and formula introspection aren't implemented
+yet. See the [Reference](reference.html) for exactly what's
 supported today, and [`docs/adr/`](https://github.com/brunoarueira/xlq/tree/main/docs/adr)
 for the design decisions behind it.
