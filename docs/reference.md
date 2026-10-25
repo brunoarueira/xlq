@@ -193,11 +193,29 @@ builtin here follows.
 
 ### `replace(old, new)`
 
-Tracked in [#124](https://github.com/brunoarueira/xlq/issues/124) -
-not yet implemented.
+([ADR-0035](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0035-replace.md))
+replaces every occurrence of a literal substring with another - a plain
+substring swap, not a regex:
 
-More on applying one of these to `records`' own keys (`headers(f)`) is
-tracked in [#125](https://github.com/brunoarueira/xlq/issues/125).
+```sh
+xlq '.Sheet1.A1 | replace(",", "")' path/to/book.xlsx          # "1,234,567" -> "1234567"
+xlq '.Sheet1.A1 | replace(",", "") | tonumber' path/to/book.xlsx
+```
+
+Every occurrence is replaced, not just the first (matching Go's own
+`strings.ReplaceAll`, not JavaScript's plain `.replace`, which only
+touches the first). `old` must be a non-empty string - an empty `old`
+would otherwise insert `new` between every character of the input,
+which is never useful, so it's rejected as an error instead. Both
+arguments are literal strings, the same `name(arg, ...)` shape
+`todate(format)` already has - not a filter-expression argument like
+`map`/`select`'s. Errors on a non-string current input, including
+`null`, the same rule every string builtin here follows.
+
+This closes out #124's three-builtin batch (`upper`/`lower`/`trim`,
+`snake_case`/`camel_case`, `replace`). More on applying one of these to
+`records`' own keys (`headers(f)`) is tracked in
+[#125](https://github.com/brunoarueira/xlq/issues/125).
 
 ## Comparisons
 
