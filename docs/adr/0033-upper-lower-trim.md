@@ -12,9 +12,14 @@ real cases discussed on the issue - normalizing a field (e.g. a
 that expects a specific casing, and cleaning up spreadsheet header
 text. Issue #125 (`headers(f)`, blocked on this one) is what lets any
 of these apply to `records`' keys specifically; this ADR is only about
-the builtins themselves, usable anywhere a value flows through the
-filter (`.Status | lower`, `.Sheet1 | records | map(.Status | lower)`,
-or nested inside `headers(...)` once #125 lands).
+the builtins themselves, usable as pipeline steps, inside
+`map`/`select`/`group_by` filter arguments, or as a comparison's
+right-hand operand (`.Sheet1.B2 | lower`,
+`.Sheet1 | records | map(.Status | lower)`, or nested inside
+`headers(...)` once #125 lands) - never as a whole filter's own first
+segment, and, as a right-hand operand, evaluated against the
+comparison's current input, not the left operand's result (the same
+grammar position and caveat every builtin already has, ADR-0022).
 
 Issue #124 proposed a larger set in one batch; this ADR covers only the
 three with a direct, unambiguous jq equivalent to verify against -
