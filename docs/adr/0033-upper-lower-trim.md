@@ -73,8 +73,9 @@ shape `tonumber` already has. No parser change beyond the one-line
 
 ## Consequences
 
-`.Status | lower`, `.A1 | upper`, `.B2 | trim` all work today. Combined
-with `map` (ADR-0025): `.Sheet1 | records | map(.Status | lower | trim)`
+`.Sheet1.A1 | lower`, `.Sheet1.A1 | upper`, `.Sheet1.B2 | trim` all work
+today. Combined with `map` (ADR-0025):
+`.Sheet1 | records | map(.Status | lower | trim)`
 normalizes a whole column before, e.g., piping the result into another
 tool. `snake_case`/`camel_case` and `replace(old, new)` are tracked as
 separate, follow-up ADRs/PRs under the same issue (#124); `headers(f)`
