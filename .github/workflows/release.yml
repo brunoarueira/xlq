@@ -83,14 +83,15 @@ jobs:
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          # Pinned, not "latest": the homebrew_casks hooks.post.install
-          # syntax (see .goreleaser.yaml) is schema-version-sensitive -
-          # a newer, not-yet-released GoReleaser schema already renames
-          # this field and its template variable (docs/adr/0016-homebrew-publishing.md
-          # has the detail), discovered firsthand while writing this
-          # hook. An unpinned upgrade could silently reintroduce that
-          # exact breakage on some future release.
-          version: v2.18.3
+          # Pinned, not "latest": the homebrew_casks hooks.post.install_steps
+          # syntax (see .goreleaser.yaml) is schema-version-sensitive - v2.19.0
+          # renamed the field (from "install") and its template variable (from
+          # Ruby "#{staged_path}" to Go "{{ .StagedPath }}"), the exact
+          # breakage this comment warned about before it happened
+          # (docs/adr/0016-homebrew-publishing.md has the history). An
+          # unpinned upgrade could silently reintroduce that kind of breakage
+          # on some future release.
+          version: v2.19.0
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
