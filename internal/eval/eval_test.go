@@ -526,6 +526,103 @@ func TestEvalCaseInvalid(t *testing.T) {
 	}
 }
 
+// TestSplitCaseWords exercises splitCaseWords directly (#124,
+// ADR-0034): every example traced by hand in the ADR, verified here
+// against the actual implementation rather than just reasoned about.
+func TestSplitCaseWords(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"PascalCase", "PriorityOrder", []string{"Priority", "Order"}},
+		{"camelCase", "priorityOrder", []string{"priority", "Order"}},
+		{"already snake_case", "priority_order", []string{"priority", "order"}},
+		{"kebab-case", "priority-order", []string{"priority", "order"}},
+		{"space separated", "Priority Order", []string{"Priority", "Order"}},
+		{"fully uppercase word with underscore separator", "ACCOUNT_NAME", []string{"ACCOUNT", "NAME"}},
+		{"acronym run followed by a word", "HTTPServer", []string{"HTTP", "Server"}},
+		{"a standalone acronym stays one word", "URL", []string{"URL"}},
+		{"digit stays attached to the letters before it", "Q3Report", []string{"Q3", "Report"}},
+		{"upper-to-digit transition is not a boundary", "V2Format", []string{"V2", "Format"}},
+		{"Unicode-aware: an accented lowercase letter still triggers the boundary", "CaféName", []string{"Café", "Name"}},
+		{"acronym immediately followed by a digit, then a word", "ID2Value", []string{"ID2", "Value"}},
+		{"collapsed consecutive separators", "foo__bar", []string{"foo", "bar"}},
+		{"separators only", "---", nil},
+		{"empty string", "", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := splitCaseWords(tc.input)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("splitCaseWords(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// snakeCamelWorkbook is a small, dedicated fixture for the
+// "snake_case"/"camel_case" builtins (#124, ADR-0034).
+func snakeCamelWorkbook() model.Workbook {
+	return model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("PriorityOrder").At(0), // A1
+			model.NewNumberCell(42).At(1),              // B1: not a string
+		}},
+	})}}
+}
+
+func TestEvalSnakeCaseCamelCase(t *testing.T) {
+	wb := snakeCamelWorkbook()
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"snake_case", ".Sheet1.A1 | snake_case", "priority_order"},
+		{"camel_case", ".Sheet1.A1 | camel_case", "priorityOrder"},
+		{"empty parens is the same as the bare form", ".Sheet1.A1 | snake_case()", "priority_order"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalSnakeCaseCamelCaseInvalid(t *testing.T) {
+	wb := snakeCamelWorkbook()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"snake_case on a number errors, matching upper/lower/trim's precedent", ".Sheet1.B1 | snake_case"},
+		{"camel_case on null errors - no null-propagates exception", ".Sheet1.ZZ1 | camel_case"},
+		{"snake_case takes no arguments", `.Sheet1.A1 | snake_case("x")`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			if _, err := Eval(expr, wb); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
 // todateWorkbook is a small, dedicated fixture for the "todate"
 // builtin (#42): one of every input shape todate needs to handle.
 func todateWorkbook() model.Workbook {

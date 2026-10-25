@@ -139,6 +139,11 @@ func TestParseValid(t *testing.T) {
 			Pipe{Field{Field{Identity{}, "Sheet1"}, "A1"}, Builtin{Name: "upper"}},
 		},
 		{
+			"snake_case/camel_case builtins after a pipe (#124, ADR-0034)",
+			".Sheet1.A1 | snake_case",
+			Pipe{Field{Field{Identity{}, "Sheet1"}, "A1"}, Builtin{Name: "snake_case"}},
+		},
+		{
 			"todate builtin with a format argument (#42)",
 			`.Sheet1.A1 | todate("M/D/YYYY")`,
 			Pipe{Field{Field{Identity{}, "Sheet1"}, "A1"}, Builtin{Name: "todate", Args: []any{"M/D/YYYY"}}},

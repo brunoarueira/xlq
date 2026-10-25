@@ -120,15 +120,17 @@ func (p *parser) advance() token {
 // validated - this set exists only to keep typo-detection at parse
 // time, not to duplicate that validation.
 var builtinNames = map[string]bool{
-	"records":  true,
-	"tonumber": true, // #37
-	"todate":   true, // #42
-	"sum":      true, // #38
-	"count":    true, // #38
-	"avg":      true, // #38
-	"upper":    true, // #124
-	"lower":    true, // #124
-	"trim":     true, // #124
+	"records":    true,
+	"tonumber":   true, // #37
+	"todate":     true, // #42
+	"sum":        true, // #38
+	"count":      true, // #38
+	"avg":        true, // #38
+	"upper":      true, // #124
+	"lower":      true, // #124
+	"trim":       true, // #124
+	"snake_case": true, // #124
+	"camel_case": true, // #124
 }
 
 // filterArgBuiltins are builtins whose single argument is a recursive

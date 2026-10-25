@@ -41,6 +41,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/brunoarueira/xlq/internal/filter"
 	"github.com/brunoarueira/xlq/internal/model"
@@ -342,6 +343,16 @@ func applyBuiltin(name string, args []any, cur any) (any, error) {
 			return nil, fmt.Errorf("eval: trim takes no arguments, got %d", len(args))
 		}
 		return applyCase(cur, "trim", strings.TrimSpace)
+	case "snake_case":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("eval: snake_case takes no arguments, got %d", len(args))
+		}
+		return applySnakeCase(cur)
+	case "camel_case":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("eval: camel_case takes no arguments, got %d", len(args))
+		}
+		return applyCamelCase(cur)
 	default:
 		// Unreachable today: internal/filter's own builtinNames set
 		// already rejects any other name at parse time. Kept as a
@@ -694,6 +705,109 @@ func applyCase(cur any, name string, fn func(string) string) (any, error) {
 		return nil, fmt.Errorf("eval: %s: %s is not a string", name, describeType(cur))
 	}
 	return fn(s), nil
+}
+
+// applySnakeCase and applyCamelCase implement the "snake_case"/
+// "camel_case" builtins (#124, ADR-0034): split a string input into
+// words via splitCaseWords, then rejoin them differently. Both error
+// on a non-string input, including null, the same shape applyCase's
+// builtins already have (ADR-0033).
+func applySnakeCase(cur any) (any, error) {
+	s, ok := cur.(string)
+	if !ok {
+		return nil, fmt.Errorf("eval: snake_case: %s is not a string", describeType(cur))
+	}
+	words := splitCaseWords(s)
+	for i, w := range words {
+		words[i] = strings.ToLower(w)
+	}
+	return strings.Join(words, "_"), nil
+}
+
+func applyCamelCase(cur any) (any, error) {
+	s, ok := cur.(string)
+	if !ok {
+		return nil, fmt.Errorf("eval: camel_case: %s is not a string", describeType(cur))
+	}
+	words := splitCaseWords(s)
+	var b strings.Builder
+	for i, w := range words {
+		lower := strings.ToLower(w)
+		if i == 0 {
+			b.WriteString(lower)
+			continue
+		}
+		b.WriteString(capitalizeWord(lower))
+	}
+	return b.String(), nil
+}
+
+// capitalizeWord upper-cases only the first rune of an
+// already-lowercased word - the rest is left as-is, so a multi-byte
+// first rune (e.g. an accented letter) is handled correctly via a rune
+// slice, not a byte index.
+func capitalizeWord(w string) string {
+	r := []rune(w)
+	if len(r) == 0 {
+		return w
+	}
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
+
+// splitCaseWords splits s into words for snake_case/camel_case (#124,
+// ADR-0034): any run of non-letter-non-digit runes is a separator
+// (space, -, _, punctuation, ...) and never appears in the output.
+// Within a run of letters/digits, with no explicit separator, two
+// further rules insert a boundary:
+//
+//  1. Before an uppercase letter directly following a lowercase letter
+//     or a digit ("priorityOrder" -> "priority"/"Order", "q3Report" ->
+//     "q3"/"Report" - the digit counts as "lowercase-like" here, so a
+//     letter-to-digit transition is *not* itself a boundary: "q3"
+//     stays one word, not "q"/"3").
+//  2. Before the last letter of an uppercase run, when that run is
+//     immediately followed by a lowercase letter ("HTTPServer" splits
+//     at the second "S" into "HTTP"/"Server"). Without this rule, rule
+//     1 never fires inside an all-uppercase run (every letter in it is
+//     upper-after-upper), so an acronym followed by a word would never
+//     split at all. A standalone acronym with nothing lowercase after
+//     it ("URL") triggers neither rule and stays one word.
+//
+// Unicode-aware (unicode.IsUpper/IsLower/IsDigit/IsLetter), not
+// ASCII-only, matching upper/lower's own divergence from jq
+// (ADR-0033) - "CaféName" splits into "Café"/"Name".
+func splitCaseWords(s string) []string {
+	runes := []rune(s)
+	var words []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			words = append(words, string(cur))
+			cur = nil
+		}
+	}
+	isWordRune := func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r)
+	}
+	for i, r := range runes {
+		if !isWordRune(r) {
+			flush()
+			continue
+		}
+		if i > 0 && isWordRune(runes[i-1]) {
+			prev := runes[i-1]
+			switch {
+			case (unicode.IsLower(prev) || unicode.IsDigit(prev)) && unicode.IsUpper(r):
+				flush()
+			case unicode.IsUpper(prev) && unicode.IsUpper(r) && i+1 < len(runes) && unicode.IsLower(runes[i+1]):
+				flush()
+			}
+		}
+		cur = append(cur, r)
+	}
+	flush()
+	return words
 }
 
 // dateToken describes one recognized todate format token (#42,
