@@ -132,6 +132,40 @@ are all errors, with no "propagates as null" exception, same as
 `tonumber`'s own deviation from jq, for the same reason: incidental
 copy-paste noise, not a meaningful part of the date text.
 
+## String builtins
+
+([ADR-0033](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0033-upper-lower-trim.md))
+`upper`, `lower`, and `trim` are zero-argument string transforms, useful for
+normalizing a field before writing it to a database or calling an API that
+expects a specific casing, or for cleaning up messy header/column text:
+
+```sh
+xlq '.Sheet1.B2 | lower | trim' path/to/book.xlsx         # a "Status" column cell: "  ACTIVE " -> "active"
+xlq '.Sheet1 | records | map(.Status | lower)' path/to/book.xlsx
+```
+
+Like every builtin, `upper`/`lower`/`trim` are pipeline steps or a
+`map`/`select`/`group_by` filter-expression argument (as above) - never a
+whole filter's own first segment, which always starts from a path
+(`.Sheet1...`). They also parse as a comparison's right-hand side, the same
+grammar position every builtin has (ADR-0022); that position evaluates
+against **the comparison's own current input**, not the left operand's
+result, so it isn't a natural fit here either, the same caveat `sum`/
+`count`/`avg` already carry.
+
+`upper`/`lower` are Unicode-aware (Go's `strings.ToUpper`/`ToLower`), not
+ASCII-only like jq's `ascii_upcase`/`ascii_downcase` - a cell holding `café`
+becomes `CAFÉ`. `trim` matches jq's own `trim` exactly: it strips only
+leading and trailing whitespace, leaving internal runs alone - a cell
+holding `"  a   b  "` becomes `"a   b"`, not `"a b"`. All three require a
+string input and error on anything else, including `null` - no "propagates
+as null" exception, the same rule `tonumber`/`todate` already follow.
+
+More string builtins (`snake_case`, `camel_case`, `replace`) and a way to
+apply one of these to `records`' own keys (`headers(f)`) are tracked in
+[#124](https://github.com/brunoarueira/xlq/issues/124) and
+[#125](https://github.com/brunoarueira/xlq/issues/125).
+
 ## Comparisons
 
 ([ADR-0024](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0024-comparison-operators.md))

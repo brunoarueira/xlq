@@ -456,6 +456,76 @@ func TestEvalToNumberInvalid(t *testing.T) {
 	}
 }
 
+// caseWorkbook is a small, dedicated fixture for the "upper"/"lower"/
+// "trim" builtins (#124, ADR-0033).
+func caseWorkbook() model.Workbook {
+	return model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("Hello World").At(0), // A1: mixed case
+			model.NewStringCell("  padded  ").At(1),  // B1: leading/trailing whitespace, internal none
+			model.NewStringCell("  a   b  ").At(2),   // C1: internal whitespace must survive trim
+			model.NewStringCell("café").At(3),        // D1: non-ASCII, exercises Unicode-aware case folding
+			model.NewNumberCell(42).At(4),            // E1: not a string
+			model.NewBoolCell(true).At(5),            // F1: not a string
+		}},
+	})}}
+}
+
+func TestEvalCase(t *testing.T) {
+	wb := caseWorkbook()
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"upper", ".Sheet1.A1 | upper", "HELLO WORLD"},
+		{"lower", ".Sheet1.A1 | lower", "hello world"},
+		{"trim strips leading/trailing whitespace only", ".Sheet1.B1 | trim", "padded"},
+		{"trim preserves internal whitespace, matching jq", ".Sheet1.C1 | trim", "a   b"},
+		{"upper is Unicode-aware, not ASCII-only like jq's ascii_upcase", ".Sheet1.D1 | upper", "CAFÉ"},
+		{"empty parens is the same as the bare form", ".Sheet1.A1 | upper()", "HELLO WORLD"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalCaseInvalid(t *testing.T) {
+	wb := caseWorkbook()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"upper on a number errors, matching jq", ".Sheet1.E1 | upper"},
+		{"lower on a bool errors, matching jq", ".Sheet1.F1 | lower"},
+		{"trim on null errors, matching jq - no null-propagates exception", ".Sheet1.ZZ1 | trim"},
+		{"upper takes no arguments", `.Sheet1.A1 | upper("x")`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			if _, err := Eval(expr, wb); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
 // todateWorkbook is a small, dedicated fixture for the "todate"
 // builtin (#42): one of every input shape todate needs to handle.
 func todateWorkbook() model.Workbook {
