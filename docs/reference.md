@@ -212,6 +212,14 @@ arguments are literal strings, the same `name(arg, ...)` shape
 `map`/`select`'s. Errors on a non-string current input, including
 `null`, the same rule every string builtin here follows.
 
+Like every builtin, `replace` is a pipeline step or a `map`/`select`/
+`group_by` filter-expression argument - never a whole filter's own
+first segment - and it also parses as a comparison's right-hand side,
+the same grammar position every builtin has (ADR-0022); that position
+evaluates against **the comparison's own current input**, not the left
+operand's result, so it isn't a natural fit here either, the same
+caveat `upper`/`lower`/`trim` and `sum`/`count`/`avg` already carry.
+
 This closes out #124's three-builtin batch (`upper`/`lower`/`trim`,
 `snake_case`/`camel_case`, `replace`). More on applying one of these to
 `records`' own keys (`headers(f)`) is tracked in

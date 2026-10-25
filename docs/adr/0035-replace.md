@@ -13,15 +13,22 @@ before writing it to a database or calling an API - stripping a
 thousands separator (`"1,234" -> "1234"`, before `tonumber`), or
 swapping a delimiter a downstream system doesn't accept.
 
-jq has no direct equivalent: `gsub`/`sub` are regex-based, and
-`ltrimstr`/`rtrimstr` only handle a fixed prefix/suffix, not an
-arbitrary substring anywhere in the string. A plain literal
-substring-for-substring replacement, with no regex involved at all, is
-this project's own addition - deliberately not regex-based, since
-every motivating case is a fixed literal (a specific delimiter
-character, a specific separator), and a regex engine is a much bigger
-surface (syntax to document, a new failure mode for a malformed
-pattern) for a need none of the motivating cases actually have.
+jq has no single named builtin for this, but it does have a working
+idiom: `split(old) | join(new)` (verified against real jq 1.8.2:
+`"1,234,567" | split(",") | join("")` is `"1234567"`) - `gsub`/`sub`
+are the other options, but regex-based, and `ltrimstr`/`rtrimstr` only
+handle a fixed prefix/suffix, not an arbitrary substring anywhere in
+the string. `replace(old, new)` isn't adding a capability jq entirely
+lacks, then - it's a single named builtin instead of a two-step idiom,
+with validation jq's idiom doesn't have on its own (an empty `old`
+rejected as an error, rather than `split("")`'s own defined-but-
+different behavior of splitting into individual characters; a
+non-string `old`/`new` argument rejected with a clear message). Still
+deliberately not regex-based: every motivating case here is a fixed
+literal (a specific delimiter character, a specific separator), and a
+regex engine is a much bigger surface (syntax to document, a new
+failure mode for a malformed pattern) for a need none of the
+motivating cases actually have.
 
 ## Decision
 
