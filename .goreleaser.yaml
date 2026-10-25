@@ -69,9 +69,19 @@ homebrew_casks:
     # browser/brew-downloaded binary and Gatekeeper refuses to run it
     # at all ("xlq is damaged and cannot be opened") - not a cosmetic
     # nicety, per GoReleaser's own docs on this exact hook.
+    #
+    # install_steps, not the deprecated install: Homebrew removed the
+    # free-form Ruby `postflight do ... end` block in favor of a
+    # declarative `postflight_steps do ... end` (only specific helpers
+    # like run/on_macos, no arbitrary Ruby) - GoReleaser v2.19.0 added
+    # install_steps/uninstall_steps to render that form instead. Note
+    # the template variable is now Go-style {{ .StagedPath }}, not
+    # Ruby's #{staged_path} (GoReleaser's own templating substitutes it
+    # before the cask file is written; the old form left Ruby to
+    # resolve #{staged_path} at install time instead).
     hooks:
       post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/xlq"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/xlq"]
           end
