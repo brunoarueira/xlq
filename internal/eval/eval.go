@@ -353,6 +353,8 @@ func applyBuiltin(name string, args []any, cur any) (any, error) {
 			return nil, fmt.Errorf("eval: camel_case takes no arguments, got %d", len(args))
 		}
 		return applyCamelCase(cur)
+	case "replace":
+		return applyReplace(cur, args)
 	default:
 		// Unreachable today: internal/filter's own builtinNames set
 		// already rejects any other name at parse time. Kept as a
@@ -839,6 +841,39 @@ func isTrailingPluralS(runes []rune, i int) bool {
 		return false
 	}
 	return i+1 >= len(runes) || (!unicode.IsLetter(runes[i+1]) && !unicode.IsDigit(runes[i+1]))
+}
+
+// applyReplace implements the "replace(old, new)" builtin (#124,
+// ADR-0035): replaces every occurrence of old in a string input with
+// new, matching Go's own strings.ReplaceAll (every occurrence, not
+// just the first - languages disagree on this default, so ADR-0035
+// calls it out explicitly rather than leaving it implicit). old must
+// be a non-empty string: strings.ReplaceAll with an empty old inserts
+// new between every rune of the input, never what any motivating case
+// here wants, so it's rejected rather than passed through. The current
+// input must be a string, erroring on anything else including null -
+// the same rule every other string builtin in this file follows
+// (applyCase, ADR-0033; applySnakeCase/applyCamelCase, ADR-0034).
+func applyReplace(cur any, args []any) (any, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("eval: replace takes exactly two arguments (old, new), got %d", len(args))
+	}
+	old, ok := args[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("eval: replace: old argument must be a string, got %s", describeType(args[0]))
+	}
+	if old == "" {
+		return nil, fmt.Errorf("eval: replace: old argument must not be empty")
+	}
+	newVal, ok := args[1].(string)
+	if !ok {
+		return nil, fmt.Errorf("eval: replace: new argument must be a string, got %s", describeType(args[1]))
+	}
+	s, ok := cur.(string)
+	if !ok {
+		return nil, fmt.Errorf("eval: replace: %s is not a string", describeType(cur))
+	}
+	return strings.ReplaceAll(s, old, newVal), nil
 }
 
 // dateToken describes one recognized todate format token (#42,

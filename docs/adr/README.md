@@ -40,6 +40,7 @@ xlq, using the format described in
 | [0032](0032-goreleaser-v2-19-postflight-steps.md) | Upgrade GoReleaser to v2.19.0 for `postflight_steps` |
 | [0033](0033-upper-lower-trim.md) | `upper`, `lower`, `trim`: jq-parity string builtins |
 | [0034](0034-snake-case-camel-case.md) | `snake_case`, `camel_case`: word-boundary case conversion |
+| [0035](0035-replace.md) | `replace(old, new)`: literal substring replacement |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is

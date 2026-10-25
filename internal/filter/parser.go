@@ -131,6 +131,7 @@ var builtinNames = map[string]bool{
 	"trim":       true, // #124
 	"snake_case": true, // #124
 	"camel_case": true, // #124
+	"replace":    true, // #124
 }
 
 // filterArgBuiltins are builtins whose single argument is a recursive

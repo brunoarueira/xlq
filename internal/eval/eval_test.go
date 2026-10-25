@@ -629,6 +629,74 @@ func TestEvalSnakeCaseCamelCaseInvalid(t *testing.T) {
 	}
 }
 
+// replaceWorkbook is a small, dedicated fixture for the "replace"
+// builtin (#124, ADR-0035).
+func replaceWorkbook() model.Workbook {
+	return model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("1,234,567").At(0), // A1: multiple occurrences
+			model.NewStringCell(";a;b;c").At(1),    // B1: delimiter swap
+			model.NewNumberCell(42).At(2),          // C1: not a string
+		}},
+	})}}
+}
+
+func TestEvalReplace(t *testing.T) {
+	wb := replaceWorkbook()
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{"every occurrence is replaced, not just the first", `.Sheet1.A1 | replace(",", "")`, "1234567"},
+		{"composes with tonumber", `.Sheet1.A1 | replace(",", "") | tonumber`, 1234567.0},
+		{"delimiter swap", `.Sheet1.B1 | replace(";", "|")`, "|a|b|c"},
+		{"old not found is a no-op, not an error", `.Sheet1.A1 | replace("z", "Z")`, "1,234,567"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalReplaceInvalid(t *testing.T) {
+	wb := replaceWorkbook()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"empty old argument errors", `.Sheet1.A1 | replace("", "x")`},
+		{"non-string old argument errors", `.Sheet1.A1 | replace(5, "x")`},
+		{"non-string new argument errors", `.Sheet1.A1 | replace(",", 5)`},
+		{"replace on a number errors, matching every other string builtin's precedent", `.Sheet1.C1 | replace(",", "")`},
+		{"replace on null errors - no null-propagates exception", `.Sheet1.ZZ1 | replace(",", "")`},
+		{"wrong argument count", `.Sheet1.A1 | replace(",")`},
+		{"no arguments at all", `.Sheet1.A1 | replace`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			if _, err := Eval(expr, wb); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
 // todateWorkbook is a small, dedicated fixture for the "todate"
 // builtin (#42): one of every input shape todate needs to handle.
 func todateWorkbook() model.Workbook {
