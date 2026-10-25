@@ -48,6 +48,27 @@ two further rules insert a boundary:
    rule and stays one word, matching the common convention (`URL` ->
    `url`, not `u`/`r`/`l`).
 
+Rule 2 is itself suppressed for one specific shape: a lone lowercase
+`s` that ends the whole word-rune run - a plural acronym. Applied
+naively, rule 2 turns `URLs` into `UR`/`Ls` and `IDs` into `I`/`Ds`,
+since the rule only looks one character ahead and a single trailing
+`s` satisfies "an uppercase run followed by a lowercase letter" just
+as well as a real word would. A real word is practically never just
+`s` on its own, so treating a *lone, run-ending* `s` as the plural
+suffix instead - keeping it attached to the acronym - fixes both
+(`URLs` and `IDs` each stay one word; `RelatedURLs` correctly splits
+into `Related`/`URLs`), without touching rule 2's normal behavior:
+`URLString` still splits into `URL`/`String`, since the letter right
+after that run is `t`, not a lone `s`. Found in review (cubic), not
+caught while designing the original two rules - confirmed both the bug
+and the fix against the real build before changing anything.
+
+Deliberately not handled, as a result of staying this narrowly scoped:
+a plural acronym fused with another capitalized word with no separator
+at all (`APIsAvailable`) still splits oddly (`AP`/`Is`/`Available`) -
+genuinely ambiguous without a dictionary of known acronyms, and rare
+enough in real header/field names not to chase further here.
+
 Verified by hand-tracing both rules against every case above, plus
 `ACCOUNT_NAME` (splits only on the explicit `_`, giving `ACCOUNT`/
 `NAME` - neither rule fires inside a fully-uppercase word with no
@@ -65,6 +86,38 @@ divergence from jq's own ASCII-only `ascii_upcase`/`ascii_downcase`
 ADR-0033 already made, for the same reason (spreadsheet data routinely
 isn't ASCII-only). `CaféName` splits into `Café`/`Name` (the accented
 `é` is a lowercase letter, so the `é`->`N` transition is rule 1).
+
+### A combining mark counts as a word rune, so it isn't dropped as a separator
+
+Also found in review (cubic): a combining mark (Unicode category
+`Mn`/`Mc` - an accent or vowel sign stored as its own code point,
+rather than fused into a single precomposed character) isn't a letter
+or a digit, so the original rule - anything that isn't a letter or
+digit is a separator - treated one as a separator too. That's wrong in
+two ways at once: the mark itself is silently dropped (never added to
+any word), and a word gets split in the middle of what should be one
+character, exactly where the mark sits. This matters beyond rare
+NFD-decomposed Latin text (`café` stored as `e` + U+0301) - Devanagari,
+Thai, and other Indic scripts routinely spell ordinary words with
+combining marks as a normal part of their encoding, not an edge case:
+`नमस्ते` has two (`U+094D`, `U+0947`), and the original rule would have
+mangled it into `नमस`/`त` with both marks gone, not just miscased. A
+mark is now a word rune too, confirmed via the real implementation
+(not just reasoned about) to ride along with whatever word it's
+already in: it's never itself upper/lower, so it can't trigger rule 1
+or rule 2 on its own.
+
+This doesn't make case-boundary detection decomposition-aware in
+general: a mark sitting *between* a base letter and a following
+capital blocks rule 1 from firing there, since the rule looks at the
+literal previous rune, which is now the mark, not the base letter
+before it (`"caféName"`, decomposed, stays one word - unlike the
+precomposed `"CaféName"`, which splits into `Café`/`Name`). Fixing
+that would need tracking each word-rune run's last *base* character
+separately from the literal previous rune - not done here, since the
+bug being fixed is data loss (marks disappearing, words splitting
+mid-character), not imperfect recognition of a boundary that
+decomposition happens to obscure.
 
 ### Rejoining: `snake_case` lowercases and joins with `_`; `camel_case` lowercases, capitalizes every word but the first, and concatenates
 

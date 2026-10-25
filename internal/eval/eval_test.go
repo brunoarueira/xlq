@@ -550,6 +550,12 @@ func TestSplitCaseWords(t *testing.T) {
 		{"collapsed consecutive separators", "foo__bar", []string{"foo", "bar"}},
 		{"separators only", "---", nil},
 		{"empty string", "", nil},
+		{"a trailing lone 's' after an acronym is its plural, not a new word", "URLs", []string{"URLs"}},
+		{"same, two-letter acronym", "IDs", []string{"IDs"}},
+		{"plural acronym following a real word", "RelatedURLs", []string{"Related", "URLs"}},
+		{"a lowercase letter other than a lone 's' after an acronym still splits normally", "URLString", []string{"URL", "String"}},
+		{"a combining mark (NFD é = e + U+0301) rides along with its base letter, not dropped as a separator", "café", []string{"café"}},
+		{"a combining mark mid-word (Devanagari virama) is kept, not split or dropped", "नमस्ते", []string{"नमस्ते"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

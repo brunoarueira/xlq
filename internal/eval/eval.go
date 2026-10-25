@@ -776,7 +776,27 @@ func capitalizeWord(w string) string {
 //
 // Unicode-aware (unicode.IsUpper/IsLower/IsDigit/IsLetter), not
 // ASCII-only, matching upper/lower's own divergence from jq
-// (ADR-0033) - "CaféName" splits into "Café"/"Name".
+// (ADR-0033) - "CaféName" splits into "Café"/"Name". A combining mark
+// (Unicode category Mn/Mc - an accent or vowel sign stored as its own
+// code point, as in NFD-decomposed Latin or in Devanagari/Thai text)
+// counts as a word rune too, so it rides along with the base letter
+// before it instead of being treated as a separator and silently
+// dropped - a mark is never itself upper/lower/digit, so it can't
+// trigger rule 1 or rule 2 below, only extend whatever word it's
+// already part of.
+//
+// Rule 2 is deliberately suppressed for a trailing lone lowercase "s"
+// that ends the whole word-rune run ("URLs" -> "URLs" (one word, not
+// "UR"/"Ls"), "IDs" -> "IDs", "RelatedURLs" -> "Related"/"URLs") - a
+// real word practically never consists of just "s" on its own, so this
+// is almost always the English plural suffix on an acronym, not the
+// start of a genuine new word. It only suppresses that exact shape:
+// "URLString" still splits normally into "URL"/"String" (the letter
+// right after the uppercase run is "t", not a lone "s"), and a plural
+// acronym immediately fused with another capitalized word with no
+// separator ("APIsAvailable") isn't specially handled either - both
+// are accepted, documented imperfections, not claimed to be solved
+// here.
 func splitCaseWords(s string) []string {
 	runes := []rune(s)
 	var words []string
@@ -788,7 +808,7 @@ func splitCaseWords(s string) []string {
 		}
 	}
 	isWordRune := func(r rune) bool {
-		return unicode.IsLetter(r) || unicode.IsDigit(r)
+		return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r)
 	}
 	for i, r := range runes {
 		if !isWordRune(r) {
@@ -800,7 +820,7 @@ func splitCaseWords(s string) []string {
 			switch {
 			case (unicode.IsLower(prev) || unicode.IsDigit(prev)) && unicode.IsUpper(r):
 				flush()
-			case unicode.IsUpper(prev) && unicode.IsUpper(r) && i+1 < len(runes) && unicode.IsLower(runes[i+1]):
+			case unicode.IsUpper(prev) && unicode.IsUpper(r) && i+1 < len(runes) && unicode.IsLower(runes[i+1]) && !isTrailingPluralS(runes, i+1):
 				flush()
 			}
 		}
@@ -808,6 +828,17 @@ func splitCaseWords(s string) []string {
 	}
 	flush()
 	return words
+}
+
+// isTrailingPluralS reports whether runes[i] is a lone lowercase "s"
+// ending the word-rune run it's in - see splitCaseWords' rule 2 doc
+// comment for why that's treated as a pluralized acronym rather than
+// the start of a new word.
+func isTrailingPluralS(runes []rune, i int) bool {
+	if runes[i] != 's' {
+		return false
+	}
+	return i+1 >= len(runes) || (!unicode.IsLetter(runes[i+1]) && !unicode.IsDigit(runes[i+1]))
 }
 
 // dateToken describes one recognized todate format token (#42,
