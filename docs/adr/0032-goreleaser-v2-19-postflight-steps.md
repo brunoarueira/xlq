@@ -48,8 +48,14 @@ hooks:
       end
 ```
 
-Two syntax changes from ADR-0016's version, both load-bearing:
+Three syntax changes from the actual pre-PR `.goreleaser.yaml` (not
+ADR-0016's own hook example, which already showed `on_macos`/`run` -
+that was the broken form ADR-0028 replaced with `if OS.mac?`/
+`system_command`, the version this PR actually started from), all
+load-bearing:
 
+- `on_macos do ... end`, not `if OS.mac? ... end` - `postflight_steps`
+  exposes `on_macos` as a step-DSL conditional, not a bare Ruby `if`.
 - `run`, not `system_command` - `postflight_steps` only exposes a
   fixed set of declarative helpers, not arbitrary Ruby method calls.
 - `{{ .StagedPath }}`, not `#{staged_path}` - this is now a GoReleaser
