@@ -126,6 +126,9 @@ var builtinNames = map[string]bool{
 	"sum":      true, // #38
 	"count":    true, // #38
 	"avg":      true, // #38
+	"upper":    true, // #124
+	"lower":    true, // #124
+	"trim":     true, // #124
 }
 
 // filterArgBuiltins are builtins whose single argument is a recursive

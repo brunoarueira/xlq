@@ -132,6 +132,31 @@ are all errors, with no "propagates as null" exception, same as
 `tonumber`'s own deviation from jq, for the same reason: incidental
 copy-paste noise, not a meaningful part of the date text.
 
+## String builtins
+
+([ADR-0033](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0033-upper-lower-trim.md))
+`upper`, `lower`, and `trim` are zero-argument string transforms, useful for
+normalizing a field before writing it to a database or calling an API that
+expects a specific casing, or for cleaning up messy header/column text:
+
+```sh
+xlq '.Status | lower | trim' path/to/book.xlsx         # "  ACTIVE " -> "active"
+xlq '.Sheet1 | records | map(.Status | lower)' path/to/book.xlsx
+```
+
+`upper`/`lower` are Unicode-aware (Go's `strings.ToUpper`/`ToLower`), not
+ASCII-only like jq's `ascii_upcase`/`ascii_downcase` - `"café" | upper` is
+`"CAFÉ"`. `trim` matches jq's own `trim` exactly: it strips only leading and
+trailing whitespace, leaving internal runs alone (`"  a   b  " | trim` is
+`"a   b"`, not `"a b"`). All three require a string input and error on
+anything else, including `null` - no "propagates as null" exception, the
+same rule `tonumber`/`todate` already follow.
+
+More string builtins (`snake_case`, `camel_case`, `replace`) and a way to
+apply one of these to `records`' own keys (`headers(f)`) are tracked in
+[#124](https://github.com/brunoarueira/xlq/issues/124) and
+[#125](https://github.com/brunoarueira/xlq/issues/125).
+
 ## Comparisons
 
 ([ADR-0024](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0024-comparison-operators.md))

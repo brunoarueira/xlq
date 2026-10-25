@@ -327,6 +327,21 @@ func applyBuiltin(name string, args []any, cur any) (any, error) {
 			return nil, fmt.Errorf("eval: avg takes no arguments, got %d", len(args))
 		}
 		return applyAvg(cur)
+	case "upper":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("eval: upper takes no arguments, got %d", len(args))
+		}
+		return applyCase(cur, "upper", strings.ToUpper)
+	case "lower":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("eval: lower takes no arguments, got %d", len(args))
+		}
+		return applyCase(cur, "lower", strings.ToLower)
+	case "trim":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("eval: trim takes no arguments, got %d", len(args))
+		}
+		return applyCase(cur, "trim", strings.TrimSpace)
 	default:
 		// Unreachable today: internal/filter's own builtinNames set
 		// already rejects any other name at parse time. Kept as a
@@ -665,6 +680,20 @@ func applyToNumber(cur any) (any, error) {
 	default:
 		return nil, fmt.Errorf("eval: tonumber: %s cannot be parsed as a number", describeType(cur))
 	}
+}
+
+// applyCase implements the "upper"/"lower"/"trim" builtins (#124,
+// ADR-0033): each applies fn to a string input and errors on anything
+// else, including null - matching real jq's own ascii_upcase/
+// ascii_downcase/trim (1.8.2, 1.7+ respectively), which all error
+// rather than pass a non-string value through unchanged. name is
+// purely for the error message, so all three share one implementation.
+func applyCase(cur any, name string, fn func(string) string) (any, error) {
+	s, ok := cur.(string)
+	if !ok {
+		return nil, fmt.Errorf("eval: %s: %s is not a string", name, describeType(cur))
+	}
+	return fn(s), nil
 }
 
 // dateToken describes one recognized todate format token (#42,
