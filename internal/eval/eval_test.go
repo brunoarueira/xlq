@@ -265,7 +265,8 @@ func TestEvalInvalid(t *testing.T) {
 		{"slicing a sheet directly", `.Sheet1[1:3]`},
 		{"slicing a workbook", `.[1:3]`},
 		{"slicing a scalar", ".Sheet1.A1[0:1]"},
-		{"records rejects arguments at eval time (ADR-0022)", `.Sheet1 | records("x")`},
+		{"records' argument must be headers(...), not an arbitrary filter expression (#125, ADR-0036)", `.Sheet1 | records(.A1)`},
+		{"records' argument must be headers(...), not another builtin (#125, ADR-0036)", `.Sheet1 | records(tonumber)`},
 	}
 
 	for _, tc := range cases {
@@ -1405,6 +1406,144 @@ func TestEvalToDateInvalid(t *testing.T) {
 	}
 }
 
+// headersWorkbook is a small, dedicated fixture for the "headers(f)"
+// builtin and records(headers(f)) (#125, ADR-0036): a named header, a
+// PascalCase header needing a real transform, and a data row one
+// column wider than the header row, so the extra column's own
+// letter-fallback name ("C") gets transformed too, the same as a real
+// header would.
+func headersWorkbook() model.Workbook {
+	return model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("Account").At(0),
+			model.NewStringCell("PriorityOrder").At(1),
+		}},
+		{Index: 1, Cells: []model.Cell{
+			model.NewStringCell("acme").At(0),
+			model.NewStringCell("1").At(1),
+			model.NewStringCell("extra").At(2), // column C, no header cell at all
+		}},
+	})}}
+}
+
+// headersCollideWorkbook has two distinct real headers that collide
+// once lowercased, for checkUniqueHeaders' records-only behavior
+// (#125, ADR-0036).
+func headersCollideWorkbook() model.Workbook {
+	return model.Workbook{Sheets: []model.Sheet{model.NewSheet("Sheet1", []model.Row{
+		{Index: 0, Cells: []model.Cell{
+			model.NewStringCell("account").At(0),
+			model.NewStringCell("Account").At(1),
+		}},
+		{Index: 1, Cells: []model.Cell{
+			model.NewStringCell("foo").At(0),
+			model.NewStringCell("bar").At(1),
+		}},
+	})}}
+}
+
+func TestEvalHeaders(t *testing.T) {
+	wb := headersWorkbook()
+	cases := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{
+			"standalone headers(f), including the letter-fallback column",
+			".Sheet1 | headers(snake_case)",
+			[]any{"account", "priority_order", "c"},
+		},
+		{
+			"records(headers(f)) drives the resulting keys",
+			".Sheet1 | records(headers(snake_case))",
+			[]map[string]any{{"account": "acme", "priority_order": "1", "c": "extra"}},
+		},
+		{
+			"headers(f) works with any string-producing transform, not just snake_case",
+			".Sheet1 | headers(lower)",
+			[]any{"account", "priorityorder", "c"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := filter.Parse(tc.input)
+			if err != nil {
+				t.Fatalf("filter.Parse(%q): %v", tc.input, err)
+			}
+			got, err := Eval(expr, wb)
+			if err != nil {
+				t.Fatalf("Eval(%q) returned error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Eval(%q) = %#v, want %#v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalHeadersCollision(t *testing.T) {
+	wb := headersCollideWorkbook()
+
+	standalone, err := Eval(mustParse(t, ".Sheet1 | headers(lower)"), wb)
+	if err != nil {
+		t.Fatalf("standalone headers(lower) on a colliding sheet: want no error, got %v", err)
+	}
+	want := []any{"account", "account"}
+	if !reflect.DeepEqual(standalone, want) {
+		t.Errorf("headers(lower) = %#v, want %#v", standalone, want)
+	}
+
+	if _, err := Eval(mustParse(t, ".Sheet1 | records(headers(lower))"), wb); err == nil {
+		t.Error("records(headers(lower)) on the same colliding sheet: want error, got nil")
+	}
+}
+
+func TestEvalHeadersInvalid(t *testing.T) {
+	wb := headersWorkbook()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"headers(f) on a non-sheet errors", ".Sheet1.A1 | headers(snake_case)"},
+		{"a transform that doesn't produce a string errors", `.Sheet1 | headers(. == "Account")`},
+		{"records' argument must be headers(...), not a path", ".Sheet1 | records(.A1)"},
+		{"records' argument must be headers(...), not another builtin", ".Sheet1 | records(tonumber)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Eval(mustParse(t, tc.input), wb); err == nil {
+				t.Errorf("Eval(%q): want error, got nil", tc.input)
+			}
+		})
+	}
+}
+
+// TestSheetHeaderScanBufferRows guards a fix found in review (cubic):
+// applyHeaders only needs the header names and the column count
+// sheetHeaderScan determines, never the buffered data rows themselves
+// - bufferRows=false must mean exactly that, not merely "unused by
+// this caller" while still being collected underneath.
+func TestSheetHeaderScanBufferRows(t *testing.T) {
+	sheet := headersWorkbook().Sheets[0]
+
+	_, _, dataRows, err := sheetHeaderScan(sheet, "headers", false)
+	if err != nil {
+		t.Fatalf("sheetHeaderScan(bufferRows=false) returned error: %v", err)
+	}
+	if dataRows != nil {
+		t.Errorf("sheetHeaderScan(bufferRows=false) dataRows = %#v, want nil", dataRows)
+	}
+
+	_, _, dataRows, err = sheetHeaderScan(sheet, "records", true)
+	if err != nil {
+		t.Fatalf("sheetHeaderScan(bufferRows=true) returned error: %v", err)
+	}
+	if len(dataRows) == 0 {
+		t.Error("sheetHeaderScan(bufferRows=true) dataRows is empty, want the sheet's one data row")
+	}
+}
+
 // TestEvalRecordsEmptyParens guards ADR-0022's own claim that
 // "records()" and bare "records" are the exact same Builtin, not two
 // different code paths that happen to currently agree.
@@ -1454,6 +1593,8 @@ func TestEvalRecordsIndexAndFieldAccess(t *testing.T) {
 		},
 		{"negative index too far back is null, not an error", `.Sheet1 | records | .[-99]`, nil},
 		{"records on a missing sheet propagates null", `.NoSuchSheet | records`, nil},
+		{"headers(f) on a missing sheet propagates null too, matching records (#125, ADR-0036)", `.NoSuchSheet | headers(snake_case)`, nil},
+		{"records(headers(f)) on a missing sheet propagates null too, matching records (#125, ADR-0036)", `.NoSuchSheet | records(headers(snake_case))`, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

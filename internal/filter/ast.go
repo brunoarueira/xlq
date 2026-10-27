@@ -5,7 +5,9 @@
 // added by docs/adr/0011-header-aware-record-output.md, generalized
 // into Builtin by docs/adr/0022-extensible-builtins.md; comparison
 // operators added by docs/adr/0024-comparison-operators.md; map/select
-// added by docs/adr/0025-map-select-filter-arguments.md). Evaluating
+// added by docs/adr/0025-map-select-filter-arguments.md; records' own
+// optional argument and the headers builtin added by
+// docs/adr/0036-headers-builtin.md). Evaluating
 // that AST against a model.Workbook is a later package's job - this one
 // only covers syntax.
 package filter
@@ -102,7 +104,13 @@ func (Comparison) exprNode() {}
 // FilterArg is "name(arg)" (ADR-0025): a builtin whose single argument
 // is itself a recursive filter expression - unlike Builtin's own Args
 // ([]any literals, ADR-0022) - evaluated once per element of the array
-// it runs on, with "." rebound to that element. map and select.
+// it runs on, with "." rebound to that element. map, select, and
+// group_by evaluate Arg once per element of an array. headers
+// (ADR-0036) evaluates it once per header-row string instead - still
+// "once per element of the thing this operates on," just a different
+// thing. records (also ADR-0036) reuses this same node shape for its
+// own optional argument, which must itself be a headers FilterArg, not
+// an arbitrary filter expression - checked at eval time.
 type FilterArg struct {
 	Name string
 	Arg  Expr
