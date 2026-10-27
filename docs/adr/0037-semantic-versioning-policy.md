@@ -20,7 +20,7 @@ it against:
 | minor | 0.1.2 -> 0.2.0 | new functionality |
 | minor | 0.2.0 -> 0.3.0 | the public docs site - reasoned explicitly at the time as "minor not major, since everything is additive" |
 | patch | 0.3.0 -> 0.3.1 | the Homebrew `postflight` hook fix - pipeline-only, no filter-language change at all |
-| minor | 0.3.1 -> 0.4.0 | four new builtins (`upper`/`lower`/`trim`, `snake_case`/`camel_case`, `replace`, `headers(f)`) |
+| minor | 0.3.1 -> 0.4.0 | seven new builtins across four PRs (`upper`, `lower`, `trim`, `snake_case`, `camel_case`, `replace`, `headers`) |
 
 Every one of these bumps already matches ordinary semver *in spirit* -
 this ADR is making that explicit and permanent, not changing course.
@@ -46,11 +46,15 @@ which is about the bump *rule*, not a 1.0 timeline or readiness
 criteria), `MINOR` and `PATCH` are read exactly like they would be
 post-1.0:
 
-- **`PATCH`**: a fix with no new functionality and no behavior change a
-  user would notice in ordinary use - a bug fix, a docs-only change, a
+- **`PATCH`**: a backward-compatible fix with no new functionality - a
+  bug fix (correcting behavior that was already wrong, not adding a
+  capability that didn't exist before), a docs-only change, a
   release-pipeline-only change (0.3.0 -> 0.3.1's Homebrew hook fix is
   the clearest example so far: it changed nothing about `xlq` itself,
-  only how its release artifacts are built).
+  only how its release artifacts are built). A bug fix necessarily
+  changes the behavior a user sees (that's the fix) - "no new
+  functionality" is the actual line between this and `MINOR`, not "no
+  observable change."
 - **`MINOR`**: new, backward-compatible functionality - a new builtin,
   a new flag, a new output mode, a new supported input format. Still
   pre-1.0, so there's no compatibility *promise* being made the way a
