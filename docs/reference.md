@@ -66,6 +66,32 @@ encoder orders any object's keys. It also assumes row 1 actually is a
 header row; piping a sheet without one into `records` will treat its first
 data row as headers instead.
 
+### `headers(f)`
+
+([ADR-0036](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0036-headers-builtin.md))
+applies a filter - typically one of the [string builtins](#string-builtins)
+below - to every header name, either on its own (to preview the result) or
+nested inside `records` (to actually rename the resulting keys):
+
+```sh
+xlq '.Sheet1 | headers(snake_case)' path/to/book.xlsx
+# -> ["account", "priority_order"]
+
+xlq '.Sheet1 | records(headers(snake_case))' path/to/book.xlsx
+# -> [{"account": "acme", "priority_order": "1"}]
+```
+
+`records(f)` alone - any `f` other than `headers(...)` - is an error:
+`records`'s only valid argument shape is `headers(...)`, checked at eval
+time (the parser accepts any filter expression there, the same way it
+does for `map`/`select`'s own argument). An unnamed column's own letter
+fallback (`records`' own behavior, above) is transformed too, same as a
+real header name. Unlike `records` itself, standalone `headers(f)`
+tolerates two columns transforming to the same name (its result is a
+plain array, not a set of object keys) - `records(headers(f))` still
+errors on that collision, the same "duplicate header" error plain
+`records` already has for two identically-named columns.
+
 ## Conversions
 
 ### `tonumber`
@@ -221,9 +247,8 @@ operand's result, so it isn't a natural fit here either, the same
 caveat `upper`/`lower`/`trim` and `sum`/`count`/`avg` already carry.
 
 This closes out #124's three-builtin batch (`upper`/`lower`/`trim`,
-`snake_case`/`camel_case`, `replace`). More on applying one of these to
-`records`' own keys (`headers(f)`) is tracked in
-[#125](https://github.com/brunoarueira/xlq/issues/125).
+`snake_case`/`camel_case`, `replace`). See [`headers(f)`](#headersf)
+above for applying one of these to `records`' own keys.
 
 ## Comparisons
 

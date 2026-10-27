@@ -15,18 +15,21 @@ import (
 // docs/adr/0020-array-slicing.md, the comparison form added by
 // docs/adr/0024-comparison-operators.md, the map/select
 // filter-expression-argument form added by
-// docs/adr/0025-map-select-filter-arguments.md, and group_by, which
-// reuses that same form unchanged (docs/adr/0027-group-by.md):
+// docs/adr/0025-map-select-filter-arguments.md, group_by, which
+// reuses that same form unchanged (docs/adr/0027-group-by.md), and
+// records' own optional filter-expression argument plus the headers
+// builtin, both added by docs/adr/0036-headers-builtin.md:
 //
 //	filter         = pipeline | assignment
 //	pipeline       = first ( "|" step )*
 //	first          = path ( cmp_op operand )?
 //	step           = step_operand ( cmp_op operand )?
-//	step_operand   = path | builtin | filter_arg_builtin
+//	step_operand   = path | builtin | filter_arg_builtin | records
 //	operand        = path | builtin | value
 //	cmp_op         = "==" | "!=" | "<" | ">" | "<=" | ">="
 //	builtin        = IDENT ( "(" ( value ( "," value )* )? ")" )?
-//	filter_arg_builtin = ( "map" | "select" | "group_by" ) "(" filter_arg ")"
+//	filter_arg_builtin = ( "map" | "select" | "group_by" | "headers" ) "(" filter_arg ")"
+//	records        = "records" ( "(" filter_arg? ")" )?
 //	filter_arg     = step_operand ( cmp_op operand )? ( "|" step_operand ( cmp_op operand )? )*
 //	path           = "." ( head tail* )?
 //	head           = IDENT | "[" STRING "]" | "[" INT "]" | "[" slice "]"
@@ -120,7 +123,6 @@ func (p *parser) advance() token {
 // validated - this set exists only to keep typo-detection at parse
 // time, not to duplicate that validation.
 var builtinNames = map[string]bool{
-	"records":    true,
 	"tonumber":   true, // #37
 	"todate":     true, // #42
 	"sum":        true, // #38
@@ -137,23 +139,33 @@ var builtinNames = map[string]bool{
 // filterArgBuiltins are builtins whose single argument is a recursive
 // filter expression, not a literal (ADR-0025) - a disjoint set from
 // builtinNames, parsed via parseFilterArgBuiltin instead of
-// parseBuiltinArgs.
+// parseBuiltinArgs. "records" is deliberately not in this set despite
+// now also taking a filter-expression argument (#125, ADR-0036) - it's
+// the one builtin with two valid shapes (bare/empty-parens, with no
+// argument at all, and a single filter-expression argument), so it has
+// its own parseRecords instead of parseFilterArgBuiltin, which always
+// requires an argument.
 var filterArgBuiltins = map[string]bool{
 	"map":      true,
 	"select":   true,
 	"group_by": true, // #38
+	"headers":  true, // #125
 }
 
-// parseStep parses one pipeline step after a "|": a path, a literal-arg
-// builtin reference (ADR-0011, generalized by ADR-0022), or a
-// filter-expression-arg builtin (ADR-0025), now optionally followed by
-// a comparison against a second operand (ADR-0024). None of these are
-// valid as a filter's first segment - Parse always parses that via
-// parsePath, never parseStep.
+// parseStep parses one pipeline step after a "|": a path, records
+// (ADR-0011/ADR-0022/ADR-0036, its own bespoke shape), a literal-arg
+// builtin reference (ADR-0022), or a filter-expression-arg builtin
+// (ADR-0025), now optionally followed by a comparison against a second
+// operand (ADR-0024). None of these are valid as a filter's first
+// segment - Parse always parses that via parsePath, never parseStep.
 func (p *parser) parseStep() (Expr, error) {
 	var left Expr
 	var err error
 	switch {
+	case p.peek().kind == tokIdent && p.peek().text == "records":
+		if left, err = p.parseRecords(); err != nil {
+			return nil, err
+		}
 	case p.peek().kind == tokIdent && filterArgBuiltins[p.peek().text]:
 		if left, err = p.parseFilterArgBuiltin(); err != nil {
 			return nil, err
@@ -171,6 +183,37 @@ func (p *parser) parseStep() (Expr, error) {
 		}
 	}
 	return p.maybeComparison(left)
+}
+
+// parseRecords parses "records" (ADR-0011, generalized by ADR-0022):
+// bare, with empty parens (both produce the same zero-argument
+// Builtin), or - new here (#125, ADR-0036) - with a single
+// filter-expression argument, which must itself be headers(f) (checked
+// at eval time, not here, the same "argument count/type isn't
+// validated until eval" split every other builtin already has).
+// records needs this bespoke parsing because it's the only builtin
+// with two valid argument shapes at once: neither filterArgBuiltins
+// (always requires a filter-expression argument) nor builtinNames
+// (only ever literal arguments) fits it alone.
+func (p *parser) parseRecords() (Expr, error) {
+	p.advance() // "records"
+	if p.peek().kind != tokLParen {
+		return Builtin{Name: "records"}, nil
+	}
+	p.advance()
+	if p.peek().kind == tokRParen {
+		p.advance()
+		return Builtin{Name: "records"}, nil
+	}
+	arg, err := p.parseFilterArgExpr()
+	if err != nil {
+		return nil, err
+	}
+	if p.peek().kind != tokRParen {
+		return nil, fmt.Errorf("filter: expected %q at position %d, found %s", ")", p.peek().pos, p.peek().describe())
+	}
+	p.advance()
+	return FilterArg{Name: "records", Arg: arg}, nil
 }
 
 // parseFilterArgBuiltin parses "name(filter)" (ADR-0025, ADR-0027):

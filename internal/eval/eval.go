@@ -375,11 +375,15 @@ func applyFilterArg(name string, arg filter.Expr, cur any) (any, error) {
 		return applySelect(arg, cur)
 	case "group_by":
 		return applyGroupBy(arg, cur)
+	case "headers":
+		return applyHeaders(arg, cur)
+	case "records":
+		return applyRecordsWithHeaders(arg, cur)
 	default:
 		// Unreachable today: internal/filter's own filterArgBuiltins set
-		// already rejects any other name at parse time, the same
-		// consistency guard applyBuiltin's own default case already
-		// uses.
+		// and parseRecords already reject any other name at parse time,
+		// the same consistency guard applyBuiltin's own default case
+		// already uses.
 		return nil, fmt.Errorf("eval: unknown filter-expression builtin %q", name)
 	}
 }
@@ -609,16 +613,90 @@ func applyAvg(cur any) (any, error) {
 	return total / float64(count), nil
 }
 
-// applyRecords implements the "records" builtin (ADR-0011): an array of
-// record objects, one per data row, keyed by header name.
+// applyRecords implements bare "records"/"records()" (ADR-0011): an
+// array of record objects, one per data row, keyed by header name
+// as-is. records(headers(f)) - a renamed-key variant - is
+// applyRecordsWithHeaders instead (#125, ADR-0036), since it arrives
+// as a different AST shape (filter.FilterArg, not filter.Builtin).
 func applyRecords(cur any) (any, error) {
 	switch v := cur.(type) {
 	case nil:
 		return nil, nil
 	case model.Sheet:
-		return sheetRecords(v)
+		return sheetRecords(v, nil)
 	default:
 		return nil, fmt.Errorf("eval: records: cannot apply to %s - records only applies to a sheet", describeType(cur))
+	}
+}
+
+// applyRecordsWithHeaders implements "records(headers(f))" (#125,
+// ADR-0036) - records' one valid argument shape. arg must itself be a
+// headers FilterArg node; anything else (a plain path, a different
+// builtin, a comparison, ...) is rejected here, not at parse time -
+// parseRecords accepts any filter expression in this position, since
+// it has no way to know records' own argument contract, and only eval
+// does.
+func applyRecordsWithHeaders(arg filter.Expr, cur any) (any, error) {
+	headersArg, ok := arg.(filter.FilterArg)
+	if !ok || headersArg.Name != "headers" {
+		return nil, fmt.Errorf("eval: records: argument must be headers(...), e.g. records(headers(snake_case))")
+	}
+	switch v := cur.(type) {
+	case nil:
+		return nil, nil
+	case model.Sheet:
+		return sheetRecords(v, headerTransformFunc(headersArg.Arg))
+	default:
+		return nil, fmt.Errorf("eval: records: cannot apply to %s - records only applies to a sheet", describeType(cur))
+	}
+}
+
+// applyHeaders implements the "headers(f)" builtin (#125, ADR-0036):
+// f evaluated once per header-row string - after sheetHeaders' own
+// column-letter fallback, so an unnamed column's own letter is
+// transformed too, same as a real header would be - returned as a
+// plain array. No uniqueness requirement, unlike records(headers(f)):
+// this is just an array, not a set of object keys. Requires cur to be
+// a model.Sheet, the same requirement records itself has.
+func applyHeaders(arg filter.Expr, cur any) (any, error) {
+	sheet, ok := cur.(model.Sheet)
+	if !ok {
+		return nil, fmt.Errorf("eval: headers: cannot apply to %s - headers only applies to a sheet", describeType(cur))
+	}
+	headerCells, cols, _, err := sheetHeaderScan(sheet, "headers")
+	if err != nil {
+		return nil, err
+	}
+	headers, err := sheetHeaders(headerCells, cols, headerTransformFunc(arg))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]any, len(headers))
+	for i, h := range headers {
+		out[i] = h
+	}
+	return out, nil
+}
+
+// headerTransformFunc evaluates arg once per header name (#125,
+// ADR-0036), with "." rebound to that name - shared by applyHeaders
+// (".Sheet1 | headers(f)" standalone) and applyRecordsWithHeaders
+// ("records(headers(f))"), since both need exactly the same per-name
+// transform, just used differently afterward (a plain array vs. driving
+// record keys). The transform's result must itself be a string - it's
+// going to be a header name (an array element, or eventually an object
+// key), not an arbitrary value.
+func headerTransformFunc(arg filter.Expr) func(string) (string, error) {
+	return func(name string) (string, error) {
+		out, err := eval(arg, name)
+		if err != nil {
+			return "", err
+		}
+		s, ok := out.(string)
+		if !ok {
+			return "", fmt.Errorf("eval: headers: transform must produce a string for header %q, got %s", name, describeType(out))
+		}
+		return s, nil
 	}
 }
 
@@ -1211,59 +1289,34 @@ type record struct {
 
 // sheetRecords converts sheet into an array of record objects, one per
 // data row (every row after row 1), keyed by header name, per
-// ADR-0011. A row entirely absent from sheet.Rows (every cell blank)
-// contributes no record at all - there's no Row to iterate for it -
-// and neither does a row that is present but whose every cell is
-// still blank (e.g. a formula that evaluated to blank, model.Empty):
-// both produce an all-null record, which is exactly the noise a
-// sheet's sparse representation already omits everywhere else.
+// ADR-0011 - optionally renamed by transform (#125, ADR-0036; nil for
+// plain records, same as before that ADR). A row entirely absent from
+// sheet.Rows (every cell blank) contributes no record at all - there's
+// no Row to iterate for it - and neither does a row that is present
+// but whose every cell is still blank (e.g. a formula that evaluated
+// to blank, model.Empty): both produce an all-null record, which is
+// exactly the noise a sheet's sparse representation already omits
+// everywhere else.
 //
 // Every record needs every column's header key, nil-filled where that
 // row has no cell, which means the full column count must be known
 // before any record can be finalized - a later row can still introduce
-// a wider column than every row seen so far. So this makes one pass
-// over sheet.Rows, collecting header info (from row 0, if present),
-// checking the maxDenseCells budget incrementally (on prospective,
-// not-yet-allocated bounds - see sheetGrid's identical reasoning), and
-// buffering every data row; building the actual record objects, keyed
-// by the now-fully-known headers, happens afterward over that
-// in-memory buffer, not a second pass over sheet.Rows itself.
-func sheetRecords(sheet model.Sheet) ([]record, error) {
-	headerCells := make(map[int]string) // column index -> header row's own value
-	headerSeen := false
-	var dataRows []model.Row
-	var cols int
-
-	for r, err := range sheet.All() {
-		if err != nil {
-			return nil, err
-		}
-		rowCount := r.Index + 1
-		rowCols := cols
-		for _, c := range r.Cells {
-			if c.Column+1 > rowCols {
-				rowCols = c.Column + 1
-			}
-		}
-		if cells := int64(rowCount) * int64(rowCols); cells > maxDenseCells {
-			return nil, fmt.Errorf("eval: sheet %q is at least %d x %d (%d cells), over the %d-cell limit for records; index a specific cell, row, or column instead", sheet.Name, rowCount, rowCols, cells, maxDenseCells)
-		}
-		cols = rowCols
-
-		if !headerSeen && r.Index == 0 {
-			headerSeen = true
-			for _, c := range r.Cells {
-				if name, ok := headerString(cellValue(c)); ok {
-					headerCells[c.Column] = name
-				}
-			}
-			continue // the header row itself, not a data row
-		}
-		dataRows = append(dataRows, r)
+// a wider column than every row seen so far. sheetHeaderScan makes the
+// one pass over sheet.Rows this needs; building the actual record
+// objects, keyed by the now-fully-known (and now-possibly-transformed)
+// headers, happens afterward over its buffered data rows, not a second
+// pass over sheet.Rows itself.
+func sheetRecords(sheet model.Sheet, transform func(string) (string, error)) ([]record, error) {
+	headerCells, cols, dataRows, err := sheetHeaderScan(sheet, "records")
+	if err != nil {
+		return nil, err
 	}
 
-	headers, err := sheetHeaders(headerCells, cols)
+	headers, err := sheetHeaders(headerCells, cols, transform)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkUniqueHeaders(headers); err != nil {
 		return nil, err
 	}
 
@@ -1289,31 +1342,100 @@ func sheetRecords(sheet model.Sheet) ([]record, error) {
 	return records, nil
 }
 
+// sheetHeaderScan makes the single pass over sheet.Rows that both
+// sheetRecords and applyHeaders need (#125, ADR-0036; the only part of
+// sheetRecords' original single function that doesn't depend on
+// whether the caller wants actual record objects or just the header
+// names): collecting the header row's own cell values (row 0),
+// buffering every data row, and determining the full column count seen
+// across every row - a later row can introduce a wider column than the
+// header row itself, so this can't stop at row 0. Checks the
+// maxDenseCells budget incrementally (on prospective, not-yet-allocated
+// bounds - see sheetGrid's identical reasoning) regardless of which
+// caller this is for, so "just preview the headers" can't be used to
+// read an unbounded amount of an untrusted file (ADR-0030/ADR-0031).
+// label names the calling builtin ("records" or "headers") for the
+// budget-exceeded error message only.
+func sheetHeaderScan(sheet model.Sheet, label string) (headerCells map[int]string, cols int, dataRows []model.Row, err error) {
+	headerCells = make(map[int]string) // column index -> header row's own value
+	headerSeen := false
+
+	for r, rerr := range sheet.All() {
+		if rerr != nil {
+			return nil, 0, nil, rerr
+		}
+		rowCount := r.Index + 1
+		rowCols := cols
+		for _, c := range r.Cells {
+			if c.Column+1 > rowCols {
+				rowCols = c.Column + 1
+			}
+		}
+		if cells := int64(rowCount) * int64(rowCols); cells > maxDenseCells {
+			return nil, 0, nil, fmt.Errorf("eval: sheet %q is at least %d x %d (%d cells), over the %d-cell limit for %s; index a specific cell, row, or column instead", sheet.Name, rowCount, rowCols, cells, maxDenseCells, label)
+		}
+		cols = rowCols
+
+		if !headerSeen && r.Index == 0 {
+			headerSeen = true
+			for _, c := range r.Cells {
+				if name, ok := headerString(cellValue(c)); ok {
+					headerCells[c.Column] = name
+				}
+			}
+			continue // the header row itself, not a data row
+		}
+		dataRows = append(dataRows, r)
+	}
+	return headerCells, cols, dataRows, nil
+}
+
 // sheetHeaders returns one header name per column (0..cols-1), per
 // ADR-0011: headerCells' own value for a column the header row set
-// (sheetRecords' row-0 pass) - or that column's own A1 letter if the
-// header row left it blank, never set it at all, or doesn't exist in
-// the first place (an empty headerCells covers all three). Two
-// columns resolving to the same rendered name is an error, naming
-// both.
-func sheetHeaders(headerCells map[int]string, cols int) ([]string, error) {
+// (sheetHeaderScan's row-0 pass) - or that column's own A1 letter if
+// the header row left it blank, never set it at all, or doesn't exist
+// in the first place (an empty headerCells covers all three) - then,
+// if transform is non-nil (#125, ADR-0036), that same function applied
+// to every resolved name, fallback letters included (a column with no
+// real header gets its transformed letter, the same as a real header
+// would). Unlike before ADR-0036, this no longer checks for two
+// columns resolving to the same name - see checkUniqueHeaders, now a
+// separate step only sheetRecords needs (headers(f) alone, returning a
+// plain array, has no such requirement).
+func sheetHeaders(headerCells map[int]string, cols int, transform func(string) (string, error)) ([]string, error) {
 	headers := make([]string, cols)
 	for j := range headers {
-		if name, ok := headerCells[j]; ok {
-			headers[j] = name
-		} else {
-			headers[j] = columnLetter(j)
+		name, ok := headerCells[j]
+		if !ok {
+			name = columnLetter(j)
 		}
+		if transform != nil {
+			var err error
+			name, err = transform(name)
+			if err != nil {
+				return nil, err
+			}
+		}
+		headers[j] = name
 	}
+	return headers, nil
+}
 
-	seen := make(map[string]int, cols) // rendered name -> first column index
+// checkUniqueHeaders errors if two columns in headers (sheetHeaders'
+// own result) resolve to the same rendered name, naming both - a hard
+// requirement once names become an object's keys (sheetRecords), split
+// out by #125/ADR-0036 from sheetHeaders itself, which headers(f) also
+// calls but without this requirement: its own output is a plain array,
+// free to contain the same string twice.
+func checkUniqueHeaders(headers []string) error {
+	seen := make(map[string]int, len(headers)) // rendered name -> first column index
 	for j, name := range headers {
 		if first, ok := seen[name]; ok {
-			return nil, fmt.Errorf("eval: records: duplicate header %q at columns %s and %s", name, columnLetter(first), columnLetter(j))
+			return fmt.Errorf("eval: records: duplicate header %q at columns %s and %s", name, columnLetter(first), columnLetter(j))
 		}
 		seen[name] = j
 	}
-	return headers, nil
+	return nil
 }
 
 // headerString renders a cellValue() result as a record's map key: a

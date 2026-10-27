@@ -41,6 +41,7 @@ xlq, using the format described in
 | [0033](0033-upper-lower-trim.md) | `upper`, `lower`, `trim`: jq-parity string builtins |
 | [0034](0034-snake-case-camel-case.md) | `snake_case`, `camel_case`: word-boundary case conversion |
 | [0035](0035-replace.md) | `replace(old, new)`: literal substring replacement |
+| [0036](0036-headers-builtin.md) | `headers(f)`: renaming `records`' keys |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
