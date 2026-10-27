@@ -64,16 +64,22 @@ non-empty parenthesized argument is now parsed the same way `map`/
 filter-expression argument, reused rather than inventing a new type
 for it.
 
-This means `records` is removed from `builtinNames` (the purely
-literal-argument set, ADR-0022) entirely - it never actually used that
-mechanism meaningfully (every literal argument was accepted at parse
-time but rejected at eval time, "records takes no arguments"), so
-nothing is lost by retiring it there. `records("x", 5, true, false,
-null)` (an existing parser test demonstrating the shared literal-value
-grammar in general, using `records` only as a convenient vehicle, per
-ADR-0022's own context) no longer parses - the demo moved to
-`tonumber`, an unaffected literal-arg builtin, since the test was never
-really about `records` specifically.
+`parseStep` itself never reaches `builtinNames` for `records` anymore -
+its own dedicated case there, above, intercepts the name first. But
+`records` stays *in* `builtinNames` (found missing in an earlier draft,
+in review - cubic): `parseOperand`, the separate function that parses a
+comparison's right-hand operand (`.A1 == records`, ADR-0024), still
+checks that map directly, and `records` as a bare comparison operand
+is a pre-existing capability from before this ADR, not something to
+regress. `records("x", 5, true, false, null)` (an existing parser test
+demonstrating the shared literal-value grammar in general, using
+`records` only as a convenient vehicle, per ADR-0022's own context) no
+longer parses *as a pipeline step* - the demo moved to `tonumber`, an
+unaffected literal-arg builtin, since the test was never really about
+`records` specifically. It would still parse via `parseOperand` (a
+comparison operand's own literal-argument grammar is unchanged), for
+whatever that's worth - always an eval-time error regardless, the same
+as before this ADR.
 
 ### `records`' argument must be `headers(...)` - checked at eval time, not parse time
 
