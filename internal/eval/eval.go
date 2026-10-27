@@ -657,13 +657,19 @@ func applyRecordsWithHeaders(arg filter.Expr, cur any) (any, error) {
 // transformed too, same as a real header would be - returned as a
 // plain array. No uniqueness requirement, unlike records(headers(f)):
 // this is just an array, not a set of object keys. Requires cur to be
-// a model.Sheet, the same requirement records itself has.
+// a model.Sheet, the same requirement records itself has - including
+// records' own "null propagates" exception (e.g. ".NoSuchSheet |
+// records" is null, not an error, since ".NoSuchSheet" already is),
+// found missing here in review (cubic) and fixed to match.
 func applyHeaders(arg filter.Expr, cur any) (any, error) {
+	if cur == nil {
+		return nil, nil
+	}
 	sheet, ok := cur.(model.Sheet)
 	if !ok {
 		return nil, fmt.Errorf("eval: headers: cannot apply to %s - headers only applies to a sheet", describeType(cur))
 	}
-	headerCells, cols, _, err := sheetHeaderScan(sheet, "headers")
+	headerCells, cols, _, err := sheetHeaderScan(sheet, "headers", false)
 	if err != nil {
 		return nil, err
 	}
@@ -1307,7 +1313,7 @@ type record struct {
 // headers, happens afterward over its buffered data rows, not a second
 // pass over sheet.Rows itself.
 func sheetRecords(sheet model.Sheet, transform func(string) (string, error)) ([]record, error) {
-	headerCells, cols, dataRows, err := sheetHeaderScan(sheet, "records")
+	headerCells, cols, dataRows, err := sheetHeaderScan(sheet, "records", true)
 	if err != nil {
 		return nil, err
 	}
@@ -1347,16 +1353,23 @@ func sheetRecords(sheet model.Sheet, transform func(string) (string, error)) ([]
 // sheetRecords' original single function that doesn't depend on
 // whether the caller wants actual record objects or just the header
 // names): collecting the header row's own cell values (row 0),
-// buffering every data row, and determining the full column count seen
-// across every row - a later row can introduce a wider column than the
-// header row itself, so this can't stop at row 0. Checks the
-// maxDenseCells budget incrementally (on prospective, not-yet-allocated
-// bounds - see sheetGrid's identical reasoning) regardless of which
-// caller this is for, so "just preview the headers" can't be used to
-// read an unbounded amount of an untrusted file (ADR-0030/ADR-0031).
-// label names the calling builtin ("records" or "headers") for the
-// budget-exceeded error message only.
-func sheetHeaderScan(sheet model.Sheet, label string) (headerCells map[int]string, cols int, dataRows []model.Row, err error) {
+// optionally buffering every data row (bufferRows - records needs them
+// to build record objects from afterward; headers(f) only needs the
+// header names and the column count below, so it passes false rather
+// than holding the whole sheet's data rows in memory just to discard
+// them unread, found in review (cubic) and confirmed: before this, a
+// standalone headers(f) on a huge sheet retained every data row for no
+// reason, unlike the lazy, header-only read its own job implies), and
+// determining the full column count seen across every row - a later
+// row can introduce a wider column than the header row itself, so this
+// can't stop at row 0. Checks the maxDenseCells budget incrementally
+// (on prospective, not-yet-allocated bounds - see sheetGrid's identical
+// reasoning) regardless of which caller this is for and regardless of
+// bufferRows, so "just preview the headers" can't be used to iterate an
+// unbounded number of an untrusted file's rows either (ADR-0030/
+// ADR-0031). label names the calling builtin ("records" or "headers")
+// for the budget-exceeded error message only.
+func sheetHeaderScan(sheet model.Sheet, label string, bufferRows bool) (headerCells map[int]string, cols int, dataRows []model.Row, err error) {
 	headerCells = make(map[int]string) // column index -> header row's own value
 	headerSeen := false
 
@@ -1385,7 +1398,9 @@ func sheetHeaderScan(sheet model.Sheet, label string) (headerCells map[int]strin
 			}
 			continue // the header row itself, not a data row
 		}
-		dataRows = append(dataRows, r)
+		if bufferRows {
+			dataRows = append(dataRows, r)
+		}
 	}
 	return headerCells, cols, dataRows, nil
 }

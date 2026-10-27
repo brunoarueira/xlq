@@ -147,6 +147,11 @@ func TestParseValid(t *testing.T) {
 			Pipe{Field{Identity{}, "Sheet1"}, FilterArg{Name: "records", Arg: Field{Identity{}, "A1"}}},
 		},
 		{
+			"records still parses as a comparison's right-hand operand (ADR-0024) - a pre-existing capability #125 must not regress, since parseOperand consults builtinNames directly, not parseStep's own dedicated records branch",
+			".Sheet1.A1 == records",
+			Comparison{"==", Field{Field{Identity{}, "Sheet1"}, "A1"}, Builtin{Name: "records"}},
+		},
+		{
 			"tonumber builtin after a pipe (#37)",
 			".Sheet1.A1 | tonumber",
 			Pipe{Field{Field{Identity{}, "Sheet1"}, "A1"}, Builtin{Name: "tonumber"}},

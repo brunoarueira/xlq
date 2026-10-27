@@ -82,7 +82,8 @@ the same way `parseFilterArgBuiltin` does for `map`/`select`/
 `group_by` - the parser has no way to know `records`' own argument
 contract is narrower than "any filter expression," the same split
 every other builtin already has between parse-time shape and eval-time
-meaning (ADR-0022: "argument count/type isn't validated until eval").
+meaning (ADR-0022's own "Argument count/type validation happens at
+eval time, not parse time").
 `records(.A1)` and `records(tonumber)` both parse fine, then fail at
 eval time with a clear "argument must be headers(...)" error - verified
 directly against the real build.

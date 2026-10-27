@@ -113,16 +113,29 @@ func (p *parser) advance() token {
 	return t
 }
 
-// builtinNames are the identifiers parseStep recognizes as a builtin
-// reference rather than a malformed path (ADR-0022) - checked here so
-// a misspelled name still fails at parse time, with a precise
-// position, the same as it always has (when "records" was the only
-// name parseStep knew about at all, anything else already fell
-// through to parsePath and failed there). internal/eval's own builtin
-// dispatch is still where each name's actual argument count/types are
-// validated - this set exists only to keep typo-detection at parse
-// time, not to duplicate that validation.
+// builtinNames are the identifiers parseStep and parseOperand both
+// recognize as a builtin reference rather than a malformed path/value
+// (ADR-0022) - checked here so a misspelled name still fails at parse
+// time, with a precise position, the same as it always has (when
+// "records" was the only name parseStep knew about at all, anything
+// else already fell through to parsePath and failed there).
+// internal/eval's own builtin dispatch is still where each name's
+// actual argument count/types are validated - this set exists only to
+// keep typo-detection at parse time, not to duplicate that validation.
+//
+// "records" stays in this set (#125, ADR-0036) purely for
+// parseOperand's sake - a comparison's right-hand operand, e.g. ".A1 ==
+// records" - even though parseStep itself never reaches this map for
+// "records" anymore: its own dedicated case there (parseRecords, below)
+// intercepts it first, for the new optional filter-expression-argument
+// form parseOperand doesn't need to support (a comparison operand was
+// never extended to cover filter-expression-arg builtins at all,
+// ADR-0025's own deliberately-narrower-than-full-symmetry call - found
+// missing in review (cubic) after an earlier draft of this change
+// removed "records" from here entirely, breaking that pre-existing
+// comparison-operand position).
 var builtinNames = map[string]bool{
+	"records":    true, // #125 (parseOperand only - see above)
 	"tonumber":   true, // #37
 	"todate":     true, // #42
 	"sum":        true, // #38

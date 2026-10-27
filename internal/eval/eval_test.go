@@ -1519,6 +1519,31 @@ func TestEvalHeadersInvalid(t *testing.T) {
 	}
 }
 
+// TestSheetHeaderScanBufferRows guards a fix found in review (cubic):
+// applyHeaders only needs the header names and the column count
+// sheetHeaderScan determines, never the buffered data rows themselves
+// - bufferRows=false must mean exactly that, not merely "unused by
+// this caller" while still being collected underneath.
+func TestSheetHeaderScanBufferRows(t *testing.T) {
+	sheet := headersWorkbook().Sheets[0]
+
+	_, _, dataRows, err := sheetHeaderScan(sheet, "headers", false)
+	if err != nil {
+		t.Fatalf("sheetHeaderScan(bufferRows=false) returned error: %v", err)
+	}
+	if dataRows != nil {
+		t.Errorf("sheetHeaderScan(bufferRows=false) dataRows = %#v, want nil", dataRows)
+	}
+
+	_, _, dataRows, err = sheetHeaderScan(sheet, "records", true)
+	if err != nil {
+		t.Fatalf("sheetHeaderScan(bufferRows=true) returned error: %v", err)
+	}
+	if len(dataRows) == 0 {
+		t.Error("sheetHeaderScan(bufferRows=true) dataRows is empty, want the sheet's one data row")
+	}
+}
+
 // TestEvalRecordsEmptyParens guards ADR-0022's own claim that
 // "records()" and bare "records" are the exact same Builtin, not two
 // different code paths that happen to currently agree.
@@ -1568,6 +1593,8 @@ func TestEvalRecordsIndexAndFieldAccess(t *testing.T) {
 		},
 		{"negative index too far back is null, not an error", `.Sheet1 | records | .[-99]`, nil},
 		{"records on a missing sheet propagates null", `.NoSuchSheet | records`, nil},
+		{"headers(f) on a missing sheet propagates null too, matching records (#125, ADR-0036)", `.NoSuchSheet | headers(snake_case)`, nil},
+		{"records(headers(f)) on a missing sheet propagates null too, matching records (#125, ADR-0036)", `.NoSuchSheet | records(headers(snake_case))`, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
