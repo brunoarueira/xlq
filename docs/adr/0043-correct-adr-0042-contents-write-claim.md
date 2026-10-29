@@ -8,8 +8,9 @@ Accepted
 
 ADR-0042 said removing `contents: write` from `binary-provenance`'s
 permissions was correct, "since nothing in it touches the release
-anymore." Two more real release attempts (the `VERSION` bump this ADR
-ships alongside) proved that wrong, the same way ADR-0028 once
+anymore." Two real attempts against the v0.4.3 release already in
+flight (#144's `VERSION` bump, not this PR's - this PR makes no
+`VERSION` change itself) proved that wrong, the same way ADR-0028 once
 corrected a wrong claim in ADR-0016 without editing it:
 
 - `contents: read` alone (what ADR-0042 actually shipped) made GitHub
@@ -33,13 +34,16 @@ parse time, before any `if` is ever evaluated.
 ## Decision
 
 `binary-provenance`'s permissions grant `contents: write`, not `read`.
-Confirmed directly, twice, not assumed from either single attempt:
-`read` alone still failed with the error above, and restoring `write`
-is what let the workflow file parse. Granting it does not mean
-`upload-assets` executes - its own `if` condition is unaffected and
-still never satisfied here - it's purely a static precondition of
-calling `generator_generic_slsa3.yml` at all, not a permission this
-job's own steps use for anything.
+What's confirmed, from the real error above: `read` alone is
+insufficient, and GitHub names `upload-assets`'s own `contents: write`
+declaration as the specific reason. What's not yet confirmed - this is
+the fix this ADR proposes, not yet proven - is that `write` is
+*sufficient* to let the workflow parse; that's only verifiable on the
+next real trigger against this repo's workflow, after this PR merges.
+Granting it does not mean `upload-assets` executes - its own `if`
+condition is unaffected and still never satisfied here - it's purely a
+static precondition of calling `generator_generic_slsa3.yml` at all,
+not a permission this job's own steps use for anything.
 
 ## Consequences
 
