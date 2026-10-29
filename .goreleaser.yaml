@@ -65,10 +65,17 @@ changelog:
   format: >-
     {{ .Message }}{{ if .Logins }} (thanks {{ .Logins | englishJoin }}!){{ end }}
 
+# draft: true (docs/adr/0041-draft-then-publish-release.md) - GitHub's
+# Immutable Releases feature locks a release's assets the moment it's
+# published, and the SLSA provenance job (ADR-0038) runs as a separate,
+# later workflow job that needs to attach one more file to this same
+# release afterward. release.yml publishes it for real (draft: false)
+# only once that job succeeds.
 release:
   github:
     owner: brunoarueira
     name: xlq
+  draft: true
 
 # See docs/adr/0016-homebrew-publishing.md: homebrew_casks, not the
 # soft-deprecated brews - it supports Linux too (on_macos/on_linux

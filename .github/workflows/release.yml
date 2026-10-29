@@ -193,3 +193,25 @@ jobs:
       base64-subjects: "${{ needs.tag-and-release.outputs.hashes }}"
       upload-assets: true
       upload-tag-name: ${{ needs.tag-and-release.outputs.tag }}
+
+  # Publishes the release GoReleaser created as a draft (#129, ADR-0041)
+  # - only after binary-provenance has successfully attached its own
+  # asset to it. GitHub's Immutable Releases feature locks a release's
+  # assets the moment it's published, so publishing any earlier (before
+  # the provenance file is attached) would make that upload fail
+  # outright - confirmed directly: this is exactly what broke the first
+  # real run of this pipeline (v0.4.1), "Cannot upload assets to an
+  # immutable release."
+  publish-release:
+    name: Publish the release
+    needs: [tag-and-release, binary-provenance]
+    if: needs.tag-and-release.outputs.hashes != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.tag-and-release.outputs.tag }}
+        run: gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false
