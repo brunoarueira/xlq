@@ -41,9 +41,11 @@ reading of it. Bump `VERSION` in a PR to `main`; once merged,
 `.github/workflows/release.yml` tags `v<version>`, cross-compiles
 binaries, publishes the GitHub Release, and pushes a Homebrew cask to
 [`brunoarueira/homebrew-tap`](https://github.com/brunoarueira/homebrew-tap)
-automatically. See [ADR-0006](docs/adr/0006-release-automation.md) for
-that mechanism, and, for the Homebrew piece specifically,
-[ADR-0016](docs/adr/0016-homebrew-publishing.md).
+automatically, and generates [SLSA](https://slsa.dev/) Build L3
+provenance for the binaries. See [ADR-0006](docs/adr/0006-release-automation.md)
+for the core mechanism, [ADR-0016](docs/adr/0016-homebrew-publishing.md)
+for the Homebrew piece, and [ADR-0038](docs/adr/0038-slsa-build-provenance.md)
+for the provenance piece.
 
 The Homebrew step needs a `HOMEBREW_TAP_GITHUB_TOKEN` repository
 secret - the default `GITHUB_TOKEN` only has write access to this
