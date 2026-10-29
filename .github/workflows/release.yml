@@ -212,11 +212,15 @@ jobs:
         with:
           name: ${{ needs.binary-provenance.outputs.provenance-name }}
 
+      # --clobber makes a retry of this step safe if the upload
+      # succeeded but the publish line below failed (e.g. a transient
+      # API error) - otherwise a rerun would fail outright on "asset
+      # already exists" before ever reaching the actual retry target.
       - name: Attach provenance and publish release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.tag-and-release.outputs.tag }}
           PROVENANCE_NAME: ${{ needs.binary-provenance.outputs.provenance-name }}
         run: |
-          gh release upload "$TAG" "$PROVENANCE_NAME" --repo "${{ github.repository }}"
+          gh release upload "$TAG" "$PROVENANCE_NAME" --repo "${{ github.repository }}" --clobber
           gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false
