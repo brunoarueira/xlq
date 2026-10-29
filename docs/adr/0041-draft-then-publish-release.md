@@ -32,7 +32,7 @@ v0.4.1 itself is now stuck exactly as GoReleaser left it - published,
 immutable, missing only the provenance file - permanently; there is no
 way to retroactively attach it. Not worth a corrective release on its
 own; the next real `VERSION` bump carries the fix and produces the
-first release with all four artifacts (binaries, checksums, cosign
+first release with all five artifacts (binaries, checksums, cosign
 bundle, SBOMs, and provenance) together.
 
 ## Decision
@@ -51,10 +51,15 @@ publish.
 publish-release:
   needs: [tag-and-release, binary-provenance]
   if: needs.tag-and-release.outputs.hashes != ''
+  runs-on: ubuntu-latest
   permissions:
     contents: write
   steps:
-    - run: gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false
+    - name: Publish release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: ${{ needs.tag-and-release.outputs.tag }}
+      run: gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false
 ```
 
 Publishing is a separate, final job rather than a step appended to
@@ -76,12 +81,18 @@ won't help: the "tag already exists" check (ADR-0006) treats any
 existing tag as "already released," skipping straight past
 tag-creation, GoReleaser, and everything else - it has no way to detect
 "a draft exists for this tag but was never published" and resume from
-there. The manual fallback - `gh release edit <tag> --draft=false`, or
-re-running just the `binary-provenance` job via the Actions UI if the
-draft and its other assets are still intact - is accepted for now
-rather than building automatic resume logic for what should be a rare
-failure mode (the provenance job succeeded on its only real run before
-this fix). Worth a proper fix if it actually recurs.
+there. The manual fallback is accepted for now rather than building
+automatic resume logic for what should be a rare failure mode (the
+provenance job succeeded on its only real run before this fix) - but
+that fallback is re-running just the `binary-provenance` job via the
+Actions UI (or otherwise getting the provenance file attached) *first*,
+confirming it actually landed (`gh release view <tag> --json assets`),
+and only then running `gh release edit <tag> --draft=false` by hand.
+Running that last command before confirming the provenance asset is
+attached would recreate the exact bug this ADR fixes, by hand -
+publishing permanently locks the release whether or not provenance is
+there, so it's the last step, never the first one tried. Worth a
+proper automatic-resume fix if this actually recurs.
 
 ### Accepted tradeoff: a brief window where the release exists but isn't publicly downloadable
 
@@ -98,7 +109,7 @@ pipeline failing outright, publishing nothing additional at all).
 
 The next real release (the one that ships this fix) is the first to
 actually test the draft-then-publish sequencing end to end, and the
-first with all four of binaries, checksums, cosign signature, SBOMs,
+first with all five of binaries, checksums, cosign signature, SBOMs,
 and SLSA provenance together - also unblocking #132 (verification
 docs), which needs a complete real release to write accurate commands
 against.
