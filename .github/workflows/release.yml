@@ -183,9 +183,18 @@ jobs:
     name: SLSA Build L3 provenance
     needs: [tag-and-release]
     if: needs.tag-and-release.outputs.hashes != ''
+    # contents: read, not omitted - omitting a permission entirely
+    # defaults it to "none" for a reusable-workflow-call job, not
+    # "inherit"; the generator's own internal job still needs read
+    # access to the repo for the provenance attestation itself, even
+    # though it no longer needs write (#129, ADR-0042) since it stopped
+    # touching the release directly. Confirmed the hard way: GitHub
+    # rejected the whole workflow file outright ("is only allowed
+    # 'contents: none'") the one time this was omitted instead.
     permissions:
       actions: read # to read this calling workflow's own path
       id-token: write # to sign the provenance
+      contents: read # the generator's own internal job needs this
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: "${{ needs.tag-and-release.outputs.hashes }}"
