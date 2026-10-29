@@ -41,6 +41,26 @@ shape ADR-0006 already established), calls
 `generator_generic_slsa3.yml` with it, `upload-assets: true` attaching
 the resulting `*.intoto.jsonl` provenance file to the GitHub Release.
 
+### `upload-tag-name` is required here, not optional
+
+The generator's own integration examples for most ecosystems - its
+GoReleaser one included - show `upload-assets: true` alone, no
+`upload-tag-name`. Those all assume the whole calling workflow is
+*triggered by* the tag push itself, so `github.ref` already is
+`refs/tags/vX.Y.Z` by the time the provenance job runs, and the
+generator can infer which release to attach to from that. This
+workflow deliberately isn't triggered that way (ADR-0006: it creates
+and pushes the tag itself, inside a run triggered by a push to `main`,
+specifically because GitHub doesn't fire a second workflow run for a
+tag pushed with `GITHUB_TOKEN`) - so `github.ref` here is always
+`refs/heads/main`, never the tag, for the entire run including this
+job. `upload-assets: true` alone would have silently uploaded nothing
+- found missing in review (cubic), confirmed against the generator's
+own README, which documents exactly `upload-assets` +
+`upload-tag-name` together for a non-tag-triggered caller. Fixed by
+exposing the tag `tag-and-release` already computes (`steps.version.
+outputs.tag`) as a second job output and passing it through.
+
 The checksum file's name is read directly, not discovered by parsing
 `goreleaser-action`'s own `artifacts` JSON output with `jq` (an
 alternative the GoReleaser blog post itself demonstrates) - `.goreleaser.
