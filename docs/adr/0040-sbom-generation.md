@@ -29,10 +29,10 @@ most widely adopted SBOM generator, also already used by
 own default output format, and one of the two leading standardized SBOM
 exchange formats generally (the other being CycloneDX; Syft itself
 supports several more output formats beyond either, including its own
-native `syft-json` and `spdx-tag-value`/`cyclonedx-xml` variants, none
-of which there's a reason to pick over the GoReleaser default here) -
-one SBOM per archive (`archive`, not `binary` - covers what a user
-actually downloads).
+native `syft-json` and `spdx-tag-value`/`cyclonedx-xml` variants;
+there's no reason to pick any of these over the GoReleaser default
+here) - one SBOM per archive (`archive`, not `binary` - covers what a
+user actually downloads).
 
 Verified against the exact pinned GoReleaser version (`v2.19.0`) with a
 real local snapshot build, not assumed from the docs: `sboms:` produces
