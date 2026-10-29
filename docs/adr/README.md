@@ -48,6 +48,7 @@ xlq, using the format described in
 | [0040](0040-sbom-generation.md) | SBOM generation for release archives |
 | [0041](0041-draft-then-publish-release.md) | Create the release as a draft, publish it only after provenance lands |
 | [0042](0042-provenance-artifact-not-generator-upload.md) | Attach provenance via its own build artifact, not the generator's upload path (corrects ADR-0041's release sequencing) |
+| [0043](0043-correct-adr-0042-contents-write-claim.md) | Correct ADR-0042's `contents: write` removal claim |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is

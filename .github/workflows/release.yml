@@ -183,18 +183,25 @@ jobs:
     name: SLSA Build L3 provenance
     needs: [tag-and-release]
     if: needs.tag-and-release.outputs.hashes != ''
-    # contents: read, not omitted - omitting a permission entirely
-    # defaults it to "none" for a reusable-workflow-call job, not
-    # "inherit"; the generator's own internal job still needs read
-    # access to the repo for the provenance attestation itself, even
-    # though it no longer needs write (#129, ADR-0042) since it stopped
-    # touching the release directly. Confirmed the hard way: GitHub
-    # rejected the whole workflow file outright ("is only allowed
-    # 'contents: none'") the one time this was omitted instead.
+    # contents: write, not read or omitted - confirmed the hard way,
+    # twice (#129, ADR-0042, corrected by ADR-0043): omitting it
+    # entirely defaults to "none" for a reusable-workflow-call job,
+    # which GitHub rejects outright since its nested "generator" job
+    # needs contents: read. But "read" alone isn't enough either:
+    # GitHub's static permission check for a reusable-workflow call
+    # evaluates the union of every nested job's own declared
+    # permissions, regardless of whether that job's "if" would
+    # actually let it run - the generator's own "upload-assets" job
+    # declares contents: write, and that's required here even though
+    # its own "if" (gated on the upload-assets input, which this job
+    # never sets) means it never actually runs. Granting write doesn't
+    # mean that job executes; it's a static requirement of calling
+    # this workflow at all, not a grant of anything this job's own
+    # steps use.
     permissions:
       actions: read # to read this calling workflow's own path
       id-token: write # to sign the provenance
-      contents: read # the generator's own internal job needs this
+      contents: write # required by the generator's own unused upload-assets job - see above
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: "${{ needs.tag-and-release.outputs.hashes }}"
