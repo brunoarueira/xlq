@@ -45,6 +45,7 @@ xlq, using the format described in
 | [0037](0037-semantic-versioning-policy.md) | Semantic versioning policy, including a pre-1.0 reading |
 | [0038](0038-slsa-build-provenance.md) | SLSA Build L3 provenance for release binaries |
 | [0039](0039-cosign-signing.md) | Sign release checksums with cosign (keyless/OIDC) |
+| [0040](0040-sbom-generation.md) | SBOM generation for release archives |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is

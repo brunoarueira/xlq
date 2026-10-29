@@ -33,6 +33,13 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# SBOM (software bill of materials) for each release archive, SPDX JSON
+# via Syft, GoReleaser's own default (docs/adr/0040-sbom-generation.md).
+# Syft must be installed in the CI runner before this step
+# (.github/workflows/release.yml); it isn't bundled with GoReleaser.
+sboms:
+  - artifacts: archive
+
 # Keyless cosign signing of the checksum file (docs/adr/0039-cosign-signing.md):
 # GitHub Actions' own OIDC identity is the signing credential (via
 # Sigstore's Fulcio/Rekor) - no key to generate, store, or rotate.

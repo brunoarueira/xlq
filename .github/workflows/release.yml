@@ -105,6 +105,18 @@ jobs:
         with:
           cosign-release: "v3.1.4"
 
+      # Installs Syft, which GoReleaser's sboms: step below shells out
+      # to (#131, ADR-0040) - GoReleaser doesn't bundle it either.
+      # syft-version is pinned explicitly, the same lesson the cosign
+      # install above already applies: don't trust an installer
+      # action's own undocumented default to match whatever version was
+      # actually verified locally.
+      - name: Install syft
+        if: steps.check.outputs.exists == 'false'
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          syft-version: "v1.55.0"
+
       - name: GoReleaser
         if: steps.check.outputs.exists == 'false'
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
