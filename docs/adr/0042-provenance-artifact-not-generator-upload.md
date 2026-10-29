@@ -49,25 +49,10 @@ have a release again. The next `VERSION` bump goes straight to v0.4.3.
 Removed both inputs entirely, rather than looking for a way to make the
 generator's own upload path draft-aware (there isn't one - it has no
 input for "attach to this specific release ID," only tag-based
-lookup).
-
-**Correction, found the hard way across two more real runs (#145):**
-this job's own permissions still need `contents: write`, not `read` or
-omitted, even though nothing in *this job's own steps* touches the
-release anymore. GitHub's static permission check for a
-reusable-workflow call evaluates the union of every nested job's own
-declared permissions, regardless of whether that job's `if` would
-actually let it run - the generator's unused `upload-assets` job
-(gated on the `upload-assets` input, which this call never sets)
-declares `contents: write`, and the call is rejected outright without
-it, exactly the same way it was rejected without `contents: read` for
-the `generator` job. Confirmed directly, twice, not assumed from
-either attempt alone: `read` alone still failed ("the nested job
-'upload-assets' is requesting 'contents: write', but is only allowed
-'contents: read'"), and only restoring `write` let the workflow file
-parse at all. Granting it doesn't mean `upload-assets` executes - it's
-a static requirement of calling this reusable workflow in the first
-place, not a grant this job's own steps use for anything.
+lookup). `contents: write` is also removed from this job's own
+permissions, since nothing in it touches the release anymore - `actions:
+read` and `id-token: write` (to read the workflow path and sign) are
+the only permissions actually used now.
 
 ### `publish-release` downloads the provenance as a workflow artifact and attaches it itself
 
