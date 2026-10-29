@@ -33,6 +33,13 @@ jobs:
     name: tag + release on a VERSION bump
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # hashes and tag both feed binary-provenance below (#129, ADR-0038) -
+    # hashes is empty on a no-op run (tag already exists, GoReleaser
+    # never ran), which is also what that job's own "if" checks to skip
+    # itself in that case.
+    outputs:
+      hashes: ${{ steps.hashes.outputs.hashes }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -96,3 +103,62 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+      # dist/checksums.txt's own name is pinned by .goreleaser.yaml's
+      # checksum.name_template, not discovered dynamically here - no
+      # need to parse goreleaser-action's own artifacts output for it.
+      # Already in the sha256sum-line format slsa-github-generator's
+      # base64-subjects input expects (one "<digest>  <filename>" line
+      # per artifact), since that's what GoReleaser's checksum step
+      # itself produces.
+      - name: Expose checksums.txt for SLSA provenance (#129, ADR-0038)
+        if: steps.check.outputs.exists == 'false'
+        id: hashes
+        run: echo "hashes=$(base64 -w0 dist/checksums.txt)" >> "$GITHUB_OUTPUT"
+
+  # SLSA Build L3 provenance for the release binaries (#129, ADR-0038):
+  # attests that these exact artifacts were built by this exact GitHub
+  # Actions workflow run, from this exact source commit - not GoReleaser
+  # itself (which has no native provenance generation), and not the
+  # dedicated SLSA Go builder either (which would mean giving up
+  # GoReleaser's own build/archive/checksum/Homebrew-cask step
+  # entirely).
+  #
+  # Pinned by the exact "@vX.Y.Z" tag, NOT a commit SHA - a deliberate
+  # exception to every other "uses:" line in this repo (confirmed
+  # against slsa-github-generator's own README before writing this: it
+  # requires being referenced by its full semantic-version tag so
+  # slsa-verifier can validate the generator's own ref later; a shorter
+  # tag like "@v2.1" or "@v2" fails outright, and pinning by SHA isn't
+  # supported at all, for the same reason - this is the one place in
+  # this repo where tag-pinning is the deliberately correct choice, not
+  # an oversight).
+  #
+  # upload-tag-name is required here, not optional the way most of the
+  # generator's own integration examples show it (e.g. its GoReleaser
+  # one, upload-assets: true alone, no upload-tag-name): those assume
+  # the whole workflow is *triggered by* the tag push itself, so
+  # github.ref already is refs/tags/vX.Y.Z by the time this job runs.
+  # This workflow deliberately isn't triggered that way (ADR-0006: it
+  # creates and pushes the tag itself, inside a run triggered by a push
+  # to main, specifically to avoid GITHUB_TOKEN's own pushes not
+  # triggering a second, tag-triggered workflow run) - so github.ref
+  # here is always refs/heads/main, never the tag, and upload-assets
+  # alone would silently upload nothing. upload-tag-name tells it
+  # explicitly which release to attach the provenance to instead,
+  # found missing in review (cubic) and confirmed against the
+  # generator's own README, which documents exactly this combination
+  # for a non-tag-triggered caller.
+  binary-provenance:
+    name: SLSA Build L3 provenance
+    needs: [tag-and-release]
+    if: needs.tag-and-release.outputs.hashes != ''
+    permissions:
+      actions: read # to read this calling workflow's own path
+      id-token: write # to sign the provenance
+      contents: write # to attach it to the release
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.tag-and-release.outputs.hashes }}"
+      upload-assets: true
+      upload-tag-name: ${{ needs.tag-and-release.outputs.tag }}

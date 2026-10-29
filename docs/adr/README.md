@@ -43,6 +43,7 @@ xlq, using the format described in
 | [0035](0035-replace.md) | `replace(old, new)`: literal substring replacement |
 | [0036](0036-headers-builtin.md) | `headers(f)`: renaming `records`' keys |
 | [0037](0037-semantic-versioning-policy.md) | Semantic versioning policy, including a pre-1.0 reading |
+| [0038](0038-slsa-build-provenance.md) | SLSA Build L3 provenance for release binaries |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
