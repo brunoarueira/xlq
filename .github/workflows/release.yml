@@ -187,7 +187,7 @@ jobs:
     # defaults it to "none" for a reusable-workflow-call job, not
     # "inherit"; the generator's own internal job still needs read
     # access to the repo for the provenance attestation itself, even
-    # though it no longer needs write (#129, ADR-0043) since it stopped
+    # though it no longer needs write (#129, ADR-0042) since it stopped
     # touching the release directly. Confirmed the hard way: GitHub
     # rejected the whole workflow file outright ("is only allowed
     # 'contents: none'") the one time this was omitted instead.
