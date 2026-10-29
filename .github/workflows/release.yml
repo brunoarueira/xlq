@@ -33,6 +33,14 @@ jobs:
     name: tag + release on a VERSION bump
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # id-token: write is added here, scoped to just this job (least
+    # privilege), on top of the workflow-level contents: write - cosign
+    # needs to request a GitHub Actions OIDC token for keyless signing
+    # (#130, ADR-0039), the same permission binary-provenance below
+    # already needs for its own, separate purpose.
+    permissions:
+      contents: write
+      id-token: write
     # hashes and tag both feed binary-provenance below (#129, ADR-0038) -
     # hashes is empty on a no-op run (tag already exists, GoReleaser
     # never ran), which is also what that job's own "if" checks to skip
@@ -84,6 +92,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # Installs the cosign CLI GoReleaser's signs: step below shells
+      # out to (#130, ADR-0039) - GoReleaser doesn't bundle it.
+      # cosign-release is pinned explicitly, not left at this installer
+      # version's own default (v3.0.6, confirmed against its action.yml)
+      # - v3.1.4 is the version this signing config was actually
+      # verified against locally.
+      - name: Install cosign
+        if: steps.check.outputs.exists == 'false'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v3.1.4"
 
       - name: GoReleaser
         if: steps.check.outputs.exists == 'false'
@@ -146,9 +166,8 @@ jobs:
   # here is always refs/heads/main, never the tag, and upload-assets
   # alone would silently upload nothing. upload-tag-name tells it
   # explicitly which release to attach the provenance to instead,
-  # found missing in review (cubic) and confirmed against the
-  # generator's own README, which documents exactly this combination
-  # for a non-tag-triggered caller.
+  # confirmed against the generator's own README, which documents
+  # exactly this combination for a non-tag-triggered caller.
   binary-provenance:
     name: SLSA Build L3 provenance
     needs: [tag-and-release]
