@@ -54,12 +54,12 @@ and pushes the tag itself, inside a run triggered by a push to `main`,
 specifically because GitHub doesn't fire a second workflow run for a
 tag pushed with `GITHUB_TOKEN`) - so `github.ref` here is always
 `refs/heads/main`, never the tag, for the entire run including this
-job. `upload-assets: true` alone would have silently uploaded nothing
-- found missing in review (cubic), confirmed against the generator's
-own README, which documents exactly `upload-assets` +
-`upload-tag-name` together for a non-tag-triggered caller. Fixed by
-exposing the tag `tag-and-release` already computes (`steps.version.
-outputs.tag`) as a second job output and passing it through.
+job. `upload-assets: true` alone would have silently uploaded nothing -
+caught in review, confirmed against the generator's own README, which
+documents exactly `upload-assets` + `upload-tag-name` together for a
+non-tag-triggered caller. Fixed by exposing the tag `tag-and-release`
+already computes (`steps.version.outputs.tag`) as a second job output
+and passing it through.
 
 The checksum file's name is read directly, not discovered by parsing
 `goreleaser-action`'s own `artifacts` JSON output with `jq` (an
