@@ -33,6 +33,22 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# Keyless cosign signing of the checksum file (docs/adr/0039-cosign-signing.md):
+# GitHub Actions' own OIDC identity is the signing credential (via
+# Sigstore's Fulcio/Rekor) - no key to generate, store, or rotate.
+# cosign itself must be installed in the CI runner before this step
+# (sigstore/cosign-installer in .github/workflows/release.yml); it
+# isn't something GoReleaser bundles.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - "sign-blob"
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+
 changelog:
   use: github
   # Default format falls back to the raw git author name/email; this
