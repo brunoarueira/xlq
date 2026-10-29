@@ -166,20 +166,19 @@ jobs:
   # this repo where tag-pinning is the deliberately correct choice, not
   # an oversight).
   #
-  # upload-tag-name is required here, not optional the way most of the
-  # generator's own integration examples show it (e.g. its GoReleaser
-  # one, upload-assets: true alone, no upload-tag-name): those assume
-  # the whole workflow is *triggered by* the tag push itself, so
-  # github.ref already is refs/tags/vX.Y.Z by the time this job runs.
-  # This workflow deliberately isn't triggered that way (ADR-0006: it
-  # creates and pushes the tag itself, inside a run triggered by a push
-  # to main, specifically to avoid GITHUB_TOKEN's own pushes not
-  # triggering a second, tag-triggered workflow run) - so github.ref
-  # here is always refs/heads/main, never the tag, and upload-assets
-  # alone would silently upload nothing. upload-tag-name tells it
-  # explicitly which release to attach the provenance to instead,
-  # confirmed against the generator's own README, which documents
-  # exactly this combination for a non-tag-triggered caller.
+  # upload-assets/upload-tag-name are deliberately NOT used here (#129,
+  # ADR-0042) - this job only generates and signs the provenance,
+  # leaving its own upload to publish-release below. The generator's
+  # own upload path looks up "the release for this tag" via GitHub's
+  # get-release-by-tag API, which never returns a draft release at all
+  # (confirmed directly: it doesn't find the draft tag-and-release
+  # already created, so it creates a second, brand-new release for the
+  # same tag instead - immediately published by that path's own
+  # default, so it's already immutable by the time that same step tries
+  # to attach the provenance to it, failing the exact same way as
+  # before). provenance-name (this job's own output, see the generator's
+  # README) is a GitHub Actions build artifact name, not a release
+  # asset - downloaded and attached to the real draft explicitly below.
   binary-provenance:
     name: SLSA Build L3 provenance
     needs: [tag-and-release]
@@ -187,31 +186,37 @@ jobs:
     permissions:
       actions: read # to read this calling workflow's own path
       id-token: write # to sign the provenance
-      contents: write # to attach it to the release
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: "${{ needs.tag-and-release.outputs.hashes }}"
-      upload-assets: true
-      upload-tag-name: ${{ needs.tag-and-release.outputs.tag }}
 
-  # Publishes the release GoReleaser created as a draft (#129, ADR-0041)
-  # - only after binary-provenance has successfully attached its own
-  # asset to it. GitHub's Immutable Releases feature locks a release's
-  # assets the moment it's published, so publishing any earlier (before
-  # the provenance file is attached) would make that upload fail
-  # outright - confirmed directly: this is exactly what broke the first
-  # real run of this pipeline (v0.4.1), "Cannot upload assets to an
-  # immutable release."
+  # Attaches the provenance file to the draft release GoReleaser created
+  # (#129, ADR-0041, ADR-0042), then publishes it - only after that
+  # attach succeeds. GitHub's Immutable Releases feature locks a
+  # release's assets the moment it's published, so publishing any
+  # earlier (before the provenance file is attached) would make the
+  # upload fail outright - confirmed directly: this is exactly what
+  # broke v0.4.1, and a related generator-side issue (see
+  # binary-provenance's own comment above) broke v0.4.2's first attempt
+  # the same way, one step later.
   publish-release:
-    name: Publish the release
+    name: Attach provenance and publish the release
     needs: [tag-and-release, binary-provenance]
     if: needs.tag-and-release.outputs.hashes != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Publish release
+      - name: Download the provenance artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.binary-provenance.outputs.provenance-name }}
+
+      - name: Attach provenance and publish release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.tag-and-release.outputs.tag }}
-        run: gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false
+          PROVENANCE_NAME: ${{ needs.binary-provenance.outputs.provenance-name }}
+        run: |
+          gh release upload "$TAG" "$PROVENANCE_NAME" --repo "${{ github.repository }}"
+          gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false
