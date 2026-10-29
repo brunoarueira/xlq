@@ -60,12 +60,20 @@ runners, so a step installs it before the GoReleaser step runs.
 Unlike `slsa-github-generator` (ADR-0038, which *requires* tag-pinning
 for its own verifier compatibility), `cosign-installer` has no such
 constraint - pinned by commit SHA (`@<sha> # v4.1.2`), the normal
-convention here. Confirmed via the installer's own README: it doesn't
-need a separate `cosign-release` input pinned alongside it - "the used
-Cosign version only changes when cosign-installer is upgraded," so
-pinning the installer's own SHA already pins the cosign version it
-installs; adding `cosign-release` on top would only add a second,
-redundant thing to keep in sync for no benefit.
+convention here.
+
+`cosign-release` is pinned explicitly to `v3.1.4`, not left at this
+installer version's own default. The README's "the used Cosign version
+only changes when cosign-installer is upgraded" reads like that default
+alone would already give a fixed, known version once the installer
+itself is SHA-pinned - checked directly against `cosign-installer`
+`v4.1.2`'s own `action.yml` rather than assumed from that one sentence,
+and its hardcoded default is `v3.0.6`, not the `v3.1.4` this signing
+config was actually verified against locally. Pinning `cosign-release`
+explicitly closes that gap between "a fixed version" and "the specific
+version this was tested with" - the same distinction this repo has
+been burned by before with GoReleaser's own pinned-CLI-version schema
+drift (ADR-0016, ADR-0028, ADR-0032).
 
 ### `id-token: write`, scoped to the `tag-and-release` job specifically
 
