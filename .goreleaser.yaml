@@ -2,6 +2,18 @@ version: 2
 
 project_name: xlq
 
+# Generates the man page from xlq's own Cobra command tree
+# (docs/adr/0044-generated-man-pages-and-docs-site-help-links.md): a
+# man page produced from the exact command tree of the build it ships
+# with can't drift from it the way hand-maintained prose could. The
+# ldflags here match builds.ldflags below so the generated page's own
+# header reports the real release version, not "dev" (version.Version's
+# zero value) - cmd/gendoc isn't one of builds' own entries, so it
+# never otherwise gets this injected.
+before:
+  hooks:
+    - go run -ldflags "-X github.com/brunoarueira/xlq/internal/version.Version={{.Version}}" ./cmd/gendoc ./man
+
 builds:
   - id: xlq
     main: ./cmd/xlq
@@ -24,6 +36,11 @@ builds:
 archives:
   - id: xlq
     formats: [tar.gz]
+    files:
+      - src: man/xlq.1
+        dst: xlq.1
+      - src: man/xlq-sheets.1
+        dst: xlq-sheets.1
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     format_overrides:
