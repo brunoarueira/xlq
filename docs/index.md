@@ -45,9 +45,9 @@ brew install brunoarueira/tap/xlq
 
 Prebuilt binaries (macOS, Linux, Windows) are attached to each
 [release](https://github.com/brunoarueira/xlq/releases), alongside a
-checksum, a signature, SLSA provenance, and an SBOM for each - see
-[Verifying releases](verifying-releases.html) to actually check them.
-Or build from source with Go 1.26.10+:
+checksums file, a signature over it, SLSA provenance, and an SBOM per
+archive - see [Verifying releases](verifying-releases.html) to
+actually check them. Or build from source with Go 1.26.10+:
 
 ```sh
 go install github.com/brunoarueira/xlq/cmd/xlq@latest

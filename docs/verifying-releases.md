@@ -24,8 +24,12 @@ being written down here.
 
 ## Checksum
 
-The baseline check: confirms a download wasn't corrupted or swapped for
-something else, nothing more.
+The baseline check: confirms each downloaded archive matches the
+SHA-256 digest recorded in `checksums.txt` - an **integrity** check
+only, catching corruption or a swapped-in wrong file. It does not
+**authenticate** `checksums.txt` itself: an attacker able to replace
+the archive could just as easily replace the checksums file to match.
+That's what the signature below is for.
 
 ```sh
 # Linux (GNU coreutils)
@@ -69,8 +73,12 @@ slsa-verifier verify-artifact \
   --provenance-path multiple.intoto.jsonl \
   --source-uri github.com/brunoarueira/xlq \
   --source-branch main \
-  xlq_<version>_<os>_<arch>.tar.gz
+  xlq_0.4.3_darwin_arm64.tar.gz
 ```
+
+Substitute the archive name for whichever platform you downloaded -
+`xlq_<version>_darwin_amd64.tar.gz`, `..._linux_arm64.tar.gz`, and so
+on, except Windows, which is a `.zip`: `xlq_<version>_windows_amd64.zip`.
 
 `--source-branch main`, not `--source-tag <version>` - confirmed
 directly: `--source-tag` fails here ("invalid ref: unexpected ref
@@ -81,7 +89,8 @@ tampered or substituted archive fails clearly instead of passing:
 
 ```sh
 $ slsa-verifier verify-artifact --provenance-path multiple.intoto.jsonl \
-    --source-uri github.com/brunoarueira/xlq tampered.tar.gz
+    --source-uri github.com/brunoarueira/xlq --source-branch main \
+    tampered.tar.gz
 FAILED: SLSA verification failed: expected hash '...' not found:
 artifact hash does not match provenance subject
 ```
@@ -92,5 +101,8 @@ Not a trust check by itself - lists what's actually inside a given
 archive, for a vulnerability scanner or a security review to act on:
 
 ```sh
-jq '.packages[] | .name' xlq_<version>_<os>_<arch>.tar.gz.sbom.json
+jq '.packages[] | .name' xlq_0.4.3_darwin_arm64.tar.gz.sbom.json
 ```
+
+Same naming pattern as the archives above - one `.sbom.json` per
+archive, `.tar.gz.sbom.json` or, for Windows, `.zip.sbom.json`.
