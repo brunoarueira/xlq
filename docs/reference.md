@@ -4,8 +4,12 @@ title: Reference
 permalink: /reference.html
 ---
 
-The full filter language, output modes, and configuration. For design
-rationale behind any of this, the linked ADR has it -
+The full filter language, output modes, and configuration. This page
+reflects the latest release - if you're on an older `xlq` (check with
+`xlq --version`), something here may not match yet; see the
+[releases page](https://github.com/brunoarueira/xlq/releases) for what
+changed since. For design rationale behind any of this, the linked ADR
+has it -
 [`docs/adr/`](https://github.com/brunoarueira/xlq/tree/main/docs/adr) is the
 complete decision history.
 

@@ -154,7 +154,11 @@ func TestRootWrongArgCount(t *testing.T) {
 // both together) must never point at one as if it'll be there, and
 // must never mention a bare "ADR-NNNN" either - that was just as
 // unresolvable without a path or URL at all. Every ADR reference must
-// be a full, resolvable adrURL instead.
+// be a full, resolvable adrURL instead. Per ADR-0044, --help now leads
+// with a docsURL link (the friendlier, example-driven explanation)
+// ahead of each adrURL link (kept as the permanent, per-version
+// fallback) - this test checks both are present and resolvable, not
+// just one.
 func TestHelpNeverReferencesABareLocalDocsPath(t *testing.T) {
 	out, err := run(t, "--help")
 	if err != nil {
@@ -162,11 +166,15 @@ func TestHelpNeverReferencesABareLocalDocsPath(t *testing.T) {
 	}
 
 	withoutURLs := strings.ReplaceAll(out, adrURL, "")
+	withoutURLs = strings.ReplaceAll(withoutURLs, docsURL, "")
 	if strings.Contains(withoutURLs, "docs/adr") || strings.Contains(withoutURLs, "ADR-") {
-		t.Errorf("--help still references a bare local docs/adr path or ADR-NNNN mention once every %s URL is stripped out:\n%s", adrURL, withoutURLs)
+		t.Errorf("--help still references a bare local docs/adr path or ADR-NNNN mention once every %s/%s URL is stripped out:\n%s", adrURL, docsURL, withoutURLs)
 	}
 	if !strings.Contains(out, adrURL) {
 		t.Error("--help doesn't reference any ADR URL at all - expected at least one")
+	}
+	if !strings.Contains(out, docsURL) {
+		t.Error("--help doesn't reference the docs site at all - expected at least one")
 	}
 }
 
