@@ -1,5 +1,6 @@
 /xlq
 /dist/
+/man/
 *.test
 *.out
 

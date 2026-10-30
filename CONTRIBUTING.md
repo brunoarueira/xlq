@@ -43,13 +43,16 @@ binaries, publishes the GitHub Release, and pushes a Homebrew cask to
 [`brunoarueira/homebrew-tap`](https://github.com/brunoarueira/homebrew-tap)
 automatically, generates [SLSA](https://slsa.dev/) Build L3 provenance
 for the binaries, signs the checksum file with
-[cosign](https://github.com/sigstore/cosign), and generates an SBOM for
-each archive. See [ADR-0006](docs/adr/0006-release-automation.md) for
-the core mechanism, [ADR-0016](docs/adr/0016-homebrew-publishing.md)
-for the Homebrew piece, [ADR-0038](docs/adr/0038-slsa-build-provenance.md)
-for the provenance piece, [ADR-0039](docs/adr/0039-cosign-signing.md)
-for the signing piece, and [ADR-0040](docs/adr/0040-sbom-generation.md)
-for the SBOM piece.
+[cosign](https://github.com/sigstore/cosign), generates an SBOM for
+each archive, and bundles a man page generated from xlq's own command
+tree (`cmd/gendoc`) into each archive. See
+[ADR-0006](docs/adr/0006-release-automation.md) for the core
+mechanism, [ADR-0016](docs/adr/0016-homebrew-publishing.md) for the
+Homebrew piece, [ADR-0038](docs/adr/0038-slsa-build-provenance.md) for
+the provenance piece, [ADR-0039](docs/adr/0039-cosign-signing.md) for
+the signing piece, [ADR-0040](docs/adr/0040-sbom-generation.md) for
+the SBOM piece, and [ADR-0044](docs/adr/0044-generated-man-pages-and-docs-site-help-links.md)
+for the man page piece.
 
 The Homebrew step needs a `HOMEBREW_TAP_GITHUB_TOKEN` repository
 secret - the default `GITHUB_TOKEN` only has write access to this
