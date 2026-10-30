@@ -154,11 +154,7 @@ func TestRootWrongArgCount(t *testing.T) {
 // both together) must never point at one as if it'll be there, and
 // must never mention a bare "ADR-NNNN" either - that was just as
 // unresolvable without a path or URL at all. Every ADR reference must
-// be a full, resolvable adrURL instead. Per ADR-0044, --help now leads
-// with a docsURL link (the friendlier, example-driven explanation)
-// ahead of each adrURL link (kept as the permanent, per-version
-// fallback) - this test checks both are present and resolvable, not
-// just one.
+// be a full, resolvable adrURL instead.
 func TestHelpNeverReferencesABareLocalDocsPath(t *testing.T) {
 	out, err := run(t, "--help")
 	if err != nil {
@@ -175,6 +171,55 @@ func TestHelpNeverReferencesABareLocalDocsPath(t *testing.T) {
 	}
 	if !strings.Contains(out, docsURL) {
 		t.Error("--help doesn't reference the docs site at all - expected at least one")
+	}
+}
+
+// TestHelpPairsEachDocsLinkWithAnADRFallback checks ADR-0044's actual
+// per-explanation contract, not just that both URL forms appear
+// somewhere: every docsURL mention must be followed, before the next
+// docsURL mention (or the end of --help), by at least one adrURL
+// mention - the docs-site link leads, with the ADR link kept directly
+// alongside it as a permanent, per-version fallback. A plain
+// "contains adrURL somewhere" check (TestHelpNeverReferencesABareLocalDocsPath
+// above) wouldn't catch a regression that drops the ADR fallback from
+// one flag's description while leaving it on others, or that reorders
+// one pair so the ADR link comes first. This doesn't assume a 1:1
+// count between the two: the filter-grammar explanation cites two
+// ADRs (0008 and its correction, 0009) for one docs anchor, which is
+// correct, not a bug.
+func TestHelpPairsEachDocsLinkWithAnADRFallback(t *testing.T) {
+	out, err := run(t, "--help")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	docsPositions := substringPositions(out, docsURL)
+	if len(docsPositions) == 0 {
+		t.Fatal("--help doesn't reference the docs site at all - expected at least one")
+	}
+	for i, start := range docsPositions {
+		end := len(out)
+		if i+1 < len(docsPositions) {
+			end = docsPositions[i+1]
+		}
+		segment := out[start:end]
+		if !strings.Contains(segment, adrURL) {
+			t.Errorf("--help's docs-site link at byte offset %d has no ADR fallback link after it before the next docs-site link (or the end of --help) - ADR-0044 pairs every docs-site link with an ADR link kept directly alongside it:\n%s", start, segment)
+		}
+	}
+}
+
+// substringPositions returns every byte offset in s where substr
+// occurs, in order.
+func substringPositions(s, substr string) []int {
+	var positions []int
+	for i := 0; ; {
+		j := strings.Index(s[i:], substr)
+		if j < 0 {
+			return positions
+		}
+		positions = append(positions, i+j)
+		i += j + len(substr)
 	}
 }
 
