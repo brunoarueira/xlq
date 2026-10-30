@@ -15,8 +15,9 @@ deciding or reviewing architecture; it was never written to explain a
 flag to someone who just typed `--help`. `docs/reference.md` already
 shows the better pattern for the same ground - prose and a runnable
 example first, with the ADR link kept only as a secondary "design
-rationale" reference - but `--help` has no prose at all, just the ADR
-link standing in for the whole explanation.
+rationale" reference - but `--help` has only terse, cobra-style inline
+prose and no runnable example, with the ADR link standing in for the
+detailed explanation.
 
 Pointing `--help` at `reference.html`'s existing, friendlier sections
 instead seems like the obvious fix, but it trades away something
@@ -74,9 +75,9 @@ Two independent changes, not one:
    subcommand shipped in the binary itself - it only needs to run once
    per release build) calls `cobra/doc`'s `GenManTree` against
    `NewRootCommand()`, and the result is added to `archives.files` so
-   it's bundled into the release tarball alongside the binary. This
+   it's bundled into the release archive alongside the binary. This
    is the version-safe reference `adrURL` was standing in for: whoever
-   downloads a given release's tarball gets a man page generated from
+   downloads a given release's archive gets a man page generated from
    that exact build's command tree, not a prose description that can
    fall out of sync with it.
 
