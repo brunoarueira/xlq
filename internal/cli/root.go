@@ -41,6 +41,16 @@ const defaultMaxFileSize = 256 << 20
 // xlq and this link always agree on what a given ADR number says.
 const adrURL = "https://github.com/brunoarueira/xlq/blob/main/docs/adr/"
 
+// docsURL is the base of the published docs site - a friendlier,
+// example-driven explanation of the same ground an ADR link above
+// covers, and (per ADR-0044) now the primary link in --help and every
+// flag description that used to point only at an ADR. The ADR link
+// is kept alongside it, not replaced: the docs site tracks main, so
+// a heading could be reworded or reorganized out from under an
+// already-shipped binary's anchor, where an ADR's own content, once
+// Accepted, never changes - see ADR-0044 for the full reasoning.
+const docsURL = "https://brunoarueira.github.io/xlq/"
+
 // NewRootCommand builds the xlq root command and its subcommands.
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
@@ -48,10 +58,10 @@ func NewRootCommand() *cobra.Command {
 		Short: "xlq is a command-line spreadsheet processor",
 		Long: "xlq is a jq/yq-style command-line processor for spreadsheet files.\n\n" +
 			"<filter> is evaluated against <file> - see\n" +
-			adrURL + "0008-filter-grammar-v1.md\n" +
-			"- and the grammar correction in\n" +
-			adrURL + "0009-correct-filter-grammar-ebnf.md\n" +
-			"- for the v1 grammar. The result is printed as JSON, unless\n" +
+			docsURL + "reference.html#addressing\n" +
+			"(design rationale: " + adrURL + "0008-filter-grammar-v1.md,\n" +
+			"corrected by " + adrURL + "0009-correct-filter-grammar-ebnf.md).\n" +
+			"The result is printed as JSON, unless\n" +
 			"--table, --csv, or --tsv asks for something else instead.\n\n" +
 			"<file>'s format (xlsx, csv, tsv, ods) is picked from its extension;\n" +
 			"use --input-format to override that for a misnamed file, and\n" +
@@ -60,13 +70,16 @@ func NewRootCommand() *cobra.Command {
 			"independently, collecting the results into a JSON array in file\n" +
 			"order - useful for diffing two exports; --table/--csv/--tsv and\n" +
 			"-i don't support more than one file - see\n" +
-			adrURL + "0017-multiple-input-files.md\n\n" +
+			docsURL + "reference.html#multiple-input-files\n" +
+			"(design rationale: " + adrURL + "0017-multiple-input-files.md).\n\n" +
 			"-i/--in-place edits <file> instead of reading it: <filter> must be\n" +
 			"an assignment (\"path = value\"), and only .xlsx is supported - see\n" +
-			adrURL + "0014-in-place-editing.md\n\n" +
+			docsURL + "reference.html#in-place-editing--i\n" +
+			"(design rationale: " + adrURL + "0014-in-place-editing.md).\n\n" +
 			"A config file (default: os.UserConfigDir()/xlq/config.yaml, override\n" +
 			"with --config) can set defaults for any flag above except -i - see\n" +
-			adrURL + "0015-config-file-for-default-flags.md",
+			docsURL + "reference.html#config-file\n" +
+			"(design rationale: " + adrURL + "0015-config-file-for-default-flags.md).",
 		Example: "  xlq '.Sheet1.A1' report.xlsx\n" +
 			"  xlq '.Sheet1' report.xlsx\n" +
 			"  xlq --compact '.Sheet1' report.xlsx\n" +
@@ -130,14 +143,14 @@ func NewRootCommand() *cobra.Command {
 	root.Flags().BoolP("compact-output", "c", false, "print JSON on one line, without indentation")
 	root.Flags().BoolP("raw-output", "r", false, "print a string result without JSON quotes")
 	root.Flags().Bool("table", false, "print a human-readable, column-aligned table instead of JSON")
-	root.Flags().Bool("csv", false, "print comma-separated values instead of JSON (see "+adrURL+"0013-csv-tsv-output.md for how a result flattens)")
-	root.Flags().Bool("tsv", false, "print tab-separated values instead of JSON (see "+adrURL+"0013-csv-tsv-output.md for how a result flattens)")
-	root.Flags().BoolP("in-place", "i", false, `edit the .xlsx file in place: <filter> must be an assignment, e.g. '.Sheet1.A1 = "value"' (see `+adrURL+`0014-in-place-editing.md); prints nothing on success`)
+	root.Flags().Bool("csv", false, "print comma-separated values instead of JSON (see "+docsURL+"reference.html#output-modes for how a result flattens; design rationale: "+adrURL+"0013-csv-tsv-output.md)")
+	root.Flags().Bool("tsv", false, "print tab-separated values instead of JSON (see "+docsURL+"reference.html#output-modes for how a result flattens; design rationale: "+adrURL+"0013-csv-tsv-output.md)")
+	root.Flags().BoolP("in-place", "i", false, `edit the .xlsx file in place: <filter> must be an assignment, e.g. '.Sheet1.A1 = "value"' (see `+docsURL+`reference.html#in-place-editing--i; design rationale: `+adrURL+`0014-in-place-editing.md); prints nothing on success`)
 	root.PersistentFlags().String("input-format", "", "input format: xlsx, csv, tsv, or ods (default: detected from the file extension)")
 	root.PersistentFlags().String("delimiter", "", "field delimiter override for csv/tsv input, exactly one character (default: comma for csv, tab for tsv)")
-	root.PersistentFlags().Duration("timeout", defaultReadTimeout, "wall-clock limit for reading and evaluating a file, e.g. 30s or 2m - a hang in a corrupt or adversarial file can't block past this (see "+adrURL+"0030-recover-and-timeout-the-read-path.md); 0 disables it")
-	root.PersistentFlags().Int64("max-size", defaultMaxFileSize, "maximum file size in bytes xlq will attempt to read, and (for xlsx) the most excelize will let a workbook decompress to in memory - default 268435456 (256 MiB); 0 disables it (see "+adrURL+"0031-memory-ceiling-for-untrusted-files.md)")
-	root.PersistentFlags().String("config", "", "config file path (default: os.UserConfigDir()/xlq/config.yaml; see "+adrURL+"0015-config-file-for-default-flags.md for which flags it can default and how)")
+	root.PersistentFlags().Duration("timeout", defaultReadTimeout, "wall-clock limit for reading and evaluating a file, e.g. 30s or 2m - a hang in a corrupt or adversarial file can't block past this (see "+docsURL+"reference.html#resource-limits; design rationale: "+adrURL+"0030-recover-and-timeout-the-read-path.md); 0 disables it")
+	root.PersistentFlags().Int64("max-size", defaultMaxFileSize, "maximum file size in bytes xlq will attempt to read, and (for xlsx) the most excelize will let a workbook decompress to in memory - default 268435456 (256 MiB); 0 disables it (see "+docsURL+"reference.html#resource-limits; design rationale: "+adrURL+"0031-memory-ceiling-for-untrusted-files.md)")
+	root.PersistentFlags().String("config", "", "config file path (default: os.UserConfigDir()/xlq/config.yaml; see "+docsURL+"reference.html#config-file for which flags it can default and how; design rationale: "+adrURL+"0015-config-file-for-default-flags.md)")
 	root.SetVersionTemplate("xlq {{.Version}}\n")
 	root.AddCommand(newSheetsCommand())
 	return root

@@ -4,6 +4,11 @@ title: Quickstart
 permalink: /quickstart.html
 ---
 
+This page reflects the latest release. If you're on an older `xlq`
+(check with `xlq --version`), something here may not match yet - see
+the [releases page](https://github.com/brunoarueira/xlq/releases) for
+what changed since.
+
 ## Install
 
 ```sh
