@@ -22,3 +22,4 @@ header_pages:
   - quickstart.md
   - reference.md
   - examples.md
+  - verifying-releases.md
