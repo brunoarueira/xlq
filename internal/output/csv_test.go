@@ -194,3 +194,37 @@ func TestTSVWholeWorkbookIsError(t *testing.T) {
 		t.Error("TSV(whole workbook): want error, got nil")
 	}
 }
+
+// TestCSVDefusesFormulaInDataValuesOnly confirms CSV applies
+// defuseFormula (ADR-0045) to a cell in every shape it renders, but
+// never to a header row - the same scope Table's own test confirms.
+func TestCSVDefusesFormulaInDataValuesOnly(t *testing.T) {
+	grid := [][]any{{"=A1", "+B1"}}
+	if got, want := mustCSV(t, grid), "'=A1,'+B1\n"; got != want {
+		t.Errorf("CSV(grid) = %q, want %q", got, want)
+	}
+
+	records := []map[string]any{{"=header": "@value"}}
+	if got, want := mustCSV(t, records), "=header\n'@value\n"; got != want {
+		t.Errorf("CSV(records) = %q, want %q (header untouched, value defused)", got, want)
+	}
+
+	column := []any{"-A1"}
+	if got, want := mustCSV(t, column), "'-A1\n"; got != want {
+		t.Errorf("CSV(column) = %q, want %q", got, want)
+	}
+
+	scalar := "=A1"
+	if got, want := mustCSV(t, scalar), "'=A1\n"; got != want {
+		t.Errorf("CSV(scalar) = %q, want %q", got, want)
+	}
+}
+
+func mustCSV(t *testing.T, v any) string {
+	t.Helper()
+	got, err := CSV(v)
+	if err != nil {
+		t.Fatalf("CSV(%v) returned error: %v", v, err)
+	}
+	return got
+}

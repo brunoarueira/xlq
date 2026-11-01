@@ -50,7 +50,7 @@ func Table(v any) string {
 	case []any:
 		return columnTable(val)
 	default:
-		return cellText(v)
+		return defuseFormula(cellText(v))
 	}
 }
 
@@ -59,7 +59,7 @@ func gridTable(grid [][]any) string {
 		for _, row := range grid {
 			cells := make([]string, len(row))
 			for i, c := range row {
-				cells[i] = cellText(c)
+				cells[i] = defuseFormula(cellText(c))
 			}
 			_, _ = fmt.Fprintln(w, strings.Join(cells, "\t"))
 		}
@@ -78,14 +78,16 @@ func recordsTable(records []map[string]any) string {
 			// not a value cellText already flattens elsewhere in this
 			// row - an embedded tab or newline in it would break the
 			// table's alignment exactly the same way an unflattened
-			// data cell would.
+			// data cell would. Not defuseFormula'd either (ADR-0045): a
+			// header name is a narrower, already-more-trusted surface
+			// than a free-text data cell.
 			headerCells[i] = cellText(h)
 		}
 		_, _ = fmt.Fprintln(w, strings.Join(headerCells, "\t"))
 		for _, rec := range records {
 			cells := make([]string, len(headers))
 			for i, h := range headers {
-				cells[i] = cellText(rec[h])
+				cells[i] = defuseFormula(cellText(rec[h]))
 			}
 			_, _ = fmt.Fprintln(w, strings.Join(cells, "\t"))
 		}
@@ -95,7 +97,7 @@ func recordsTable(records []map[string]any) string {
 func columnTable(items []any) string {
 	return tabwrite(func(w *tabwriter.Writer) {
 		for _, item := range items {
-			_, _ = fmt.Fprintln(w, cellText(item))
+			_, _ = fmt.Fprintln(w, defuseFormula(cellText(item)))
 		}
 	})
 }
@@ -117,9 +119,11 @@ func mapTable(m map[string]any) string {
 
 	return tabwrite(func(w *tabwriter.Writer) {
 		for _, k := range keys {
-			// k is a map key, not run through cellText like any other
-			// cell - same reasoning as recordsTable's headers above.
-			_, _ = fmt.Fprintln(w, cellText(k)+"\t"+cellText(m[k]))
+			// k is a map key, not run through cellText (or
+			// defuseFormula, ADR-0045 - a key is a narrower, already-
+			// more-trusted surface than a value) like any other cell -
+			// same reasoning as recordsTable's headers above.
+			_, _ = fmt.Fprintln(w, cellText(k)+"\t"+defuseFormula(cellText(m[k])))
 		}
 	})
 }
@@ -214,4 +218,26 @@ func scalarText(v any) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return string(b)
+}
+
+// defuseFormula prefixes s with a literal leading single quote if its
+// first byte is one a spreadsheet application (Excel, LibreOffice,
+// Google Sheets) would otherwise read as marking the whole cell as a
+// formula: =, +, -, or @ (ADR-0045, OWASP's "CSV Injection"). The
+// prefix is the same "force text" convention those applications use
+// internally - it's visible, not a silent drop, and the result is
+// still exactly as valid CSV/TSV/table text as s was. Applied only to
+// an actual data value at each of this package's call sites, never to
+// a header name, record key, or map key - a narrower, already-more-
+// trusted surface a real injection payload wouldn't actually target.
+func defuseFormula(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@':
+		return "'" + s
+	default:
+		return s
+	}
 }

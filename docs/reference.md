@@ -431,6 +431,13 @@ modes, and each is also mutually exclusive with `-c`/`-r` (which only ever
 meant something for JSON) - but `-c` and `-r` themselves still compose
 freely with each other.
 
+`--csv`/`--tsv`/`--table` also defuse spreadsheet formula injection
+([ADR-0045](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0045-defuse-csv-formula-injection.md)):
+a data value (never a header or key) whose text starts with `=`, `+`,
+`-`, or `@` gets a leading `'` prepended, the same "force text"
+convention spreadsheet applications use internally, so reopening the
+output can't run it as a formula. JSON output is unaffected.
+
 ## In-place editing (`-i`)
 
 ([ADR-0014](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0014-in-place-editing.md))

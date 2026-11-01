@@ -50,6 +50,7 @@ xlq, using the format described in
 | [0042](0042-provenance-artifact-not-generator-upload.md) | Attach provenance via its own build artifact, not the generator's upload path (corrects ADR-0041's release sequencing) |
 | [0043](0043-correct-adr-0042-contents-write-claim.md) | Correct ADR-0042's `contents: write` removal claim |
 | [0044](0044-generated-man-pages-and-docs-site-help-links.md) | Generated man pages, and `--help` links to the docs site instead of raw ADRs |
+| [0045](0045-defuse-csv-formula-injection.md) | Defuse spreadsheet formula injection in --csv/--tsv/--table output |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is

@@ -187,3 +187,62 @@ func TestTableFlattensHeaderAndKeyTabsAndNewlines(t *testing.T) {
 		t.Errorf("Table(%v) = %q, want %q", m, got, want)
 	}
 }
+
+// TestDefuseFormula guards ADR-0045's exact character set and prefix
+// form directly, independent of any caller.
+func TestDefuseFormula(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"=1+1", "'=1+1"},
+		{"+1", "'+1"},
+		{"-1", "'-1"},
+		{"@SUM(A1)", "'@SUM(A1)"},
+		{"plain text", "plain text"},
+		{"100", "100"},
+		// A trigger character anywhere but the first byte is untouched -
+		// only a cell's own first byte is what a spreadsheet application
+		// actually reads to decide it's a formula.
+		{"a=b", "a=b"},
+		// Already escaped: defuseFormula only ever runs once per cell
+		// (each call site runs it on cellText/scalarText's own fresh
+		// result), but confirms a leading quote itself isn't a trigger.
+		{"'=1+1", "'=1+1"},
+	}
+	for _, tt := range tests {
+		if got := defuseFormula(tt.in); got != tt.want {
+			t.Errorf("defuseFormula(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestTableDefusesFormulaInDataValuesOnly confirms Table applies
+// defuseFormula to a cell in every shape it renders, but never to a
+// header name or map key - ADR-0045's stated scope.
+func TestTableDefusesFormulaInDataValuesOnly(t *testing.T) {
+	grid := [][]any{{"=A1"}}
+	if got, want := Table(grid), "'=A1"; got != want {
+		t.Errorf("Table(grid) = %q, want %q", got, want)
+	}
+
+	records := []map[string]any{{"=header": "=value"}}
+	if got, want := Table(records), "=header\n'=value"; got != want {
+		t.Errorf("Table(records) = %q, want %q (header untouched, value defused)", got, want)
+	}
+
+	column := []any{"=A1"}
+	if got, want := Table(column), "'=A1"; got != want {
+		t.Errorf("Table(column) = %q, want %q", got, want)
+	}
+
+	scalar := "=A1"
+	if got, want := Table(scalar), "'=A1"; got != want {
+		t.Errorf("Table(scalar) = %q, want %q", got, want)
+	}
+
+	m := map[string]any{"=key": "=value"}
+	if got, want := Table(m), "=key  '=value"; got != want {
+		t.Errorf("Table(single record) = %q, want %q (key untouched, value defused)", got, want)
+	}
+}
