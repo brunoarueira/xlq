@@ -142,7 +142,16 @@ func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format inpu
 		}
 
 		if opts.compactData {
-			r = output.Compact(r)
+			compacted, cerr := withRecovery("compacting", 0, func() (any, error) {
+				return output.Compact(r), nil
+			})
+			if cerr != nil {
+				if len(paths) > 1 {
+					return fmt.Errorf("file %d (%s): %w", i+1, path, cerr)
+				}
+				return cerr
+			}
+			r = compacted
 		}
 		results[i] = r
 	}
@@ -152,42 +161,51 @@ func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format inpu
 		result = results
 	}
 
-	switch {
-	case opts.table:
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), output.Table(result))
-		return err
-	case opts.csv:
-		text, err := output.CSV(result)
-		if err != nil {
+	// Formatting and writing the final result - unlike reading and
+	// evaluating above, there's no file I/O left to hang on, so this
+	// is wrapped for panic recovery alone (timeout 0, i.e. disabled):
+	// a crafted-but-already-evaluated result reaching an unexpected
+	// shape in output.Table/CSV/TSV shouldn't crash the whole process
+	// any more than a panic during reading or evaluating would.
+	return withRecoveryErr("formatting output", 0, func() error {
+		switch {
+		case opts.table:
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), output.Table(result))
+			return err
+		case opts.csv:
+			text, err := output.CSV(result)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), text)
+			return err
+		case opts.tsv:
+			text, err := output.TSV(result)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), text)
 			return err
 		}
-		_, err = fmt.Fprint(cmd.OutOrStdout(), text)
-		return err
-	case opts.tsv:
-		text, err := output.TSV(result)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprint(cmd.OutOrStdout(), text)
-		return err
-	}
 
-	if opts.rawOutput {
-		if s, ok := result.(string); ok {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), s)
-			return err
+		if opts.rawOutput {
+			if s, ok := result.(string); ok {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), s)
+				return err
+			}
 		}
-	}
 
-	var encoded []byte
-	if opts.compactJSON {
-		encoded, err = json.Marshal(result)
-	} else {
-		encoded, err = json.MarshalIndent(result, "", "  ")
-	}
-	if err != nil {
-		return fmt.Errorf("encode result as JSON: %w", err)
-	}
-	_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-	return err
+		var encoded []byte
+		var err error
+		if opts.compactJSON {
+			encoded, err = json.Marshal(result)
+		} else {
+			encoded, err = json.MarshalIndent(result, "", "  ")
+		}
+		if err != nil {
+			return fmt.Errorf("encode result as JSON: %w", err)
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
+		return err
+	})
 }
