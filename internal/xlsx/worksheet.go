@@ -3,6 +3,7 @@ package xlsx
 import (
 	"archive/zip"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -10,6 +11,12 @@ import (
 
 	"github.com/xuri/excelize/v2"
 )
+
+// errRowLimitExceeded marks decodeRowXML's own resolvedCellOverhead
+// budget error, already fully formed - distinguished at
+// streamWorksheetRows' own call site so it isn't re-wrapped as a
+// generic parse failure the way a genuine token-stream error is.
+var errRowLimitExceeded = errors.New("xlsx: row's resolved cells exceed the configured limit")
 
 // resolvedCell is a <c> element's own attributes and children, with
 // its column index already resolved to 0-based - from its own r
@@ -143,11 +150,31 @@ func decodeCellXML(dec *xml.Decoder, start xml.StartElement) (cellXMLAttrs, erro
 	}
 }
 
+// resolvedCellOverhead is a conservative estimate of a resolvedCell
+// slice element's own fixed memory cost - its struct fields (two
+// ints, four string headers, two bools, a pointer, with alignment
+// padding) - independent of its string fields' own content length
+// (added separately, by their own len()). maxSize alone bounds the
+// raw XML bytes read to produce a row's cells, but not the row's own
+// materialized []resolvedCell: a single row isn't actually bounded
+// to a realistic column count the way it might look at a glance - a
+// crafted file can give its cells no r attribute at all, relying
+// purely on decodeRowXML's own sequential fallback, so a row packed
+// with minimal cells (e.g. "<c/>", 4 raw bytes each) can still
+// materialize far more real memory than that raw byte count once
+// this fixed per-cell cost is multiplied by an attacker-chosen cell
+// count - the same concern #168's own sharedStringEntryOverhead
+// guards for shared strings, scoped here to one row at a time.
+const resolvedCellOverhead = 96
+
 // decodeRowXML decodes a <row> element (its own StartElement already
 // consumed, start) into its 0-based row index (from its own r
 // attribute, -1 if absent) and its cells, in document order, with
-// each cell's column already resolved.
-func decodeRowXML(dec *xml.Decoder, start xml.StartElement) (rowIndex int, cells []resolvedCell, err error) {
+// each cell's column already resolved. maxSize bounds the row's own
+// materialized memory (resolvedCellOverhead's own running budget,
+// not just the raw bytes read - see its own doc comment); maxSize <=
+// 0 disables it.
+func decodeRowXML(dec *xml.Decoder, start xml.StartElement, maxSize int64) (rowIndex int, cells []resolvedCell, err error) {
 	rowIndex = -1
 	for _, attr := range start.Attr {
 		if attr.Name.Local == "r" {
@@ -158,6 +185,7 @@ func decodeRowXML(dec *xml.Decoder, start xml.StartElement) (rowIndex int, cells
 	}
 
 	nextCol := 0 // 1-based running column, mirrors excelize's own rowIterator.cellCol
+	var materialized int64
 	for {
 		tok, tokErr := dec.Token()
 		if tokErr != nil {
@@ -178,17 +206,29 @@ func decodeRowXML(dec *xml.Decoder, start xml.StartElement) (rowIndex int, cells
 			}
 			col := nextCol
 			if raw.r != "" {
-				if c, _, err := excelize.CellNameToCoordinates(raw.r); err == nil {
-					col = c
+				// Excelize's own rowXMLHandler treats an invalid r the
+				// same way - a hard error, not a silent fallback to the
+				// sequential column (confirmed directly in its source) -
+				// a malformed reference must not let a value land in
+				// the wrong cell unnoticed.
+				c, _, err := excelize.CellNameToCoordinates(raw.r)
+				if err != nil {
+					return rowIndex, cells, fmt.Errorf("invalid cell reference %q: %w", raw.r, err)
 				}
+				col = c
 			}
 			nextCol = col
-			cells = append(cells, resolvedCell{
+			cell := resolvedCell{
 				col: col - 1, styleID: raw.styleID, t: raw.t,
 				v: raw.v, hasV: raw.hasV,
 				formulaType: raw.formulaType, formulaText: raw.formulaText, hasF: raw.hasF,
 				is: raw.is,
-			})
+			}
+			materialized += int64(resolvedCellOverhead + len(cell.t) + len(cell.v) + len(cell.formulaType) + len(cell.formulaText))
+			if maxSize > 0 && materialized > maxSize {
+				return rowIndex, cells, fmt.Errorf("xlsx: row %d's resolved cells exceed the %d-byte limit for a v1 read: %w", rowIndex+1, maxSize, errRowLimitExceeded)
+			}
+			cells = append(cells, cell)
 		case xml.EndElement:
 			return rowIndex, cells, nil
 		}
@@ -271,9 +311,13 @@ func streamWorksheetRows(f *zip.File, maxSize int64, yield func(rowIndex int, ce
 				sheetDataDepth = depth
 				depth++
 			case inSheetData && depth == sheetDataDepth+1 && t.Name.Local == "row":
-				rowIndex, cells, rowErr := decodeRowXML(dec, t)
+				rowIndex, cells, rowErr := decodeRowXML(dec, t, maxSize)
 				if rowErr != nil {
-					fail(limitOrErr(rowErr))
+					if errors.Is(rowErr, errRowLimitExceeded) {
+						fail(rowErr)
+					} else {
+						fail(limitOrErr(rowErr))
+					}
 					return
 				}
 				if len(cells) > 0 && !yield(rowIndex, cells, nil) {

@@ -1,6 +1,10 @@
 package xlsx
 
 import (
+	"archive/zip"
+	"bytes"
+	"compress/flate"
+	"hash/crc32"
 	"testing"
 )
 
@@ -240,5 +244,130 @@ func TestStreamWorksheetRowsRejectsOversizedPart(t *testing.T) {
 	})
 	if gotErr == nil {
 		t.Fatal("streamWorksheetRows with maxSize=1: want an error, got nil")
+	}
+}
+
+// TestStreamWorksheetRowsRejectsUnderstatedHeaderSize guards the
+// actual defense beyond the declared-size precheck: a zip's own
+// declared UncompressedSize64 is just a header value an adversary
+// fully controls, so the real cap is the io.LimitedReader applied
+// while reading - mirrors TestSheetXMLPathRejectsUnderstatedHeaderSize
+// (sheetpath_test.go) for this reader's own worksheet XML part.
+func TestStreamWorksheetRowsRejectsUnderstatedHeaderSize(t *testing.T) {
+	var content bytes.Buffer
+	content.WriteString(`<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>`)
+	for range 100 {
+		content.WriteString(`<row r="1"><c><v>1</v></c></row>`)
+	}
+	content.WriteString(`</sheetData></worksheet>`)
+
+	var compressed bytes.Buffer
+	fw, err := flate.NewWriter(&compressed, flate.DefaultCompression)
+	if err != nil {
+		t.Fatalf("flate.NewWriter: %v", err)
+	}
+	if _, err := fw.Write(content.Bytes()); err != nil {
+		t.Fatalf("flate write: %v", err)
+	}
+	must(t, fw.Close())
+
+	const lie = 150 // > compressed.Len(), far short of content.Len()
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	fh := &zip.FileHeader{
+		Name:               "xl/worksheets/sheet1.xml",
+		Method:             zip.Deflate,
+		UncompressedSize64: lie,
+		CompressedSize64:   uint64(compressed.Len()),
+		CRC32:              crc32.ChecksumIEEE(content.Bytes()),
+	}
+	w, err := zw.CreateRaw(fh)
+	if err != nil {
+		t.Fatalf("CreateRaw: %v", err)
+	}
+	if _, err := w.Write(compressed.Bytes()); err != nil {
+		t.Fatalf("write raw entry: %v", err)
+	}
+	must(t, zw.Close())
+
+	zr, err := zip.NewReader(bytes.NewReader(zipBuf.Bytes()), int64(zipBuf.Len()))
+	if err != nil {
+		t.Fatalf("zip.NewReader: %v", err)
+	}
+	f := findZipEntry(zr, "xl/worksheets/sheet1.xml")
+
+	var gotErr error
+	streamWorksheetRows(f, lie, func(rowIndex int, cells []resolvedCell, err error) bool {
+		gotErr = err
+		return false
+	})
+	if gotErr == nil {
+		t.Fatal("streamWorksheetRows with an understated declared size: want an error, got nil")
+	}
+}
+
+// TestStreamWorksheetRowsRejectsManyTinyCellsInOneRow guards the
+// materialized-memory budget resolvedCellOverhead enforces: a row
+// isn't actually bounded to a realistic column count the way it
+// might look at a glance - a crafted row of minimal cells
+// ("<c/>", 4 raw bytes each) can still cost far more real memory
+// than its raw byte count once each one's fixed []resolvedCell slot
+// overhead is multiplied by an attacker-chosen cell count -
+// confirmed directly by constructing exactly this (20 such cells:
+// 247 raw bytes, comfortably under a 300-byte maxSize, but 1920
+// bytes once materialized).
+func TestStreamWorksheetRowsRejectsManyTinyCellsInOneRow(t *testing.T) {
+	var xmlBuf bytes.Buffer
+	xmlBuf.WriteString(`<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">`)
+	const n = 20
+	for range n {
+		xmlBuf.WriteString(`<c/>`)
+	}
+	xmlBuf.WriteString(`</row></sheetData></worksheet>`)
+
+	const maxSize = 300
+	if int64(xmlBuf.Len()) >= maxSize {
+		t.Fatalf("test fixture itself is %d bytes, not under maxSize=%d - adjust n", xmlBuf.Len(), maxSize)
+	}
+	if n*resolvedCellOverhead <= maxSize {
+		t.Fatalf("n*overhead = %d, want it over maxSize=%d - adjust n", n*resolvedCellOverhead, maxSize)
+	}
+
+	zr := buildRawZip(t, "xl/worksheets/sheet1.xml", xmlBuf.Bytes())
+	f := findZipEntry(zr, "xl/worksheets/sheet1.xml")
+
+	var gotErr error
+	streamWorksheetRows(f, maxSize, func(rowIndex int, cells []resolvedCell, err error) bool {
+		gotErr = err
+		return false
+	})
+	if gotErr == nil {
+		t.Fatalf("streamWorksheetRows with %d tiny cells in one row (raw bytes %d < maxSize %d, but n*overhead %d > maxSize): want an error, got nil", n, xmlBuf.Len(), maxSize, n*resolvedCellOverhead)
+	}
+}
+
+// TestStreamWorksheetRowsRejectsInvalidCellReference guards against
+// silent data corruption: excelize's own rowXMLHandler treats an
+// invalid r attribute as a hard error, not a fallback to the
+// sequential column (confirmed directly in its source) - a
+// malformed reference must not let a value land in the wrong cell
+// unnoticed.
+func TestStreamWorksheetRowsRejectsInvalidCellReference(t *testing.T) {
+	xmlContent := `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<sheetData>
+<row r="1"><c r="not-a-cell-ref"><v>1</v></c></row>
+</sheetData>
+</worksheet>`
+	zr := buildRawZip(t, "xl/worksheets/sheet1.xml", []byte(xmlContent))
+	f := findZipEntry(zr, "xl/worksheets/sheet1.xml")
+
+	var gotErr error
+	streamWorksheetRows(f, 0, func(rowIndex int, cells []resolvedCell, err error) bool {
+		gotErr = err
+		return false
+	})
+	if gotErr == nil {
+		t.Fatal("streamWorksheetRows with an invalid cell reference: want an error, got nil")
 	}
 }
