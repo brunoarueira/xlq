@@ -24,7 +24,7 @@ func TestSheetXMLPathSingleSheet(t *testing.T) {
 	path := build(t, func(f *excelize.File) {})
 	zr := openZip(t, path)
 
-	got, err := sheetXMLPath(&zr.Reader, "Sheet1")
+	got, err := sheetXMLPath(&zr.Reader, "Sheet1", 0)
 	if err != nil {
 		t.Fatalf("sheetXMLPath: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestSheetXMLPathAfterReorderRenameDelete(t *testing.T) {
 	})
 	zr := openZip(t, path)
 
-	got, err := sheetXMLPath(&zr.Reader, "Renamed")
+	got, err := sheetXMLPath(&zr.Reader, "Renamed", 0)
 	if err != nil {
 		t.Fatalf("sheetXMLPath: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestSheetXMLPathAfterReorderRenameDelete(t *testing.T) {
 		t.Errorf("sheetXMLPath(%q) = %q, want %q (its real relationship target, not a position guess)", "Renamed", got, "xl/worksheets/sheet2.xml")
 	}
 
-	got, err = sheetXMLPath(&zr.Reader, "Third")
+	got, err = sheetXMLPath(&zr.Reader, "Third", 0)
 	if err != nil {
 		t.Fatalf("sheetXMLPath: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestSheetXMLPathUnknownSheet(t *testing.T) {
 	path := build(t, func(f *excelize.File) {})
 	zr := openZip(t, path)
 
-	_, err := sheetXMLPath(&zr.Reader, "DoesNotExist")
+	_, err := sheetXMLPath(&zr.Reader, "DoesNotExist", 0)
 	if err == nil {
 		t.Fatal("sheetXMLPath(unknown sheet): want error, got nil")
 	}
@@ -88,7 +88,46 @@ func TestSheetXMLPathCaseSensitive(t *testing.T) {
 	path := build(t, func(f *excelize.File) {})
 	zr := openZip(t, path)
 
-	if _, err := sheetXMLPath(&zr.Reader, "sheet1"); err == nil {
+	if _, err := sheetXMLPath(&zr.Reader, "sheet1", 0); err == nil {
 		t.Error("sheetXMLPath(\"sheet1\") with the real sheet named \"Sheet1\": want an error (exact match only), got nil")
+	}
+}
+
+// TestSheetXMLPathRejectsOversizedPart guards #51's own concern
+// (docs/adr/0031-memory-ceiling-for-untrusted-files.md): workbook.xml
+// and the rels part are no exception to the same bound every other
+// part this new reader touches gets - a crafted file can declare any
+// part's size arbitrarily, regardless of what that part conventionally
+// holds.
+func TestSheetXMLPathRejectsOversizedPart(t *testing.T) {
+	path := build(t, func(f *excelize.File) {})
+	zr := openZip(t, path)
+
+	if _, err := sheetXMLPath(&zr.Reader, "Sheet1", 1); err == nil {
+		t.Fatal("sheetXMLPath with maxSize=1: want an error (workbook.xml is well over 1 byte), got nil")
+	} else if !strings.Contains(err.Error(), "limit") {
+		t.Errorf("error = %q, want it to mention the size limit", err)
+	}
+}
+
+func TestResolveRelationshipTarget(t *testing.T) {
+	tests := []struct {
+		target, want string
+	}{
+		// The common, same-directory-relative case excelize's own
+		// output actually uses - confirmed directly.
+		{"worksheets/sheet2.xml", "xl/worksheets/sheet2.xml"},
+		// A package-absolute target (a leading "/") is relative to the
+		// zip root, not to xl/ - prepending "xl/" to it, as naive
+		// string concatenation would, is wrong.
+		{"/xl/worksheets/sheet1.xml", "xl/worksheets/sheet1.xml"},
+		// ".." segments must actually resolve, not end up as literal
+		// path components no real zip entry name would ever contain.
+		{"../worksheets/sheet1.xml", "worksheets/sheet1.xml"},
+	}
+	for _, tt := range tests {
+		if got := resolveRelationshipTarget(tt.target); got != tt.want {
+			t.Errorf("resolveRelationshipTarget(%q) = %q, want %q", tt.target, got, tt.want)
+		}
 	}
 }
