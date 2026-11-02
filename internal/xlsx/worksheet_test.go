@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/flate"
+	"encoding/xml"
 	"hash/crc32"
+	"strings"
 	"testing"
 )
 
@@ -118,6 +120,37 @@ func TestStreamWorksheetRowsCaptureStyleTypeFormula(t *testing.T) {
 	}
 	if !got.hasV || got.v != "hi" {
 		t.Errorf("hasV=%v v=%q, want true, %q", got.hasV, got.v, "hi")
+	}
+}
+
+// TestDecodeElementTextIgnoresNestedElementText guards an exact
+// match with xml.Decoder.DecodeElement's own behavior for a plain
+// string target, confirmed directly: decoding
+// "<v>before<x>42</x>after</v>" gives "beforeafter", not
+// "before42after" - a nested element's own text is dropped
+// entirely, not flattened into the parent's. <v>/<f> never actually
+// contain nested elements in a real worksheet, but a malformed one
+// must not silently diverge from the DecodeElement-based behavior
+// this function replaces for performance.
+func TestDecodeElementTextIgnoresNestedElementText(t *testing.T) {
+	dec := xml.NewDecoder(strings.NewReader(`<root><v>before<x>42</x>after</v></root>`))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			t.Fatalf("Token: %v", err)
+		}
+		start, ok := tok.(xml.StartElement)
+		if !ok || start.Name.Local != "v" {
+			continue
+		}
+		got, err := decodeElementText(dec, start)
+		if err != nil {
+			t.Fatalf("decodeElementText: %v", err)
+		}
+		if got != "beforeafter" {
+			t.Errorf("decodeElementText(...) = %q, want %q", got, "beforeafter")
+		}
+		return
 	}
 }
 

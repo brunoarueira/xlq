@@ -65,6 +65,15 @@ type cellXMLAttrs struct {
 // share of total CPU time at this call volume - once per populated
 // cell's <v> and, for a formula cell, its <f> too - for content
 // that's always just a plain string.
+//
+// Only depth-0 CharData is kept, matching DecodeElement's own
+// behavior for a plain string target exactly - confirmed directly:
+// decoding "<v>before<x>42</x>after</v>" into a string gives
+// "beforeafter", not "before42after" - a nested element's own text
+// is dropped entirely, not flattened in. Keeping every depth would
+// silently diverge from that for a malformed (but still well-formed
+// XML) worksheet, which real producers are never known to emit but
+// isn't impossible to encounter.
 func decodeElementText(dec *xml.Decoder, start xml.StartElement) (string, error) {
 	var sb strings.Builder
 	depth := 0
@@ -75,7 +84,9 @@ func decodeElementText(dec *xml.Decoder, start xml.StartElement) (string, error)
 		}
 		switch t := tok.(type) {
 		case xml.CharData:
-			sb.Write(t)
+			if depth == 0 {
+				sb.Write(t)
+			}
 		case xml.StartElement:
 			depth++
 		case xml.EndElement:
