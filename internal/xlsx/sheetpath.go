@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"strings"
 )
@@ -111,6 +112,20 @@ func resolveRelationshipTarget(target string) string {
 	return path.Join("xl", target)
 }
 
+// findZipEntry returns the zip entry named name within zr, or nil if
+// no such entry exists - some parts (xl/sharedStrings.xml among them)
+// are legitimately optional, so callers that need to tell "absent"
+// apart from "present but invalid" check this first rather than
+// relying on decodeZipEntry's own not-found error.
+func findZipEntry(zr *zip.Reader, name string) *zip.File {
+	for _, f := range zr.File {
+		if f.Name == name {
+			return f
+		}
+	}
+	return nil
+}
+
 // decodeZipEntry finds the zip entry named name within zr and decodes
 // it as XML into v, or returns a clear error if the entry is missing,
 // isn't valid XML, or exceeds maxSize decompressed. maxSize <= 0
@@ -119,33 +134,62 @@ func resolveRelationshipTarget(target string) string {
 // actual bytes read are capped too, the same two-layer check
 // internal/ods's own decodeEntryWithLimit already uses for ODS.
 func decodeZipEntry(zr *zip.Reader, name string, v any, maxSize int64) error {
-	for _, f := range zr.File {
-		if f.Name != name {
-			continue
-		}
-		if maxSize > 0 && int64(f.UncompressedSize64) > maxSize {
-			return fmt.Errorf("xlsx: %s is %d bytes uncompressed, over the %d-byte limit for a v1 read", name, f.UncompressedSize64, maxSize)
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			return fmt.Errorf("xlsx: open %s: %w", name, err)
-		}
-		defer func() { _ = rc.Close() }()
-
-		var r io.Reader = rc
-		var limited *io.LimitedReader
-		if maxSize > 0 {
-			limited = &io.LimitedReader{R: rc, N: maxSize + 1}
-			r = limited
-		}
-		if err := xml.NewDecoder(r).Decode(v); err != nil {
-			return fmt.Errorf("xlsx: parse %s: %w", name, err)
-		}
-		if limited != nil && limited.N <= 0 {
-			return fmt.Errorf("xlsx: %s exceeds the %d-byte limit for a v1 read", name, maxSize)
-		}
-		return nil
+	f := findZipEntry(zr, name)
+	if f == nil {
+		return fmt.Errorf("xlsx: %s not found in archive", name)
 	}
-	return fmt.Errorf("xlsx: %s not found in archive", name)
+	return decodeZipFile(f, v, maxSize)
+}
+
+// limitedReaderN returns the N field for an io.LimitedReader meant to
+// allow maxSize bytes while still being able to tell "read exactly
+// maxSize" apart from "read more than that" (one byte more than
+// maxSize, so reaching the limit without the document finishing
+// proves it's oversized) - without overflowing when maxSize is
+// already math.MaxInt64, the largest representable value, where
+// there's no larger one to ask for anyway. Confirmed directly:
+// maxSize+1 silently wraps to a negative number there, which would
+// make io.LimitedReader.Read return io.EOF immediately, rejecting
+// every read as "oversized" even for a tiny, valid file.
+func limitedReaderN(maxSize int64) int64 {
+	if maxSize == math.MaxInt64 {
+		return maxSize
+	}
+	return maxSize + 1
+}
+
+// decodeZipFile is decodeZipEntry's own work once the *zip.File is
+// already in hand, shared with callers (sharedStrings among them)
+// that need to check an entry's presence themselves first.
+func decodeZipFile(f *zip.File, v any, maxSize int64) error {
+	if maxSize > 0 && int64(f.UncompressedSize64) > maxSize {
+		return fmt.Errorf("xlsx: %s is %d bytes uncompressed, over the %d-byte limit for a v1 read", f.Name, f.UncompressedSize64, maxSize)
+	}
+
+	rc, err := f.Open()
+	if err != nil {
+		return fmt.Errorf("xlsx: open %s: %w", f.Name, err)
+	}
+	defer func() { _ = rc.Close() }()
+
+	var r io.Reader = rc
+	var limited *io.LimitedReader
+	if maxSize > 0 {
+		limited = &io.LimitedReader{R: rc, N: limitedReaderN(maxSize)}
+		r = limited
+	}
+	decodeErr := xml.NewDecoder(r).Decode(v)
+	// Checked before decodeErr: reading all maxSize+1 allowed bytes
+	// without the document ever finishing already proves the part is
+	// over the limit, regardless of what shape that leaves the XML
+	// decoder's own error in - typically a confusing "unexpected EOF"
+	// from the stream simply stopping mid-element, not anything
+	// naming the real cause.
+	if limited != nil && limited.N <= 0 {
+		return fmt.Errorf("xlsx: %s exceeds the %d-byte limit for a v1 read", f.Name, maxSize)
+	}
+	if decodeErr != nil {
+		return fmt.Errorf("xlsx: parse %s: %w", f.Name, decodeErr)
+	}
+	return nil
 }
