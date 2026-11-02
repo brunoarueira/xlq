@@ -712,26 +712,25 @@ func TestSheetNamesRejectsOversizedDecompressedContent(t *testing.T) {
 	}
 }
 
-// TestExcelizeOptionsCapsXMLLimitAtMaxSize guards the one subtlety in
-// excelizeOptions worth a dedicated test: excelize.OpenFile itself
-// rejects UnzipXMLSizeLimit > UnzipSizeLimit outright, so a maxSize
-// smaller than unzipXMLSizeLimit's own fixed default must cap the XML
-// limit down to maxSize too, not pass the fixed default through
-// unconditionally.
-func TestExcelizeOptionsCapsXMLLimitAtMaxSize(t *testing.T) {
-	small := int64(1 << 10) // far below unzipXMLSizeLimit's own 16 MiB default
+// TestExcelizeOptionsXMLLimitMatchesMaxSize guards ADR-0047's own
+// decision directly: UnzipXMLSizeLimit always equals UnzipSizeLimit
+// (both maxSize), for a small maxSize and a large one alike - no
+// separate, lower, fixed cap on a single XML part regardless of how
+// high maxSize itself is.
+func TestExcelizeOptionsXMLLimitMatchesMaxSize(t *testing.T) {
+	small := int64(1 << 10)
 	opts := excelizeOptions(small)
 	if opts.UnzipSizeLimit != small {
 		t.Errorf("UnzipSizeLimit = %d, want %d", opts.UnzipSizeLimit, small)
 	}
 	if opts.UnzipXMLSizeLimit != small {
-		t.Errorf("UnzipXMLSizeLimit = %d, want %d (capped at maxSize, not the fixed 16MiB default)", opts.UnzipXMLSizeLimit, small)
+		t.Errorf("UnzipXMLSizeLimit = %d, want %d (matches maxSize)", opts.UnzipXMLSizeLimit, small)
 	}
 
-	large := int64(1 << 30) // well above unzipXMLSizeLimit's own 16 MiB default
+	large := int64(1 << 30)
 	opts2 := excelizeOptions(large)
-	if opts2.UnzipXMLSizeLimit != unzipXMLSizeLimit {
-		t.Errorf("UnzipXMLSizeLimit = %d, want the fixed %d default (maxSize is large enough not to cap it)", opts2.UnzipXMLSizeLimit, unzipXMLSizeLimit)
+	if opts2.UnzipSizeLimit != large || opts2.UnzipXMLSizeLimit != large {
+		t.Errorf("excelizeOptions(%d) = %+v, want both limits to equal maxSize, not a lower fixed cap", large, opts2)
 	}
 
 	if disabled := excelizeOptions(0); disabled != (excelize.Options{}) {
