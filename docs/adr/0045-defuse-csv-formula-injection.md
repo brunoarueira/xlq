@@ -42,6 +42,19 @@ starting with `=`. Scoping the fix to the well-established four-
 character set avoids claiming protection this change hasn't actually
 confirmed it provides.
 
+Escaping headers raises its own correctness requirement: the mapping
+from a header's real text to its escaped output must stay injective
+(no two distinct real header names ever escape to the same text), or
+two genuinely different columns become indistinguishable in the
+output's own header row - `records`' lookup by the real, unescaped
+name stays correct either way, but a human or downstream program
+reading the output can no longer tell the columns apart. Confirmed
+directly: escaping only `=`/`+`/`-`/`@` let two distinct real headers,
+`"=x"` and `"'=x"`, both escape to `"'=x"`. The fix also escapes an
+already-present leading quote (doubling it, the same way a quote
+embedded in a quoted CSV field is already doubled), which restores
+injectivity - every distinct input still maps to a distinct output.
+
 A genuine number must never be caught by this: `scalarText` renders a
 non-string value (a float, a bool) via `json.Marshal`, and that's the
 only way the rendered text can ever start with `-` without having
@@ -57,8 +70,9 @@ alone.
 
 Every string field rendered by `--csv`, `--tsv`, or `--table` - a
 data value, a `records` header name, or a map key alike - whose text
-starts with `=`, `+`, `-`, or `@` gets a literal leading single quote
-(`'`) prepended before being written out, *unless* that text is
+starts with `=`, `+`, `-`, `@`, or an existing leading `'` itself
+(for injectivity) gets a literal leading single quote (`'`) prepended
+before being written out, *unless* that text is
 already valid JSON (`encoding/json`'s own `json.Valid`) - the case
 that rules out a genuine number reaching this undefused. The leading-
 quote prefix is the same "force text" convention spreadsheet

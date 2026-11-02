@@ -1,6 +1,9 @@
 package output
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCSVGrid(t *testing.T) {
 	in := [][]any{
@@ -228,6 +231,29 @@ func TestCSVDefusesFormulaEverywhere(t *testing.T) {
 	m := map[string]any{"=key": "=value"}
 	if got, want := mustCSV(t, m), "'=key\n'=value\n"; got != want {
 		t.Errorf("CSV(single record) = %q, want %q (key and value both defused)", got, want)
+	}
+}
+
+// TestCSVDefusedHeadersStayDistinct guards the collision defuseFormula
+// must not introduce: two records whose real header names are "=x"
+// and "'=x" - distinct before escaping - must still render as two
+// distinct header columns after escaping, not both collapse onto the
+// same "'=x" text. Confirmed directly that without doubling an
+// existing leading quote, they did collapse - the underlying
+// rec[h] lookup stayed correct either way, but the output's own
+// header row became ambiguous.
+func TestCSVDefusedHeadersStayDistinct(t *testing.T) {
+	records := []map[string]any{
+		{"=x": "v1", "'=x": "v2"},
+	}
+	got := mustCSV(t, records)
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) == 0 {
+		t.Fatalf("CSV(%v) = %q, want at least a header row", records, got)
+	}
+	headers := strings.Split(lines[0], ",")
+	if len(headers) != 2 || headers[0] == headers[1] {
+		t.Errorf("CSV(%v) header row = %q, want two distinct columns, got %v", records, lines[0], headers)
 	}
 }
 

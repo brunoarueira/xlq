@@ -433,10 +433,12 @@ freely with each other.
 
 `--csv`/`--tsv`/`--table` also defuse spreadsheet formula injection
 ([ADR-0045](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0045-defuse-csv-formula-injection.md)):
-a data value (never a header or key) whose text starts with `=`, `+`,
-`-`, or `@` gets a leading `'` prepended, the same "force text"
+any rendered field - a data value, a `records` header, or a map key
+alike - whose text starts with `=`, `+`, `-`, `@`, or an existing
+leading `'` gets a leading `'` prepended, the same "force text"
 convention spreadsheet applications use internally, so reopening the
-output can't run it as a formula. JSON output is unaffected.
+output can't run it as a formula. A genuine number is never affected.
+JSON output is unaffected either way.
 
 ## In-place editing (`-i`)
 

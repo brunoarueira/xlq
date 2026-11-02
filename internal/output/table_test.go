@@ -221,10 +221,14 @@ func TestDefuseFormula(t *testing.T) {
 		// only a cell's own first byte is what a spreadsheet application
 		// actually reads to decide it's a formula.
 		{"a=b", "a=b"},
-		// Already escaped: defuseFormula only ever runs once per cell
-		// (each call site runs it on cellText/scalarText's own fresh
-		// result), but confirms a leading quote itself isn't a trigger.
-		{"'=1+1", "'=1+1"},
+		// A leading quote is itself escaped too (doubled), not left
+		// alone - the one thing that keeps the whole mapping injective:
+		// without this, a cell whose real text already starts with a
+		// literal quote ("'=1+1") would collapse onto the same escaped
+		// output as a cell whose real text was "=1+1" ("'=1+1" either
+		// way), confirmed directly to produce two visually identical,
+		// genuinely different headers in records/CSV output.
+		{"'=1+1", "''=1+1"},
 	}
 	for _, tt := range tests {
 		if got := defuseFormula(tt.in); got != tt.want {
