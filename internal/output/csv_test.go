@@ -1,6 +1,9 @@
 package output
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCSVGrid(t *testing.T) {
 	in := [][]any{
@@ -193,4 +196,72 @@ func TestTSVWholeWorkbookIsError(t *testing.T) {
 	if _, err := TSV(in); err == nil {
 		t.Error("TSV(whole workbook): want error, got nil")
 	}
+}
+
+// TestCSVDefusesFormulaEverywhere confirms CSV applies defuseFormula
+// to every field it renders - a data value, a records header, or a
+// single-record map's own key alike (ADR-0045) - but never to a
+// genuine negative number, the same scope and exemption Table's own
+// test confirms.
+func TestCSVDefusesFormulaEverywhere(t *testing.T) {
+	grid := [][]any{{"=A1", "+B1", -12.5}}
+	if got, want := mustCSV(t, grid), "'=A1,'+B1,-12.5\n"; got != want {
+		t.Errorf("CSV(grid) = %q, want %q", got, want)
+	}
+
+	records := []map[string]any{{"=header": "@value"}}
+	if got, want := mustCSV(t, records), "'=header\n'@value\n"; got != want {
+		t.Errorf("CSV(records) = %q, want %q (header and value both defused)", got, want)
+	}
+
+	column := []any{"-A1"}
+	if got, want := mustCSV(t, column), "'-A1\n"; got != want {
+		t.Errorf("CSV(column) = %q, want %q", got, want)
+	}
+
+	scalar := "=A1"
+	if got, want := mustCSV(t, scalar), "'=A1\n"; got != want {
+		t.Errorf("CSV(scalar) = %q, want %q", got, want)
+	}
+
+	// The map[string]any path (a single record, ADR-0011) is a
+	// separate branch from []map[string]any above - not exercised by
+	// any of the other cases here, so a regression specific to it
+	// wouldn't otherwise be caught.
+	m := map[string]any{"=key": "=value"}
+	if got, want := mustCSV(t, m), "'=key\n'=value\n"; got != want {
+		t.Errorf("CSV(single record) = %q, want %q (key and value both defused)", got, want)
+	}
+}
+
+// TestCSVDefusedHeadersStayDistinct guards the collision defuseFormula
+// must not introduce: two records whose real header names are "=x"
+// and "'=x" - distinct before escaping - must still render as two
+// distinct header columns after escaping, not both collapse onto the
+// same "'=x" text. Confirmed directly that without doubling an
+// existing leading quote, they did collapse - the underlying
+// rec[h] lookup stayed correct either way, but the output's own
+// header row became ambiguous.
+func TestCSVDefusedHeadersStayDistinct(t *testing.T) {
+	records := []map[string]any{
+		{"=x": "v1", "'=x": "v2"},
+	}
+	got := mustCSV(t, records)
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) == 0 {
+		t.Fatalf("CSV(%v) = %q, want at least a header row", records, got)
+	}
+	headers := strings.Split(lines[0], ",")
+	if len(headers) != 2 || headers[0] == headers[1] {
+		t.Errorf("CSV(%v) header row = %q, want two distinct columns, got %v", records, lines[0], headers)
+	}
+}
+
+func mustCSV(t *testing.T, v any) string {
+	t.Helper()
+	got, err := CSV(v)
+	if err != nil {
+		t.Fatalf("CSV(%v) returned error: %v", v, err)
+	}
+	return got
 }

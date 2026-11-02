@@ -40,6 +40,10 @@ import (
 // Unlike Table, a field's text is scalarText's, not cellText's: a tab
 // or embedded newline doesn't need flattening here, since
 // encoding/csv's own quoting already represents either correctly.
+// Every rendered field - a data value or a records header alike -
+// whose text starts with =, +, -, or @ is defuseFormula'd first
+// (ADR-0045), so reopening the output in a spreadsheet application
+// can't run it as a formula.
 func CSV(v any) (string, error) {
 	return delimited(v, ',')
 }
@@ -84,7 +88,7 @@ func delimitedRows(v any) ([][]string, error) {
 	case []any:
 		return columnRows(val), nil
 	default:
-		return [][]string{{scalarText(v)}}, nil
+		return [][]string{{defuseFormula(scalarText(v))}}, nil
 	}
 }
 
@@ -93,7 +97,7 @@ func gridRows(grid [][]any) [][]string {
 	for i, row := range grid {
 		fields := make([]string, len(row))
 		for j, c := range row {
-			fields[j] = scalarText(c)
+			fields[j] = defuseFormula(scalarText(c))
 		}
 		rows[i] = fields
 	}
@@ -114,11 +118,19 @@ func recordRows(records []map[string]any) [][]string {
 	}
 
 	rows := make([][]string, 0, len(records)+1)
-	rows = append(rows, headers)
+	// headers (ADR-0011's own field names) are defuseFormula'd
+	// (ADR-0045) too, same as a record's own values below - a header
+	// row is exactly as attacker-writable as a data cell is, for a
+	// file whose content isn't trusted in the first place.
+	defusedHeaders := make([]string, len(headers))
+	for i, h := range headers {
+		defusedHeaders[i] = defuseFormula(h)
+	}
+	rows = append(rows, defusedHeaders)
 	for _, rec := range records {
 		fields := make([]string, len(headers))
 		for i, h := range headers {
-			fields[i] = scalarText(rec[h])
+			fields[i] = defuseFormula(scalarText(rec[h]))
 		}
 		rows = append(rows, fields)
 	}
@@ -128,7 +140,7 @@ func recordRows(records []map[string]any) [][]string {
 func columnRows(items []any) [][]string {
 	rows := make([][]string, len(items))
 	for i, item := range items {
-		rows[i] = []string{scalarText(item)}
+		rows[i] = []string{defuseFormula(scalarText(item))}
 	}
 	return rows
 }

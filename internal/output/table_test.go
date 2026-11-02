@@ -187,3 +187,85 @@ func TestTableFlattensHeaderAndKeyTabsAndNewlines(t *testing.T) {
 		t.Errorf("Table(%v) = %q, want %q", m, got, want)
 	}
 }
+
+// TestDefuseFormula guards ADR-0045's exact character set and prefix
+// form directly, independent of any caller.
+func TestDefuseFormula(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"=1+1", "'=1+1"},
+		{"+1", "'+1"},
+		{"@SUM(A1)", "'@SUM(A1)"},
+		{"plain text", "plain text"},
+		{"100", "100"},
+		// A genuine number is never defused, even a negative one -
+		// json.Valid is exactly what scalarText's own json.Marshal
+		// output for a float/bool/null always is, and the only trigger
+		// character it can ever start with is '-' (JSON numbers never
+		// start with '+' or '@'). A bare number was the real false
+		// positive this guards: -12.5 was prefixed into the text
+		// "'-12.5" before this check existed, confirmed directly
+		// against a genuine negative-number cell.
+		{"-1", "-1"},
+		{"-12.5", "-12.5"},
+		// Not valid JSON on its own (two numbers, no operator JSON
+		// recognizes) - still a real injection shape, still defused.
+		{"-1+1", "'-1+1"},
+		// A bare "-" isn't a valid JSON number (one is required to have
+		// at least one digit) - still defused, same as any other
+		// non-JSON text starting with a trigger character.
+		{"-", "'-"},
+		// A trigger character anywhere but the first byte is untouched -
+		// only a cell's own first byte is what a spreadsheet application
+		// actually reads to decide it's a formula.
+		{"a=b", "a=b"},
+		// A leading quote is itself escaped too (doubled), not left
+		// alone - the one thing that keeps the whole mapping injective:
+		// without this, a cell whose real text already starts with a
+		// literal quote ("'=1+1") would collapse onto the same escaped
+		// output as a cell whose real text was "=1+1" ("'=1+1" either
+		// way), confirmed directly to produce two visually identical,
+		// genuinely different headers in records/CSV output.
+		{"'=1+1", "''=1+1"},
+	}
+	for _, tt := range tests {
+		if got := defuseFormula(tt.in); got != tt.want {
+			t.Errorf("defuseFormula(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestTableDefusesFormulaEverywhere confirms Table applies
+// defuseFormula to every cell it renders - a data value, a records
+// header, or a map key alike (ADR-0045: none of them is any more
+// trustworthy than another, since all come from the same potentially-
+// untrusted input file) - but never to a genuine number, even a
+// negative one.
+func TestTableDefusesFormulaEverywhere(t *testing.T) {
+	grid := [][]any{{"=A1", -12.5}}
+	if got, want := Table(grid), "'=A1  -12.5"; got != want {
+		t.Errorf("Table(grid) = %q, want %q", got, want)
+	}
+
+	records := []map[string]any{{"=header": "=value"}}
+	if got, want := Table(records), "'=header\n'=value"; got != want {
+		t.Errorf("Table(records) = %q, want %q (header and value both defused)", got, want)
+	}
+
+	column := []any{"=A1"}
+	if got, want := Table(column), "'=A1"; got != want {
+		t.Errorf("Table(column) = %q, want %q", got, want)
+	}
+
+	scalar := "=A1"
+	if got, want := Table(scalar), "'=A1"; got != want {
+		t.Errorf("Table(scalar) = %q, want %q", got, want)
+	}
+
+	m := map[string]any{"=key": "=value"}
+	if got, want := Table(m), "'=key  '=value"; got != want {
+		t.Errorf("Table(single record) = %q, want %q (key and value both defused)", got, want)
+	}
+}

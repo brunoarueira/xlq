@@ -50,7 +50,7 @@ func Table(v any) string {
 	case []any:
 		return columnTable(val)
 	default:
-		return cellText(v)
+		return defuseFormula(cellText(v))
 	}
 }
 
@@ -59,7 +59,7 @@ func gridTable(grid [][]any) string {
 		for _, row := range grid {
 			cells := make([]string, len(row))
 			for i, c := range row {
-				cells[i] = cellText(c)
+				cells[i] = defuseFormula(cellText(c))
 			}
 			_, _ = fmt.Fprintln(w, strings.Join(cells, "\t"))
 		}
@@ -78,14 +78,16 @@ func recordsTable(records []map[string]any) string {
 			// not a value cellText already flattens elsewhere in this
 			// row - an embedded tab or newline in it would break the
 			// table's alignment exactly the same way an unflattened
-			// data cell would.
-			headerCells[i] = cellText(h)
+			// data cell would. defuseFormula'd too (ADR-0045): a header
+			// row is exactly as attacker-writable as a data cell is,
+			// for a file whose content isn't trusted in the first place.
+			headerCells[i] = defuseFormula(cellText(h))
 		}
 		_, _ = fmt.Fprintln(w, strings.Join(headerCells, "\t"))
 		for _, rec := range records {
 			cells := make([]string, len(headers))
 			for i, h := range headers {
-				cells[i] = cellText(rec[h])
+				cells[i] = defuseFormula(cellText(rec[h]))
 			}
 			_, _ = fmt.Fprintln(w, strings.Join(cells, "\t"))
 		}
@@ -95,7 +97,7 @@ func recordsTable(records []map[string]any) string {
 func columnTable(items []any) string {
 	return tabwrite(func(w *tabwriter.Writer) {
 		for _, item := range items {
-			_, _ = fmt.Fprintln(w, cellText(item))
+			_, _ = fmt.Fprintln(w, defuseFormula(cellText(item)))
 		}
 	})
 }
@@ -117,9 +119,10 @@ func mapTable(m map[string]any) string {
 
 	return tabwrite(func(w *tabwriter.Writer) {
 		for _, k := range keys {
-			// k is a map key, not run through cellText like any other
-			// cell - same reasoning as recordsTable's headers above.
-			_, _ = fmt.Fprintln(w, cellText(k)+"\t"+cellText(m[k]))
+			// k is a map key, run through cellText and defuseFormula
+			// (ADR-0045) like any other cell - same reasoning as
+			// recordsTable's headers above.
+			_, _ = fmt.Fprintln(w, defuseFormula(cellText(k))+"\t"+defuseFormula(cellText(m[k])))
 		}
 	})
 }
@@ -214,4 +217,53 @@ func scalarText(v any) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return string(b)
+}
+
+// defuseFormula prefixes s with a literal leading single quote if its
+// first byte is one a spreadsheet application (Excel, LibreOffice,
+// Google Sheets) would otherwise read as marking the whole cell as a
+// formula: =, +, -, or @ (ADR-0045, OWASP's "CSV Injection") - or if
+// it's already a leading single quote itself, so the mapping stays
+// injective (distinct input never collapses to the same output; see
+// below). The prefix is the same "force text" convention those
+// applications use internally - it's visible, not a silent drop, and
+// the result is still exactly as valid CSV/TSV/table text as s was.
+// Applied to every rendered cell at each of this package's call
+// sites - a data value, a records header, or a map key alike, since
+// none of them is any more trustworthy than another: all come from
+// the same potentially-untrusted input file (a header row is exactly
+// as attacker-writable as a data cell is).
+//
+// Escaping an existing leading quote too (not just =/+/-/@) matters
+// specifically for a records/CSV header: confirmed directly that
+// without it, two distinct header names differing only by one
+// already starting with a literal quote - "=x" and "'=x" - both
+// escape to the same text, "'=x", making two genuinely different
+// columns indistinguishable in the output's own header row (the
+// underlying lookup stays correct; only the displayed, human-facing
+// header collides). Doubling an existing leading quote keeps every
+// distinct input mapping to a distinct output, the same way doubling
+// an embedded quote inside a quoted CSV field already does.
+//
+// s that's already valid JSON (per json.Valid) is left alone even if
+// its first byte matches - this is the one case defuseFormula must
+// not touch: scalarText renders a non-string value (a number, a bool)
+// via json.Marshal, and Go's encoder is the only thing that can ever
+// produce a leading '-' this function would otherwise react to (JSON
+// numbers never start with '+', '@', or "'", and a bare number -
+// "-12.5" - can't itself be a working formula regardless of whether
+// it reached here from a real numeric cell or from string text that
+// merely looks numeric), so treating it as text instead of a number
+// would be wrong, not merely over-cautious - confirmed directly
+// against a genuine negative-number cell.
+func defuseFormula(s string) string {
+	if s == "" || json.Valid([]byte(s)) {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\'':
+		return "'" + s
+	default:
+		return s
+	}
 }
