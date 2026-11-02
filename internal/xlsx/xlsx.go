@@ -245,19 +245,27 @@ func resolveCellValue(rc resolvedCell, strs []string) (string, error) {
 // readCell converts rc (rowIndex is 0-based) into a model.Cell. It
 // reports ok=false for a cell that is genuinely absent: no value and
 // no formula.
+//
+// cellRef (the "A1"-style reference excelize's own API needs) is
+// computed only when rc actually has a formula - the one case that
+// still needs excelize (GetCellFormula for a shared formula,
+// CalcCellValue for a live one) - rather than for every cell
+// unconditionally: confirmed directly via profiling that computing
+// it for every cell, including the overwhelming majority with no
+// formula at all, was a meaningful share of this reader's own
+// allocations at this call volume.
 func readCell(f *excelize.File, sheet string, rowIndex int, rc resolvedCell, strs []string, date1904 bool, dateStyles map[int]bool) (model.Cell, bool, error) {
-	cellRef, err := excelize.CoordinatesToCellName(rc.col+1, rowIndex+1)
-	if err != nil {
-		return model.Cell{}, false, err
-	}
-
 	raw, err := resolveCellValue(rc, strs)
 	if err != nil {
+		cellRef, _ := excelize.CoordinatesToCellName(rc.col+1, rowIndex+1)
 		return model.Cell{}, false, fmt.Errorf("resolve value of %s!%s: %w", sheet, cellRef, err)
 	}
 
-	var formula string
+	var formula, cellRef string
 	if rc.hasF {
+		if cellRef, err = excelize.CoordinatesToCellName(rc.col+1, rowIndex+1); err != nil {
+			return model.Cell{}, false, err
+		}
 		if rc.formulaType == "shared" {
 			// A shared formula's own relative-reference reconstruction
 			// for anything but the group's master cell is genuinely

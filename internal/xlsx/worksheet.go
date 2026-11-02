@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/xuri/excelize/v2"
 )
@@ -46,6 +47,39 @@ type cellXMLAttrs struct {
 	is          *sharedStringItem
 }
 
+// decodeElementText reads start's own text content directly - its
+// CharData, concatenated, ignoring any further nested elements (<v>
+// and <f> are always simple leaves in practice, but this still
+// tracks depth defensively rather than assume no producer ever
+// nests anything inside them) - without going through
+// xml.Decoder.DecodeElement's own reflection-based unmarshal.
+// Confirmed directly via profiling (go tool pprof against
+// BenchmarkReadLargeSheet): that reflection path is a meaningful
+// share of total CPU time at this call volume - once per populated
+// cell's <v> and, for a formula cell, its <f> too - for content
+// that's always just a plain string.
+func decodeElementText(dec *xml.Decoder, start xml.StartElement) (string, error) {
+	var sb strings.Builder
+	depth := 0
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return "", err
+		}
+		switch t := tok.(type) {
+		case xml.CharData:
+			sb.Write(t)
+		case xml.StartElement:
+			depth++
+		case xml.EndElement:
+			if depth == 0 {
+				return sb.String(), nil
+			}
+			depth--
+		}
+	}
+}
+
 // decodeCellXML decodes a <c> element (its own StartElement already
 // consumed, start) into its raw attributes and children - mirroring
 // excelize's own unexported cellXMLAttrHandler/cellXMLHandler,
@@ -74,9 +108,11 @@ func decodeCellXML(dec *xml.Decoder, start xml.StartElement) (cellXMLAttrs, erro
 		case xml.StartElement:
 			switch t.Name.Local {
 			case "v":
-				if err := dec.DecodeElement(&c.v, &t); err != nil {
+				v, err := decodeElementText(dec, t)
+				if err != nil {
 					return c, err
 				}
+				c.v = v
 				c.hasV = true
 			case "f":
 				for _, attr := range t.Attr {
@@ -84,9 +120,11 @@ func decodeCellXML(dec *xml.Decoder, start xml.StartElement) (cellXMLAttrs, erro
 						c.formulaType = attr.Value
 					}
 				}
-				if err := dec.DecodeElement(&c.formulaText, &t); err != nil {
+				text, err := decodeElementText(dec, t)
+				if err != nil {
 					return c, err
 				}
+				c.formulaText = text
 				c.hasF = true
 			case "is":
 				var is sharedStringItem
