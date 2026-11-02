@@ -59,42 +59,61 @@ confirmed necessary on its own:
 
 ## Decision
 
-`internal/xlsx` gains its own worksheet reader, reading
-`xl/workbook.xml` and its relationships, `xl/sharedStrings.xml`, and
+`internal/xlsx` is to gain its own worksheet reader (M14: #167, #168,
+#169 - not yet built, this ADR records the decision before that work
+starts, per this project's own convention), reading `xl/workbook.xml`
+and its relationships, `xl/sharedStrings.xml`, and
 `xl/worksheets/sheetN.xml` directly via `archive/zip` and
 `encoding/xml` - the same direct-XML-streaming approach
-`internal/ods` already uses for ODS (ADR-0010) - replacing
+`internal/ods` already uses for ODS (ADR-0010) - to replace
 `lazySheet`'s current excelize-`Rows`-based row loop. This narrows,
-not reverses, ADR-0004's original choice to use excelize: excelize
-stays for everything this new reader doesn't need to touch -
+not reverses, ADR-0004's original choice to use excelize: excelize is
+to stay in use for everything this new reader won't need to touch -
 
 - `Read`'s own upfront `OpenFile` call (the sheet list, workbook
   properties, and - deliberately kept - its own `UnzipSizeLimit`/
   `UnzipXMLSizeLimit` enforcement, ADR-0031/ADR-0047, as the first,
-  authoritative size check before our own reader ever runs on a file),
-- `isDateStyled`'s `GetCellStyle`/`GetStyle` calls (already confirmed
-  cheap by profiling - no reason to touch what isn't the problem),
+  authoritative size check before the new reader ever runs on a file).
+  That first check alone isn't sufficient, though: the new reader's
+  own, separate `archive/zip` reads of `xl/sharedStrings.xml` and
+  each worksheet's XML must independently re-apply a `--max-size`-
+  aware bound too (`#168`'s own scope already says so) - `OpenFile`'s
+  check doesn't protect a second, later zip read it has no knowledge
+  of, and a workbook that passed the first check can still have an
+  individual part large enough to matter on its own.
+- `GetStyle(styleID)` - resolving a style ID to its definition
+  (`xl/styles.xml`, workbook-wide, confirmed via `stylesReader`, not
+  `workSheetReader`) is genuinely independent of the per-worksheet
+  materialization problem. `GetCellStyle` is not: confirmed directly
+  in excelize's own source that it also calls `workSheetReader`, the
+  same cost `GetCellFormula`/`GetCellType` have - keeping it would
+  undermine the whole point of this change, since it would remain the
+  one caller still forcing that materialization to happen at all. The
+  new reader captures a cell's style index (its `s` attribute) itself,
+  during the same streaming pass as value/type/formula - free, since
+  that attribute is already being parsed anyway - and only
+  `GetStyle(styleID)` stays on excelize.
 - live formula calculation for an uncached formula (`CalcCellValue` -
   genuinely complex to reimplement correctly, explicitly out of
   scope), and
 - the entire write path (`internal/xlsx/inplace.go`'s `WriteCell`,
   `-i` editing) - a completely separate code path, unaffected.
 
-`model.Row`/`model.Cell`'s own shape doesn't change. This is a
-read-path implementation swap behind `xlsx.Read`'s existing signature;
-nothing downstream (`internal/eval`, `internal/output`, the CLI) needs
-to know or care.
+`model.Row`/`model.Cell`'s own shape won't change. This is meant to be
+a read-path implementation swap behind `xlsx.Read`'s existing
+signature; nothing downstream (`internal/eval`, `internal/output`, the
+CLI) should need to know or care.
 
 ## Consequences
 
 A real, ongoing maintenance cost, not a one-time implementation cost:
-`internal/xlsx` now owns a second, independent implementation of
-xlsx's core read structure (sheet resolution, shared strings, row/cell
-streaming), diverging from ADR-0004's original "use excelize, don't
-reimplement" reasoning for this one slice of it. A future OOXML edge
-case (merged-cell value semantics, inline rich text runs, namespace
-variations across Excel/LibreOffice/Google-Sheets-exported files,
-array/shared formula quirks) is now ours to find and fix, not
+`internal/xlsx` will come to own a second, independent implementation
+of xlsx's core read structure (sheet resolution, shared strings,
+row/cell streaming), diverging from ADR-0004's original "use excelize,
+don't reimplement" reasoning for this one slice of it. A future OOXML
+edge case (merged-cell value semantics, inline rich text runs,
+namespace variations across Excel/LibreOffice/Google-Sheets-exported
+files, array/shared formula quirks) becomes ours to find and fix, not
 excelize's - excelize is a mature, widely-used library specifically
 because it already handles a long tail of these; the new reader starts
 without that track record.
