@@ -9,10 +9,14 @@ Accepted
 A user reported `xlq '.Data' large.xlsx` taking 13 seconds against a
 real, 105,012-row Open Data export. Profiled directly against a
 synthetic file of the same shape (105,012 rows x 14 columns, mixed
-string/number/date/bool columns): `input.Read` itself is fast
-(190ms - ADR-0018's lazy design works as intended), and essentially
-all the time - 26s on this profiling run - is inside the row/cell walk
-that happens once something actually ranges over a `Sheet.Rows`.
+string/number/date/bool columns): `input.Read` itself took 190ms in
+this run - `excelize.OpenFile` still does real, eager workbook-level
+parsing (reading the sheet list and workbook properties); that cost
+isn't free, laziness doesn't erase it. What ADR-0018's lazy design
+does mean is that cost doesn't scale with row count: it defers all
+worksheet-row decoding until something actually ranges over a
+`Sheet.Rows`, which is where essentially all the time - 26s on this
+profiling run - goes.
 
 A CPU profile of that walk showed ~71% of total time inside excelize's
 own `Rows.Columns()` call (`internal/xlsx/xlsx.go`'s `lazySheet`,
@@ -62,9 +66,13 @@ A dedicated benchmark - `internal/xlsx`'s own, following
 `internal/eval/eval_bench_test.go`'s established pattern and
 explicitly-left gap ("internal/xlsx... has its own concerns" - a
 benchmark for it was anticipated, never built) - is added as part of
-implementing this, so the improvement is measurable in CI history
-going forward, not just a one-off local profiling run, and so a
-future change can't silently regress it back.
+implementing this, so the improvement is reproducible on demand
+(`go test ./internal/xlsx/... -run=^$ -bench=. -benchmem`) instead of
+only a one-off local profiling run. CI doesn't run `-bench` today
+(`eval`'s own benchmarks aren't run there either) - this is a tool for
+whoever touches this code next to check against by hand, not an
+automated regression gate; wiring benchmarks into CI at all would be
+its own, separate decision.
 
 The existing correctness suite (`internal/xlsx/xlsx_test.go`, already
 pure behavior tests - fixture in, expected `model.Cell` out, no
