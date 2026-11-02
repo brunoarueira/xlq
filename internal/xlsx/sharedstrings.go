@@ -2,17 +2,13 @@ package xlsx
 
 import (
 	"archive/zip"
+	"encoding/xml"
+	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
 )
-
-// sharedStringsXML mirrors xl/sharedStrings.xml's <sst><si>...</si>
-// list - the text a shared-string cell's raw numeric <v> indexes
-// into, 0-based, in document order.
-type sharedStringsXML struct {
-	Items []sharedStringItem `xml:"si"`
-}
 
 // sharedStringItem mirrors excelize's own xlsxSI.String() (confirmed
 // directly against its source, cell.go): an <si> entry's text is its
@@ -76,6 +72,20 @@ func unescapeBstr(s string) string {
 	})
 }
 
+// sharedStringEntryOverhead is a conservative estimate of a
+// []string element's own fixed memory cost - a string header
+// (pointer + length, 16 bytes on a 64-bit system) - independent of
+// its content's own byte length. maxSize alone bounds the raw XML
+// byte count read to produce the result, but not the result's own
+// memory footprint: many thousands of tiny <si> elements (each
+// costing only a handful of raw XML bytes, e.g. "<si><t/></si>") can
+// still materialize far more total memory than that raw byte count
+// once this fixed per-entry cost is multiplied by an attacker-chosen
+// element count. Counting it as sharedStrings streams keeps the
+// resolved slice's own real memory footprint under maxSize too, not
+// just the bytes read to build it.
+const sharedStringEntryOverhead = 16
+
 // sharedStrings parses xl/sharedStrings.xml from zr into its
 // resolved text, indexed exactly as a shared-string cell's raw <v>
 // does (0-based, document order). The part is legitimately optional -
@@ -88,21 +98,72 @@ func unescapeBstr(s string) string {
 // gets (ADR-0048); maxSize <= 0 disables it. This table can be the
 // single largest part of a string-heavy workbook - ADR-0047's own
 // investigation measured ~62.6 MiB for a real 105,012-row file - so
-// it is never read unbounded.
+// it is never read unbounded. <si> elements are streamed one at a
+// time directly into the result (rather than decoding the whole
+// document into an intermediate struct first, then copying out of
+// it) so sharedStringEntryOverhead's own running budget can reject
+// an oversized result as it grows, not only after it's already fully
+// materialized.
 func sharedStrings(zr *zip.Reader, maxSize int64) ([]string, error) {
 	f := findZipEntry(zr, "xl/sharedStrings.xml")
 	if f == nil {
 		return nil, nil
 	}
-
-	var sst sharedStringsXML
-	if err := decodeZipFile(f, &sst, maxSize); err != nil {
-		return nil, err
+	if maxSize > 0 && int64(f.UncompressedSize64) > maxSize {
+		return nil, fmt.Errorf("xlsx: %s is %d bytes uncompressed, over the %d-byte limit for a v1 read", f.Name, f.UncompressedSize64, maxSize)
 	}
 
-	strs := make([]string, len(sst.Items))
-	for i, item := range sst.Items {
-		strs[i] = item.text()
+	rc, err := f.Open()
+	if err != nil {
+		return nil, fmt.Errorf("xlsx: open %s: %w", f.Name, err)
+	}
+	defer func() { _ = rc.Close() }()
+
+	var r io.Reader = rc
+	var limited *io.LimitedReader
+	if maxSize > 0 {
+		limited = &io.LimitedReader{R: rc, N: maxSize + 1}
+		r = limited
+	}
+
+	overLimit := func() bool { return limited != nil && limited.N <= 0 }
+
+	var strs []string
+	var materialized int64
+	dec := xml.NewDecoder(r)
+	for {
+		tok, tokErr := dec.Token()
+		if tokErr == io.EOF {
+			break
+		}
+		if tokErr != nil {
+			if overLimit() {
+				return nil, fmt.Errorf("xlsx: %s exceeds the %d-byte limit for a v1 read", f.Name, maxSize)
+			}
+			return nil, fmt.Errorf("xlsx: parse %s: %w", f.Name, tokErr)
+		}
+		start, ok := tok.(xml.StartElement)
+		if !ok || start.Name.Local != "si" {
+			continue
+		}
+
+		var item sharedStringItem
+		if err := dec.DecodeElement(&item, &start); err != nil {
+			if overLimit() {
+				return nil, fmt.Errorf("xlsx: %s exceeds the %d-byte limit for a v1 read", f.Name, maxSize)
+			}
+			return nil, fmt.Errorf("xlsx: parse %s: %w", f.Name, err)
+		}
+
+		text := item.text()
+		materialized += int64(len(text)) + sharedStringEntryOverhead
+		if maxSize > 0 && materialized > maxSize {
+			return nil, fmt.Errorf("xlsx: %s's resolved shared strings exceed the %d-byte limit for a v1 read", f.Name, maxSize)
+		}
+		strs = append(strs, text)
+	}
+	if overLimit() {
+		return nil, fmt.Errorf("xlsx: %s exceeds the %d-byte limit for a v1 read", f.Name, maxSize)
 	}
 	return strs, nil
 }

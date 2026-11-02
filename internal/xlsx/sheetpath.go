@@ -160,11 +160,18 @@ func decodeZipFile(f *zip.File, v any, maxSize int64) error {
 		limited = &io.LimitedReader{R: rc, N: maxSize + 1}
 		r = limited
 	}
-	if err := xml.NewDecoder(r).Decode(v); err != nil {
-		return fmt.Errorf("xlsx: parse %s: %w", f.Name, err)
-	}
+	decodeErr := xml.NewDecoder(r).Decode(v)
+	// Checked before decodeErr: reading all maxSize+1 allowed bytes
+	// without the document ever finishing already proves the part is
+	// over the limit, regardless of what shape that leaves the XML
+	// decoder's own error in - typically a confusing "unexpected EOF"
+	// from the stream simply stopping mid-element, not anything
+	// naming the real cause.
 	if limited != nil && limited.N <= 0 {
 		return fmt.Errorf("xlsx: %s exceeds the %d-byte limit for a v1 read", f.Name, maxSize)
+	}
+	if decodeErr != nil {
+		return fmt.Errorf("xlsx: parse %s: %w", f.Name, decodeErr)
 	}
 	return nil
 }

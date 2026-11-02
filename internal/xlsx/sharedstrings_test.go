@@ -2,7 +2,9 @@ package xlsx
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/xml"
+	"strings"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
@@ -139,4 +141,63 @@ func TestSharedStringsRejectsOversizedPart(t *testing.T) {
 	if _, err := sharedStrings(zr, 1); err == nil {
 		t.Fatal("sharedStrings with maxSize=1: want an error, got nil")
 	}
+}
+
+// TestSharedStringsRejectsManyTinyEntries guards the materialized-
+// memory budget sharedStringEntryOverhead enforces: a workbook's
+// declared and actual raw XML byte count can stay well within
+// maxSize while its *resolved* []string still costs far more real
+// memory than that, once a large enough element count's own fixed
+// per-string overhead is added up - a minimal "<si></si>" entry
+// costs only 9 raw bytes but a full 16-byte string-header slot in
+// the result, so enough of them blow the materialized budget long
+// before the raw byte count would.
+func TestSharedStringsRejectsManyTinyEntries(t *testing.T) {
+	var xmlBuf bytes.Buffer
+	xmlBuf.WriteString(`<?xml version="1.0" encoding="UTF-8"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`)
+	const n = 100
+	for range n {
+		xmlBuf.WriteString(`<si></si>`)
+	}
+	xmlBuf.WriteString(`</sst>`)
+
+	const maxSize = 1200
+	if int64(xmlBuf.Len()) >= maxSize {
+		t.Fatalf("test fixture itself is %d bytes, not under maxSize=%d - adjust n", xmlBuf.Len(), maxSize)
+	}
+	if n*sharedStringEntryOverhead <= maxSize {
+		t.Fatalf("n*overhead = %d, want it over maxSize=%d - adjust n", n*sharedStringEntryOverhead, maxSize)
+	}
+
+	zr := buildRawZip(t, "xl/sharedStrings.xml", xmlBuf.Bytes())
+
+	_, err := sharedStrings(zr, maxSize)
+	if err == nil {
+		t.Fatalf("sharedStrings with %d tiny entries (raw bytes %d < maxSize %d, but n*overhead %d > maxSize): want an error, got nil", n, xmlBuf.Len(), maxSize, n*sharedStringEntryOverhead)
+	}
+	if !strings.Contains(err.Error(), "limit") {
+		t.Errorf("error = %q, want it to mention the limit", err)
+	}
+}
+
+// buildRawZip builds a single-entry, in-memory zip (Store method, no
+// declared-size lies) and returns it as a *zip.Reader.
+func buildRawZip(t *testing.T, name string, content []byte) *zip.Reader {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create(name)
+	if err != nil {
+		t.Fatalf("zip Create: %v", err)
+	}
+	if _, err := w.Write(content); err != nil {
+		t.Fatalf("zip write: %v", err)
+	}
+	must(t, zw.Close())
+
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("zip.NewReader: %v", err)
+	}
+	return zr
 }
