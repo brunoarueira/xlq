@@ -82,10 +82,17 @@ func buildLargeFixture(b *testing.B) string {
 	return path
 }
 
-// BenchmarkReadLargeSheet exercises exactly the path a plain
-// "xlq '.Data' large.xlsx" exercises: xlsx.Read (lazy - cheap on its
-// own, ADR-0018), then a full scan of the one sheet's rows, which is
-// where the real cost lives (ADR-0046).
+// BenchmarkReadLargeSheet is the internal/xlsx layer's own cost in
+// isolation, not the full "xlq '.Data' large.xlsx" CLI path: xlsx.Read
+// (lazy - cheap on its own, ADR-0018), then draining the one sheet's
+// rows via model.CollectRows - not eval.Eval's own sheetGrid, which
+// does more on top (converting each cell to its Go-native value,
+// widening every row to the sheet's full column count, enforcing the
+// maxDenseCells budget). ADR-0046's own profiling found this reader
+// layer dominates the full CLI path's total time regardless (eval and
+// JSON encoding added no measurable difference there), which is what
+// justifies isolating it here rather than benchmarking through
+// eval.Eval for a literally-identical number.
 func BenchmarkReadLargeSheet(b *testing.B) {
 	path := buildLargeFixture(b)
 	b.ResetTimer()
