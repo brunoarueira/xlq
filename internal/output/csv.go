@@ -39,10 +39,11 @@ import (
 //
 // Unlike Table, a field's text is scalarText's, not cellText's: a tab
 // or embedded newline doesn't need flattening here, since
-// encoding/csv's own quoting already represents either correctly. A
-// data value (never a header or key) whose text starts with =, +, -,
-// or @ is defuseFormula'd first (ADR-0045), so reopening the output
-// in a spreadsheet application can't run it as a formula.
+// encoding/csv's own quoting already represents either correctly.
+// Every rendered field - a data value or a records header alike -
+// whose text starts with =, +, -, or @ is defuseFormula'd first
+// (ADR-0045), so reopening the output in a spreadsheet application
+// can't run it as a formula.
 func CSV(v any) (string, error) {
 	return delimited(v, ',')
 }
@@ -117,10 +118,15 @@ func recordRows(records []map[string]any) [][]string {
 	}
 
 	rows := make([][]string, 0, len(records)+1)
-	// headers (ADR-0011's own field names) are appended as-is, not
-	// defuseFormula'd (ADR-0045) - a narrower, already-more-trusted
-	// surface than a record's own free-text values below.
-	rows = append(rows, headers)
+	// headers (ADR-0011's own field names) are defuseFormula'd
+	// (ADR-0045) too, same as a record's own values below - a header
+	// row is exactly as attacker-writable as a data cell is, for a
+	// file whose content isn't trusted in the first place.
+	defusedHeaders := make([]string, len(headers))
+	for i, h := range headers {
+		defusedHeaders[i] = defuseFormula(h)
+	}
+	rows = append(rows, defusedHeaders)
 	for _, rec := range records {
 		fields := make([]string, len(headers))
 		for i, h := range headers {

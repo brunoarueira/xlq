@@ -197,10 +197,26 @@ func TestDefuseFormula(t *testing.T) {
 		{"", ""},
 		{"=1+1", "'=1+1"},
 		{"+1", "'+1"},
-		{"-1", "'-1"},
 		{"@SUM(A1)", "'@SUM(A1)"},
 		{"plain text", "plain text"},
 		{"100", "100"},
+		// A genuine number is never defused, even a negative one -
+		// json.Valid is exactly what scalarText's own json.Marshal
+		// output for a float/bool/null always is, and the only trigger
+		// character it can ever start with is '-' (JSON numbers never
+		// start with '+' or '@'). A bare number was the real false
+		// positive this guards: -12.5 was prefixed into the text
+		// "'-12.5" before this check existed, confirmed directly
+		// against a genuine negative-number cell.
+		{"-1", "-1"},
+		{"-12.5", "-12.5"},
+		// Not valid JSON on its own (two numbers, no operator JSON
+		// recognizes) - still a real injection shape, still defused.
+		{"-1+1", "'-1+1"},
+		// A bare "-" isn't a valid JSON number (one is required to have
+		// at least one digit) - still defused, same as any other
+		// non-JSON text starting with a trigger character.
+		{"-", "'-"},
 		// A trigger character anywhere but the first byte is untouched -
 		// only a cell's own first byte is what a spreadsheet application
 		// actually reads to decide it's a formula.
@@ -217,18 +233,21 @@ func TestDefuseFormula(t *testing.T) {
 	}
 }
 
-// TestTableDefusesFormulaInDataValuesOnly confirms Table applies
-// defuseFormula to a cell in every shape it renders, but never to a
-// header name or map key - ADR-0045's stated scope.
-func TestTableDefusesFormulaInDataValuesOnly(t *testing.T) {
-	grid := [][]any{{"=A1"}}
-	if got, want := Table(grid), "'=A1"; got != want {
+// TestTableDefusesFormulaEverywhere confirms Table applies
+// defuseFormula to every cell it renders - a data value, a records
+// header, or a map key alike (ADR-0045: none of them is any more
+// trustworthy than another, since all come from the same potentially-
+// untrusted input file) - but never to a genuine number, even a
+// negative one.
+func TestTableDefusesFormulaEverywhere(t *testing.T) {
+	grid := [][]any{{"=A1", -12.5}}
+	if got, want := Table(grid), "'=A1  -12.5"; got != want {
 		t.Errorf("Table(grid) = %q, want %q", got, want)
 	}
 
 	records := []map[string]any{{"=header": "=value"}}
-	if got, want := Table(records), "=header\n'=value"; got != want {
-		t.Errorf("Table(records) = %q, want %q (header untouched, value defused)", got, want)
+	if got, want := Table(records), "'=header\n'=value"; got != want {
+		t.Errorf("Table(records) = %q, want %q (header and value both defused)", got, want)
 	}
 
 	column := []any{"=A1"}
@@ -242,7 +261,7 @@ func TestTableDefusesFormulaInDataValuesOnly(t *testing.T) {
 	}
 
 	m := map[string]any{"=key": "=value"}
-	if got, want := Table(m), "=key  '=value"; got != want {
-		t.Errorf("Table(single record) = %q, want %q (key untouched, value defused)", got, want)
+	if got, want := Table(m), "'=key  '=value"; got != want {
+		t.Errorf("Table(single record) = %q, want %q (key and value both defused)", got, want)
 	}
 }

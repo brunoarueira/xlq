@@ -78,10 +78,10 @@ func recordsTable(records []map[string]any) string {
 			// not a value cellText already flattens elsewhere in this
 			// row - an embedded tab or newline in it would break the
 			// table's alignment exactly the same way an unflattened
-			// data cell would. Not defuseFormula'd either (ADR-0045): a
-			// header name is a narrower, already-more-trusted surface
-			// than a free-text data cell.
-			headerCells[i] = cellText(h)
+			// data cell would. defuseFormula'd too (ADR-0045): a header
+			// row is exactly as attacker-writable as a data cell is,
+			// for a file whose content isn't trusted in the first place.
+			headerCells[i] = defuseFormula(cellText(h))
 		}
 		_, _ = fmt.Fprintln(w, strings.Join(headerCells, "\t"))
 		for _, rec := range records {
@@ -119,11 +119,11 @@ func mapTable(m map[string]any) string {
 
 	return tabwrite(func(w *tabwriter.Writer) {
 		for _, k := range keys {
-			// k is a map key, not run through cellText (or
-			// defuseFormula, ADR-0045 - a key is a narrower, already-
-			// more-trusted surface than a value) like any other cell -
-			// same reasoning as recordsTable's headers above.
-			_, _ = fmt.Fprintln(w, cellText(k)+"\t"+defuseFormula(cellText(m[k])))
+			// k is a map key, not run through cellText like any other
+			// cell, but defuseFormula'd the same as any other rendered
+			// text (ADR-0045) - same reasoning as recordsTable's
+			// headers above.
+			_, _ = fmt.Fprintln(w, defuseFormula(cellText(k))+"\t"+defuseFormula(cellText(m[k])))
 		}
 	})
 }
@@ -226,12 +226,26 @@ func scalarText(v any) string {
 // formula: =, +, -, or @ (ADR-0045, OWASP's "CSV Injection"). The
 // prefix is the same "force text" convention those applications use
 // internally - it's visible, not a silent drop, and the result is
-// still exactly as valid CSV/TSV/table text as s was. Applied only to
-// an actual data value at each of this package's call sites, never to
-// a header name, record key, or map key - a narrower, already-more-
-// trusted surface a real injection payload wouldn't actually target.
+// still exactly as valid CSV/TSV/table text as s was. Applied to
+// every rendered cell at each of this package's call sites - a data
+// value, a records header, or a map key alike, since none of them is
+// any more trustworthy than another: all come from the same
+// potentially-untrusted input file (a header row is exactly as
+// attacker-writable as a data cell is).
+//
+// s that's already valid JSON (per json.Valid) is left alone even if
+// its first byte matches - this is the one case defuseFormula must
+// not touch: scalarText renders a non-string value (a number, a bool)
+// via json.Marshal, and Go's encoder is the only thing that can ever
+// produce a leading '-' this function would otherwise react to (JSON
+// numbers never start with '+' or '@', and a bare number - "-12.5" -
+// can't itself be a working formula regardless of whether it reached
+// here from a real numeric cell or from string text that merely looks
+// numeric), so treating it as text instead of a number would be
+// wrong, not merely over-cautious - confirmed directly against a
+// genuine negative-number cell.
 func defuseFormula(s string) string {
-	if s == "" {
+	if s == "" || json.Valid([]byte(s)) {
 		return s
 	}
 	switch s[0] {

@@ -24,13 +24,15 @@ ticket spreadsheet, survey free-text - piped through `xlq --csv`/
 JSON output was never going to be reopened that way, so it's
 unaffected by anything below.
 
-Full versioned escaping of every cell everywhere was considered and
-rejected as broader than the actual risk: a *header* name or record
-*key* comes from the original file's own header row (or a JSON
-object's own keys), a narrower and already-more-trusted surface than
-free-text data cells - the realistic injection vector is a data
-*value*, not a column name. Escaping headers too would just make
-ordinary output noisier for no real safety gain.
+A header name (`records`' own field names, ADR-0011) or a map key is
+no safer to leave unescaped than a data value: both come from the
+same file, which isn't trusted in the first place - nothing requires
+an attacker's payload to live in a data cell rather than a column
+name. The fix below applies to every rendered field uniformly, not
+just data values - an earlier version of this decision exempted
+headers/keys on the premise that they're a narrower, more-trusted
+surface, which doesn't actually hold once the whole input file is the
+thing being treated as untrusted.
 
 Tab and CR are sometimes also cited alongside `=`/`+`/`-`/`@` as
 formula triggers, but far less consistently across real spreadsheet
@@ -40,12 +42,26 @@ starting with `=`. Scoping the fix to the well-established four-
 character set avoids claiming protection this change hasn't actually
 confirmed it provides.
 
+A genuine number must never be caught by this: `scalarText` renders a
+non-string value (a float, a bool) via `json.Marshal`, and that's the
+only way the rendered text can ever start with `-` without having
+come from a string cell - JSON numbers never start with `+` or `@`.
+Confirmed directly against a real negative-number cell (`-12.5`) that
+an earlier version of this fix prefixed into the text `'-12.5`,
+turning a number into text on every negative value. A bare number -
+whatever its original type - can't itself be a working formula
+regardless, so the fix must leave anything that's already valid JSON
+alone.
+
 ## Decision
 
-Any string *data value* (not a header name or record key) written by
-`--csv`, `--tsv`, or `--table` whose first character is `=`, `+`,
-`-`, or `@` gets a literal leading single quote (`'`) prepended before
-being written out - the same "force text" convention spreadsheet
+Every string field rendered by `--csv`, `--tsv`, or `--table` - a
+data value, a `records` header name, or a map key alike - whose text
+starts with `=`, `+`, `-`, or `@` gets a literal leading single quote
+(`'`) prepended before being written out, *unless* that text is
+already valid JSON (`encoding/json`'s own `json.Valid`) - the case
+that rules out a genuine number reaching this undefused. The leading-
+quote prefix is the same "force text" convention spreadsheet
 applications themselves use internally to mark a cell as not-a-
 formula. Applied unconditionally, no opt-in flag: matches xlq's
 existing secure-by-default posture (`--timeout`/`--max-size`,
@@ -59,10 +75,10 @@ round-trippable CSV/TSV; nothing is silently dropped or corrupted.
 ## Consequences
 
 `internal/output/table.go` and `internal/output/csv.go` gain a shared
-helper applied at each call site that renders an actual data value -
-not the ones rendering a header name, a record key, or a map key.
-`docs/reference.md`'s "Output modes" section documents this. A data
-cell whose real content happens to start with `=`/`+`/`-`/`@` now
-round-trips with one extra leading `'` in `--csv`/`--tsv`/`--table`
-output - a real, deliberate behavior change, but a narrow and
-well-precedented one.
+helper applied at every call site that renders a field's text - data
+value, header, or key. `docs/reference.md`'s "Output modes" section
+documents this. A string cell whose real content happens to start
+with `=`/`+`/`-`/`@` now round-trips with one extra leading `'` in
+`--csv`/`--tsv`/`--table` output - a real, deliberate behavior
+change, but a narrow and well-precedented one; a genuine number is
+exempt regardless of sign.

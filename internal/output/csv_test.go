@@ -195,18 +195,20 @@ func TestTSVWholeWorkbookIsError(t *testing.T) {
 	}
 }
 
-// TestCSVDefusesFormulaInDataValuesOnly confirms CSV applies
-// defuseFormula (ADR-0045) to a cell in every shape it renders, but
-// never to a header row - the same scope Table's own test confirms.
-func TestCSVDefusesFormulaInDataValuesOnly(t *testing.T) {
-	grid := [][]any{{"=A1", "+B1"}}
-	if got, want := mustCSV(t, grid), "'=A1,'+B1\n"; got != want {
+// TestCSVDefusesFormulaEverywhere confirms CSV applies defuseFormula
+// to every field it renders - a data value, a records header, or a
+// single-record map's own key alike (ADR-0045) - but never to a
+// genuine negative number, the same scope and exemption Table's own
+// test confirms.
+func TestCSVDefusesFormulaEverywhere(t *testing.T) {
+	grid := [][]any{{"=A1", "+B1", -12.5}}
+	if got, want := mustCSV(t, grid), "'=A1,'+B1,-12.5\n"; got != want {
 		t.Errorf("CSV(grid) = %q, want %q", got, want)
 	}
 
 	records := []map[string]any{{"=header": "@value"}}
-	if got, want := mustCSV(t, records), "=header\n'@value\n"; got != want {
-		t.Errorf("CSV(records) = %q, want %q (header untouched, value defused)", got, want)
+	if got, want := mustCSV(t, records), "'=header\n'@value\n"; got != want {
+		t.Errorf("CSV(records) = %q, want %q (header and value both defused)", got, want)
 	}
 
 	column := []any{"-A1"}
@@ -217,6 +219,15 @@ func TestCSVDefusesFormulaInDataValuesOnly(t *testing.T) {
 	scalar := "=A1"
 	if got, want := mustCSV(t, scalar), "'=A1\n"; got != want {
 		t.Errorf("CSV(scalar) = %q, want %q", got, want)
+	}
+
+	// The map[string]any path (a single record, ADR-0011) is a
+	// separate branch from []map[string]any above - not exercised by
+	// any of the other cases here, so a regression specific to it
+	// wouldn't otherwise be caught.
+	m := map[string]any{"=key": "=value"}
+	if got, want := mustCSV(t, m), "'=key\n'=value\n"; got != want {
+		t.Errorf("CSV(single record) = %q, want %q (key and value both defused)", got, want)
 	}
 }
 
