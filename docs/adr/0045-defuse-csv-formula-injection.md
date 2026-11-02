@@ -88,11 +88,12 @@ round-trippable CSV/TSV; nothing is silently dropped or corrupted.
 
 ## Consequences
 
-`internal/output/table.go` and `internal/output/csv.go` gain a shared
-helper applied at every call site that renders a field's text - data
-value, header, or key. `docs/reference.md`'s "Output modes" section
-documents this. A string cell whose real content happens to start
-with `=`/`+`/`-`/`@` now round-trips with one extra leading `'` in
+`internal/output/table.go` gains a shared `defuseFormula` helper,
+applied at every call site in both it and `internal/output/csv.go`
+that renders a field's text - data value, header, or key.
+`docs/reference.md`'s "Output modes" section documents this. A string
+cell whose real content happens to start with `=`/`+`/`-`/`@`/an
+existing `'` now round-trips with one extra leading `'` in
 `--csv`/`--tsv`/`--table` output - a real, deliberate behavior
 change, but a narrow and well-precedented one; a genuine number is
 exempt regardless of sign.

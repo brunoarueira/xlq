@@ -437,8 +437,10 @@ any rendered field - a data value, a `records` header, or a map key
 alike - whose text starts with `=`, `+`, `-`, `@`, or an existing
 leading `'` gets a leading `'` prepended, the same "force text"
 convention spreadsheet applications use internally, so reopening the
-output can't run it as a formula. A genuine number is never affected.
-JSON output is unaffected either way.
+output can't run it as a formula - unless that text is already valid
+JSON on its own (e.g. `-1`, whether it came from a genuine number or
+from a string cell whose literal content just looks like one), which
+is left exactly as-is. JSON output is unaffected either way.
 
 ## In-place editing (`-i`)
 
