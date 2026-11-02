@@ -111,6 +111,20 @@ func resolveRelationshipTarget(target string) string {
 	return path.Join("xl", target)
 }
 
+// findZipEntry returns the zip entry named name within zr, or nil if
+// no such entry exists - some parts (xl/sharedStrings.xml among them)
+// are legitimately optional, so callers that need to tell "absent"
+// apart from "present but invalid" check this first rather than
+// relying on decodeZipEntry's own not-found error.
+func findZipEntry(zr *zip.Reader, name string) *zip.File {
+	for _, f := range zr.File {
+		if f.Name == name {
+			return f
+		}
+	}
+	return nil
+}
+
 // decodeZipEntry finds the zip entry named name within zr and decodes
 // it as XML into v, or returns a clear error if the entry is missing,
 // isn't valid XML, or exceeds maxSize decompressed. maxSize <= 0
@@ -119,33 +133,38 @@ func resolveRelationshipTarget(target string) string {
 // actual bytes read are capped too, the same two-layer check
 // internal/ods's own decodeEntryWithLimit already uses for ODS.
 func decodeZipEntry(zr *zip.Reader, name string, v any, maxSize int64) error {
-	for _, f := range zr.File {
-		if f.Name != name {
-			continue
-		}
-		if maxSize > 0 && int64(f.UncompressedSize64) > maxSize {
-			return fmt.Errorf("xlsx: %s is %d bytes uncompressed, over the %d-byte limit for a v1 read", name, f.UncompressedSize64, maxSize)
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			return fmt.Errorf("xlsx: open %s: %w", name, err)
-		}
-		defer func() { _ = rc.Close() }()
-
-		var r io.Reader = rc
-		var limited *io.LimitedReader
-		if maxSize > 0 {
-			limited = &io.LimitedReader{R: rc, N: maxSize + 1}
-			r = limited
-		}
-		if err := xml.NewDecoder(r).Decode(v); err != nil {
-			return fmt.Errorf("xlsx: parse %s: %w", name, err)
-		}
-		if limited != nil && limited.N <= 0 {
-			return fmt.Errorf("xlsx: %s exceeds the %d-byte limit for a v1 read", name, maxSize)
-		}
-		return nil
+	f := findZipEntry(zr, name)
+	if f == nil {
+		return fmt.Errorf("xlsx: %s not found in archive", name)
 	}
-	return fmt.Errorf("xlsx: %s not found in archive", name)
+	return decodeZipFile(f, v, maxSize)
+}
+
+// decodeZipFile is decodeZipEntry's own work once the *zip.File is
+// already in hand, shared with callers (sharedStrings among them)
+// that need to check an entry's presence themselves first.
+func decodeZipFile(f *zip.File, v any, maxSize int64) error {
+	if maxSize > 0 && int64(f.UncompressedSize64) > maxSize {
+		return fmt.Errorf("xlsx: %s is %d bytes uncompressed, over the %d-byte limit for a v1 read", f.Name, f.UncompressedSize64, maxSize)
+	}
+
+	rc, err := f.Open()
+	if err != nil {
+		return fmt.Errorf("xlsx: open %s: %w", f.Name, err)
+	}
+	defer func() { _ = rc.Close() }()
+
+	var r io.Reader = rc
+	var limited *io.LimitedReader
+	if maxSize > 0 {
+		limited = &io.LimitedReader{R: rc, N: maxSize + 1}
+		r = limited
+	}
+	if err := xml.NewDecoder(r).Decode(v); err != nil {
+		return fmt.Errorf("xlsx: parse %s: %w", f.Name, err)
+	}
+	if limited != nil && limited.N <= 0 {
+		return fmt.Errorf("xlsx: %s exceeds the %d-byte limit for a v1 read", f.Name, maxSize)
+	}
+	return nil
 }
