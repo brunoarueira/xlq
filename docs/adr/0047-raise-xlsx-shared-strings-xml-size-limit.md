@@ -55,12 +55,22 @@ meaningfully below the 256 MiB default `--max-size` a single part
 could otherwise claim outright. `excelizeOptions` keeps the original
 `min(unzipXMLSizeLimit, maxSize)` structure (a maxSize smaller than
 128 MiB still caps the XML limit down to it, exactly as before) - only
-the fixed constant's value changes, not the shape of the guarantee: no
-single XML part is ever allowed to claim more than this fixed ceiling
+the fixed constant's value changes, not the shape of the guarantee:
+confirmed directly in excelize's `ReadZipReader` source that this
+spill-or-stay-resident decision only ever applies to two kinds of
+part - the shared-strings table and a worksheet's own XML (matched by
+an `xl/worksheets/sheet` prefix) - every other part (styles, the
+workbook's own `workbook.xml`, `[Content_Types].xml`, ...) is always
+read fully into `fileList` regardless of this limit's value, bounded
+only by `UnzipSizeLimit`'s own cumulative check. Neither of those two
+handled kinds is ever allowed to claim more than this fixed ceiling
 (or the caller's own smaller `maxSize`, whichever is lower) resident
 in memory at once, regardless of how high `--max-size` itself is set.
 The `maxSize <= 0` ("disabled") case is unchanged, as before: it
-already opts out of resource bounds entirely.
+leaves excelize's own built-in defaults (16 GiB/16 MiB) in place
+rather than applying none at all - there's no literal "no limit"
+excelize itself recognizes, only "xlq's own configured bound" versus
+"excelize's own built-in one."
 
 ## Consequences
 
@@ -75,7 +85,7 @@ file test, exercising `UnzipSizeLimit`'s cumulative check, which this
 doesn't change) needs no changes and must still pass. A large,
 string-heavy file (the actual motivating case) reads noticeably
 faster, now that a realistic shared-strings table fits under the new
-cap instead of spilling to disk; a single adversarial XML part still
-can't claim more than 128 MiB (or a smaller `--max-size`) of process
-memory at once, preserving the defense-in-depth layer the first draft
-of this ADR would have removed.
+cap instead of spilling to disk; an adversarial worksheet or
+shared-strings part still can't claim more than 128 MiB (or a smaller
+`--max-size`) of process memory at once, preserving the defense-in-
+depth layer the first draft of this ADR would have removed.

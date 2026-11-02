@@ -740,6 +740,9 @@ func TestExcelizeOptionsCapsXMLLimitAtMaxSize(t *testing.T) {
 
 	large := int64(1 << 30) // well above unzipXMLSizeLimit's own 128 MiB default
 	opts2 := excelizeOptions(large)
+	if opts2.UnzipSizeLimit != large {
+		t.Errorf("UnzipSizeLimit = %d, want %d", opts2.UnzipSizeLimit, large)
+	}
 	if opts2.UnzipXMLSizeLimit != unzipXMLSizeLimit {
 		t.Errorf("UnzipXMLSizeLimit = %d, want the fixed %d default (maxSize is large enough not to cap it)", opts2.UnzipXMLSizeLimit, unzipXMLSizeLimit)
 	}
