@@ -91,9 +91,12 @@ round-trippable CSV/TSV; nothing is silently dropped or corrupted.
 `internal/output/table.go` gains a shared `defuseFormula` helper,
 applied at every call site in both it and `internal/output/csv.go`
 that renders a field's text - data value, header, or key.
-`docs/reference.md`'s "Output modes" section documents this. A string
-cell whose real content happens to start with `=`/`+`/`-`/`@`/an
-existing `'` now round-trips with one extra leading `'` in
-`--csv`/`--tsv`/`--table` output - a real, deliberate behavior
-change, but a narrow and well-precedented one; a genuine number is
-exempt regardless of sign.
+`docs/reference.md`'s "Output modes" section documents this. A field
+whose real content happens to start with `=`/`+`/`-`/`@`/an existing
+`'`, and isn't itself valid JSON on its own, now round-trips with one
+extra leading `'` in `--csv`/`--tsv`/`--table` output - a real,
+deliberate behavior change, but a narrow and well-precedented one. A
+genuine number is exempt regardless of sign, and so is a string field
+whose content merely happens to look like one (e.g. literal text
+`"-1"`) - `json.Valid` can't tell those two cases apart, and doesn't
+need to: neither can carry a working formula.
