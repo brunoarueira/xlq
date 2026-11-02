@@ -43,15 +43,26 @@ import (
 	"github.com/brunoarueira/xlq/internal/model"
 )
 
-// unzipXMLSizeLimit caps how large a single worksheet's XML (or the
-// shared string table) excelize will hold in memory before spilling it
-// to a temporary file instead - excelize's own default is 16 MiB; kept
-// as its own fixed ceiling, separate from and never above maxSize
-// (excelize.OpenFile rejects UnzipXMLSizeLimit > UnzipSizeLimit), so
-// even a workbook within maxSize keeps its peak memory down rather
-// than loading every worksheet into memory at once regardless of
-// maxSize's own value.
-const unzipXMLSizeLimit = 16 << 20
+// unzipXMLSizeLimit caps how large a single XML part (a worksheet's
+// own, or the shared-strings table) excelize will hold resident in its
+// own process memory before spilling it to a temporary file instead -
+// a deliberately separate, lower ceiling than maxSize itself (ADR-0047
+// corrects an earlier, unmerged draft of that ADR that removed this
+// cap entirely: UnzipSizeLimit's own cumulative check, independent of
+// this constant, already bounds the *total* ever decompressed across
+// every part, but doesn't bound how much of that total a single part
+// can claim resident in memory at once - an adversarial file crafted
+// to inflate just one part, most easily the shared-strings table,
+// could otherwise legitimately claim the *entire* maxSize budget in
+// one contiguous allocation, a real loss of defense-in-depth even
+// though the cumulative total stays within what the user already
+// accepted). 128 MiB, not the original 16 MiB: confirmed directly
+// against a representative large (105,012-row, string-heavy) fixture
+// that its real shared-strings table needs ~62.6 MiB decompressed -
+// comfortably under this with headroom, while still meaningfully
+// below the 256 MiB default maxSize a single part could otherwise
+// claim outright.
+const unzipXMLSizeLimit = 128 << 20
 
 // excelizeOptions returns the excelize.Options that bound how large a
 // workbook excelize will let itself decompress to in memory, from
