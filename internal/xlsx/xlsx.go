@@ -43,6 +43,27 @@ import (
 	"github.com/brunoarueira/xlq/internal/model"
 )
 
+// unzipXMLSizeLimit caps how large a single XML part (a worksheet's
+// own, or the shared-strings table) excelize will hold resident in its
+// own process memory before spilling it to a temporary file instead -
+// a deliberately separate, lower ceiling than maxSize itself (ADR-0047
+// corrects an earlier, unmerged draft of that ADR that removed this
+// cap entirely: UnzipSizeLimit's own cumulative check, independent of
+// this constant, already bounds the *total* ever decompressed across
+// every part, but doesn't bound how much of that total a single part
+// can claim resident in memory at once - an adversarial file crafted
+// to inflate just one part, most easily the shared-strings table,
+// could otherwise legitimately claim the *entire* maxSize budget in
+// one contiguous allocation, a real loss of defense-in-depth even
+// though the cumulative total stays within what the user already
+// accepted). 128 MiB, not the original 16 MiB: confirmed directly
+// against a representative large (105,012-row, string-heavy) fixture
+// that its real shared-strings table needs ~62.6 MiB decompressed -
+// comfortably under this with headroom, while still meaningfully
+// below the 256 MiB default maxSize a single part could otherwise
+// claim outright.
+const unzipXMLSizeLimit = 128 << 20
+
 // excelizeOptions returns the excelize.Options that bound how large a
 // workbook excelize will let itself decompress to in memory, from
 // maxSize (#51, docs/adr/0031-memory-ceiling-for-untrusted-files.md).
@@ -50,29 +71,15 @@ import (
 // generous built-in defaults (16 GiB/16 MiB) in place rather than
 // imposing no limit at all literally - there's no "unset" sentinel
 // excelize itself recognizes other than its own defaults.
-//
-// UnzipXMLSizeLimit is set equal to UnzipSizeLimit (both maxSize), not
-// a separate, lower constant (ADR-0047 - which used to hold here,
-// fixed at 16 MiB). Confirmed directly against excelize's own
-// ReadZipReader source: UnzipSizeLimit is checked as a *cumulative*
-// total across every part in the zip, unconditionally, before
-// UnzipXMLSizeLimit ever decides whether one specific already-
-// permitted part (a worksheet's own XML, or the shared-strings table)
-// stays resident in memory or gets spilled to a temp file instead -
-// it's not a second, independent security boundary, just a
-// conservative-by-default choice about how much of an already-bounded
-// budget one part gets to use before paying disk I/O instead. Letting
-// a single part use the same total the caller already accepted via
-// maxSize doesn't let an adversarial file use any more memory than it
-// already could; it just stops needlessly spilling a large but
-// legitimate shared-strings table (ADR-0047's own motivating case - a
-// real cost for a workbook with many string columns) to disk for no
-// safety benefit.
 func excelizeOptions(maxSize int64) excelize.Options {
 	if maxSize <= 0 {
 		return excelize.Options{}
 	}
-	return excelize.Options{UnzipSizeLimit: maxSize, UnzipXMLSizeLimit: maxSize}
+	xmlLimit := int64(unzipXMLSizeLimit)
+	if xmlLimit > maxSize {
+		xmlLimit = maxSize
+	}
+	return excelize.Options{UnzipSizeLimit: maxSize, UnzipXMLSizeLimit: xmlLimit}
 }
 
 // Read opens the .xlsx file at path and converts it into a

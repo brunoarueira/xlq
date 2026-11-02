@@ -717,20 +717,31 @@ func TestSheetNamesRejectsOversizedDecompressedContent(t *testing.T) {
 // (both maxSize), for a small maxSize and a large one alike - no
 // separate, lower, fixed cap on a single XML part regardless of how
 // high maxSize itself is.
-func TestExcelizeOptionsXMLLimitMatchesMaxSize(t *testing.T) {
-	small := int64(1 << 10)
+// TestExcelizeOptionsCapsXMLLimitAtMaxSize guards the one subtlety in
+// excelizeOptions worth a dedicated test: excelize.OpenFile itself
+// rejects UnzipXMLSizeLimit > UnzipSizeLimit outright, so a maxSize
+// smaller than unzipXMLSizeLimit's own fixed default must cap the XML
+// limit down to maxSize too, not pass the fixed default through
+// unconditionally - but a maxSize well above it must leave the fixed,
+// still-meaningfully-bounded default in place, not raise the XML
+// limit to match maxSize itself (ADR-0047's own corrected design - an
+// earlier, unmerged draft tried exactly that and was caught before
+// merge: it let a single adversarial XML part claim the entire
+// maxSize budget in one allocation, a real loss of defense-in-depth).
+func TestExcelizeOptionsCapsXMLLimitAtMaxSize(t *testing.T) {
+	small := int64(1 << 10) // far below unzipXMLSizeLimit's own 128 MiB default
 	opts := excelizeOptions(small)
 	if opts.UnzipSizeLimit != small {
 		t.Errorf("UnzipSizeLimit = %d, want %d", opts.UnzipSizeLimit, small)
 	}
 	if opts.UnzipXMLSizeLimit != small {
-		t.Errorf("UnzipXMLSizeLimit = %d, want %d (matches maxSize)", opts.UnzipXMLSizeLimit, small)
+		t.Errorf("UnzipXMLSizeLimit = %d, want %d (capped at maxSize, not the fixed 128MiB default)", opts.UnzipXMLSizeLimit, small)
 	}
 
-	large := int64(1 << 30)
+	large := int64(1 << 30) // well above unzipXMLSizeLimit's own 128 MiB default
 	opts2 := excelizeOptions(large)
-	if opts2.UnzipSizeLimit != large || opts2.UnzipXMLSizeLimit != large {
-		t.Errorf("excelizeOptions(%d) = %+v, want both limits to equal maxSize, not a lower fixed cap", large, opts2)
+	if opts2.UnzipXMLSizeLimit != unzipXMLSizeLimit {
+		t.Errorf("UnzipXMLSizeLimit = %d, want the fixed %d default (maxSize is large enough not to cap it)", opts2.UnzipXMLSizeLimit, unzipXMLSizeLimit)
 	}
 
 	if disabled := excelizeOptions(0); disabled != (excelize.Options{}) {
