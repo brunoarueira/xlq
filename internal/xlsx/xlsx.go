@@ -172,7 +172,12 @@ func lazySheet(path, name string, date1904 bool, dateStyles map[int]bool, maxSiz
 					return
 				}
 
-				var cells []model.Cell
+				// len(cols) is an upper bound, not an exact count - not
+				// every column produces a present cell (readCell can
+				// report ok=false) - but it's a free hint that avoids
+				// most of the reallocation a nil slice's repeated
+				// append would otherwise do as cells grows.
+				cells := make([]model.Cell, 0, len(cols))
 				for colIndex, raw := range cols {
 					cell, ok, err := readCell(f, name, colIndex, rowIndex, raw, date1904, dateStyles)
 					if err != nil {
