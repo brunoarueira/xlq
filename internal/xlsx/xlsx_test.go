@@ -712,11 +712,6 @@ func TestSheetNamesRejectsOversizedDecompressedContent(t *testing.T) {
 	}
 }
 
-// TestExcelizeOptionsXMLLimitMatchesMaxSize guards ADR-0047's own
-// decision directly: UnzipXMLSizeLimit always equals UnzipSizeLimit
-// (both maxSize), for a small maxSize and a large one alike - no
-// separate, lower, fixed cap on a single XML part regardless of how
-// high maxSize itself is.
 // TestExcelizeOptionsCapsXMLLimitAtMaxSize guards the one subtlety in
 // excelizeOptions worth a dedicated test: excelize.OpenFile itself
 // rejects UnzipXMLSizeLimit > UnzipSizeLimit outright, so a maxSize
