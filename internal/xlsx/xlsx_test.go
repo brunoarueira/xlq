@@ -501,11 +501,11 @@ func TestReadFormattedNumberCell(t *testing.T) {
 func TestReadHiddenFormatCell(t *testing.T) {
 	// The ";;;" custom format renders any value as blank text in every
 	// spreadsheet application; the cell must still be read as present,
-	// using its raw value. A cell in this state must be followed by
-	// another populated cell in its row: excelize's row iterator itself
-	// trims a *trailing* format-hidden cell before this package ever
-	// sees it (see the package doc's known limitation), so B1 here is
-	// what keeps A1 from being trimmed away.
+	// using its raw value. B1 is a second populated cell so this case
+	// doesn't depend on A1 being trailing or not - see
+	// TestReadTrailingHiddenFormatCell for that case specifically,
+	// previously a known limitation (ADR-0046 fixed it as a side
+	// effect of an unrelated change).
 	path := build(t, func(f *excelize.File) {
 		styleID, err := f.NewStyle(&excelize.Style{CustomNumFmt: strPtr(";;;")})
 		if err != nil {
@@ -522,6 +522,36 @@ func TestReadHiddenFormatCell(t *testing.T) {
 	c, ok := cellAt(t, wb, "Sheet1", 0, 0)
 	if !ok {
 		t.Fatal("cell A1 not found (format-hidden value was dropped)")
+	}
+	if v, ok := c.NumberValue(); !ok || v != 99 {
+		t.Errorf("NumberValue() = (%v, %v), want (99, true) - Kind = %v", v, ok, c.Kind)
+	}
+}
+
+// TestReadTrailingHiddenFormatCell guards a fix, not just a feature:
+// before ADR-0046 (reading rows in raw mode), excelize's row iterator
+// trimmed a *trailing* format-hidden cell - one with nothing after it
+// in its row - by its formatted (blank) text, dropping it before this
+// package ever saw it, even though its raw value was genuinely
+// present. Confirmed directly that it was dropped before this change
+// and is correctly read now. Unlike TestReadHiddenFormatCell, A1 here
+// has nothing after it in row 1.
+func TestReadTrailingHiddenFormatCell(t *testing.T) {
+	path := build(t, func(f *excelize.File) {
+		styleID, err := f.NewStyle(&excelize.Style{CustomNumFmt: strPtr(";;;")})
+		if err != nil {
+			t.Fatalf("NewStyle: %v", err)
+		}
+		must(t, f.SetCellValue("Sheet1", "A1", 99.0))
+		must(t, f.SetCellStyle("Sheet1", "A1", "A1", styleID))
+	})
+	wb, err := Read(path, 0)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	c, ok := cellAt(t, wb, "Sheet1", 0, 0)
+	if !ok {
+		t.Fatal("cell A1 not found (trailing format-hidden value was dropped)")
 	}
 	if v, ok := c.NumberValue(); !ok || v != 99 {
 		t.Errorf("NumberValue() = (%v, %v), want (99, true) - Kind = %v", v, ok, c.Kind)

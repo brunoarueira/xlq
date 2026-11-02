@@ -18,13 +18,17 @@
 // that has been saved by Excel (or any tool that caches formula
 // results) is unaffected, since the cached result's real type is used.
 //
-// Known limitation: a custom number format that renders any value as
-// blank (e.g. ";;;", a common "hide this cell's contents" trick) is
-// read correctly via the cell's raw value *except* when it's the last
-// (or only) populated cell in its row: excelize's row iterator itself
-// trims trailing cells by their formatted, not raw, value, so such a
-// cell is dropped before this package ever sees it. The same cell
-// followed by any other populated cell in its row is unaffected.
+// Fixed limitation (ADR-0046): a custom number format that renders
+// any value as blank (e.g. ";;;", a common "hide this cell's
+// contents" trick) used to be dropped when it was the last (or only)
+// populated cell in its row - excelize's row iterator trims trailing
+// cells by their *formatted*, not raw, value, so a blank-formatted
+// but genuinely present cell never reached this package at all.
+// Reading rows in raw mode (ADR-0046's own motivation, for an
+// unrelated performance reason) incidentally fixes this too: raw
+// mode's own trailing-cell trim is by the *raw* value instead,
+// confirmed directly against a single trailing hidden-format cell
+// with nothing after it in its row.
 package xlsx
 
 import (
@@ -151,15 +155,15 @@ func lazySheet(path, name string, date1904 bool, dateStyles map[int]bool, maxSiz
 			// 2 between rows 1 and 3), so this 0-based counter tracks
 			// the real row index correctly even across gaps.
 			for rowIndex := 0; rows.Next(); rowIndex++ {
-				cols, err := rows.Columns()
+				cols, err := rows.Columns(excelize.Options{RawCellValue: true})
 				if err != nil {
 					yield(model.Row{}, fmt.Errorf("read row %d of sheet %q of %q: %w", rowIndex+1, name, path, err))
 					return
 				}
 
 				var cells []model.Cell
-				for colIndex, display := range cols {
-					cell, ok, err := readCell(f, name, colIndex, rowIndex, display, date1904, dateStyles)
+				for colIndex, raw := range cols {
+					cell, ok, err := readCell(f, name, colIndex, rowIndex, raw, date1904, dateStyles)
 					if err != nil {
 						yield(model.Row{}, fmt.Errorf("%q: %w", path, err))
 						return
@@ -180,10 +184,12 @@ func lazySheet(path, name string, date1904 bool, dateStyles map[int]bool, maxSiz
 }
 
 // readCell reads the cell at (colIndex, rowIndex) (both 0-based), given
-// display, its already-fetched formatted value from the row iterator. It
-// reports ok=false for a cell that is genuinely absent: no value and no
-// formula.
-func readCell(f *excelize.File, sheet string, colIndex, rowIndex int, display string, date1904 bool, dateStyles map[int]bool) (model.Cell, bool, error) {
+// raw, its already-fetched raw value from the row iterator (ADR-0046:
+// Rows.Columns is called with RawCellValue, not excelize's own default
+// formatted text - this package never needs a cell's display
+// formatting, only its real value). It reports ok=false for a cell
+// that is genuinely absent: no value and no formula.
+func readCell(f *excelize.File, sheet string, colIndex, rowIndex int, raw string, date1904 bool, dateStyles map[int]bool) (model.Cell, bool, error) {
 	cellRef, err := excelize.CoordinatesToCellName(colIndex+1, rowIndex+1)
 	if err != nil {
 		return model.Cell{}, false, err
@@ -200,21 +206,13 @@ func readCell(f *excelize.File, sheet string, colIndex, rowIndex int, display st
 		formula = "=" + formula
 	}
 
-	// display is the *formatted* value; fetch the raw one too, since a
-	// custom number format such as ";;;" can render a real value as
-	// blank display text, and presence must not be decided by display
-	// alone.
-	raw, err := f.GetCellValue(sheet, cellRef, excelize.Options{RawCellValue: true})
-	if err != nil {
-		return model.Cell{}, false, fmt.Errorf("read raw value of %s!%s: %w", sheet, cellRef, err)
-	}
-	if raw == "" && display == "" && formula == "" {
+	if raw == "" && formula == "" {
 		return model.Cell{}, false, nil
 	}
 
 	var cell model.Cell
 	switch {
-	case raw != "" || display != "":
+	case raw != "":
 		// A real value is already present - either a plain cell, or an
 		// already-calculated formula's cached result. In both cases
 		// excelize's cell type reliably reflects the value's actual
@@ -223,7 +221,7 @@ func readCell(f *excelize.File, sheet string, colIndex, rowIndex int, display st
 		if err != nil {
 			return model.Cell{}, false, fmt.Errorf("read type of %s!%s: %w", sheet, cellRef, err)
 		}
-		if cell, err = cellFromTyped(f, sheet, cellRef, cellType, display, raw, date1904, dateStyles); err != nil {
+		if cell, err = cellFromTyped(f, sheet, cellRef, cellType, raw, date1904, dateStyles); err != nil {
 			return model.Cell{}, false, err
 		}
 	case formula != "":
@@ -261,16 +259,16 @@ func readCell(f *excelize.File, sheet string, colIndex, rowIndex int, display st
 // cellFromTyped converts a cell whose excelize CellType reliably describes
 // its current value: either a plain (non-formula) cell, or a formula whose
 // cached result is already present.
-func cellFromTyped(f *excelize.File, sheet, cellRef string, cellType excelize.CellType, display, raw string, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
+func cellFromTyped(f *excelize.File, sheet, cellRef string, cellType excelize.CellType, raw string, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
 	switch cellType {
 	case excelize.CellTypeBool:
 		return model.NewBoolCell(raw == "1" || strings.EqualFold(raw, "TRUE")), nil
 	case excelize.CellTypeSharedString, excelize.CellTypeInlineString, excelize.CellTypeError:
-		return model.NewStringCell(display), nil
+		return model.NewStringCell(raw), nil
 	case excelize.CellTypeFormula:
 		// This specifically means "a formula's cached result is text"
 		// (OOXML's t="str"), not merely "this cell has a formula".
-		return model.NewStringCell(display), nil
+		return model.NewStringCell(raw), nil
 	case excelize.CellTypeDate:
 		// The rare ISO-8601-native date type: unlike a plain date-styled
 		// number, its raw value is date text (e.g. "2026-09-25T00:00:00"),
@@ -278,15 +276,14 @@ func cellFromTyped(f *excelize.File, sheet, cellRef string, cellType excelize.Ce
 		if t, ok := parseISODate(raw); ok {
 			return model.NewDateCell(t), nil
 		}
-		// raw (not display) is the only faithful representation of this
-		// cell type for an unrecognized ISO layout variant; display can
-		// be empty or reformatted by excelize.
+		// Not a recognized ISO layout variant; fall back to the raw text
+		// rather than lose the cell.
 		return model.NewStringCell(raw), nil
 	default:
 		// CellTypeUnset: a plain stored number, or a cached formula
 		// result that's a number. A date is distinguished from a plain
 		// number by the cell's style, not by cellType.
-		return numericOrDateCell(f, sheet, cellRef, raw, display, date1904, dateStyles)
+		return numericOrDateCell(f, sheet, cellRef, raw, date1904, dateStyles)
 	}
 }
 
@@ -309,10 +306,11 @@ func parseISODate(text string) (time.Time, bool) {
 }
 
 // numericOrDateCell converts a cell already known to be backed by a raw
-// numeric value (a plain number, or a cached formula result), reading raw
-// rather than the formatted display text so that a formatted number (a
-// currency style, a thousands separator, a percentage, ...) still parses.
-func numericOrDateCell(f *excelize.File, sheet, cellRef, raw, display string, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
+// numeric value (a plain number, or a cached formula result): a formatted
+// number (a currency style, a thousands separator, a percentage, ...)
+// still parses since raw is never run through excelize's own display
+// formatting (ADR-0046).
+func numericOrDateCell(f *excelize.File, sheet, cellRef, raw string, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
 	isDate, err := isDateStyled(f, sheet, cellRef, dateStyles)
 	if err != nil {
 		return model.Cell{}, err
@@ -324,13 +322,13 @@ func numericOrDateCell(f *excelize.File, sheet, cellRef, raw, display string, da
 			}
 		}
 		// Styled as a date but not actually a parseable serial number;
-		// fall back to the displayed text rather than lose the cell.
-		return model.NewStringCell(display), nil
+		// fall back to the raw text rather than lose the cell.
+		return model.NewStringCell(raw), nil
 	}
 	if num, err := strconv.ParseFloat(raw, 64); err == nil {
 		return model.NewNumberCell(num), nil
 	}
-	return model.NewStringCell(display), nil
+	return model.NewStringCell(raw), nil
 }
 
 // cellFromComputedText infers a Kind purely from a formula's freshly
@@ -342,7 +340,7 @@ func numericOrDateCell(f *excelize.File, sheet, cellRef, raw, display string, da
 // Bool - CellTypeBool can't be trusted here the way it can for a cell with
 // a real cached value.
 func cellFromComputedText(f *excelize.File, sheet, cellRef, text string, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
-	cell, err := numericOrDateCell(f, sheet, cellRef, text, text, date1904, dateStyles)
+	cell, err := numericOrDateCell(f, sheet, cellRef, text, date1904, dateStyles)
 	if err != nil {
 		return model.Cell{}, err
 	}
