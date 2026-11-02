@@ -2,6 +2,9 @@ package xlsx
 
 import (
 	"archive/zip"
+	"bytes"
+	"compress/flate"
+	"hash/crc32"
 	"strings"
 	"testing"
 
@@ -107,6 +110,74 @@ func TestSheetXMLPathRejectsOversizedPart(t *testing.T) {
 		t.Fatal("sheetXMLPath with maxSize=1: want an error (workbook.xml is well over 1 byte), got nil")
 	} else if !strings.Contains(err.Error(), "limit") {
 		t.Errorf("error = %q, want it to mention the size limit", err)
+	}
+}
+
+// TestSheetXMLPathRejectsUnderstatedHeaderSize guards the actual
+// defense decodeZipEntry's comment describes: a zip's own declared
+// UncompressedSize64 is just a header value an adversary fully
+// controls and can't be trusted on its own, so the real cap is the
+// io.LimitedReader applied while reading, not the pre-check alone.
+// Forges a zip entry (via CreateRaw and a real flate compressor, so
+// only the declared size itself is false, nothing else about the
+// entry) whose declared size is small enough to pass the pre-check,
+// while its actual decompressed content is far larger - the read
+// must still be rejected, not silently truncated and accepted.
+//
+// Confirmed directly: the lie must stay above the entry's actual
+// compressed size, or archive/zip's own reader rejects the entry
+// outright as malformed before this package's code ever runs -
+// genuinely reassuring (one more layer catches an even more
+// aggressively forged file), but not the specific layer this test
+// means to exercise.
+func TestSheetXMLPathRejectsUnderstatedHeaderSize(t *testing.T) {
+	// Real content: valid, well-formed workbook.xml, but large enough
+	// that truncating it well short of the end can't still parse as
+	// valid XML by accident.
+	var content bytes.Buffer
+	content.WriteString(`<?xml version="1.0" encoding="UTF-8"?><workbook><sheets>`)
+	for range 100 {
+		content.WriteString(`<sheet name="Sheet1" r:id="rId1"></sheet>`)
+	}
+	content.WriteString(`</sheets></workbook>`)
+
+	var compressed bytes.Buffer
+	fw, err := flate.NewWriter(&compressed, flate.DefaultCompression)
+	if err != nil {
+		t.Fatalf("flate.NewWriter: %v", err)
+	}
+	if _, err := fw.Write(content.Bytes()); err != nil {
+		t.Fatalf("flate write: %v", err)
+	}
+	must(t, fw.Close())
+
+	const lie = 150 // > compressed.Len(), far short of content.Len()
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	fh := &zip.FileHeader{
+		Name:               "xl/workbook.xml",
+		Method:             zip.Deflate,
+		UncompressedSize64: lie,
+		CompressedSize64:   uint64(compressed.Len()),
+		CRC32:              crc32.ChecksumIEEE(content.Bytes()),
+	}
+	w, err := zw.CreateRaw(fh)
+	if err != nil {
+		t.Fatalf("CreateRaw: %v", err)
+	}
+	if _, err := w.Write(compressed.Bytes()); err != nil {
+		t.Fatalf("write raw entry: %v", err)
+	}
+	must(t, zw.Close())
+
+	zr, err := zip.NewReader(bytes.NewReader(zipBuf.Bytes()), int64(zipBuf.Len()))
+	if err != nil {
+		t.Fatalf("zip.NewReader: %v", err)
+	}
+
+	var wb workbookXML
+	if err := decodeZipEntry(zr, "xl/workbook.xml", &wb, lie); err == nil {
+		t.Fatal("decodeZipEntry with an understated declared size: want an error, got nil")
 	}
 }
 
