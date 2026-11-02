@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"strings"
 )
@@ -140,6 +141,23 @@ func decodeZipEntry(zr *zip.Reader, name string, v any, maxSize int64) error {
 	return decodeZipFile(f, v, maxSize)
 }
 
+// limitedReaderN returns the N field for an io.LimitedReader meant to
+// allow maxSize bytes while still being able to tell "read exactly
+// maxSize" apart from "read more than that" (one byte more than
+// maxSize, so reaching the limit without the document finishing
+// proves it's oversized) - without overflowing when maxSize is
+// already math.MaxInt64, the largest representable value, where
+// there's no larger one to ask for anyway. Confirmed directly:
+// maxSize+1 silently wraps to a negative number there, which would
+// make io.LimitedReader.Read return io.EOF immediately, rejecting
+// every read as "oversized" even for a tiny, valid file.
+func limitedReaderN(maxSize int64) int64 {
+	if maxSize == math.MaxInt64 {
+		return maxSize
+	}
+	return maxSize + 1
+}
+
 // decodeZipFile is decodeZipEntry's own work once the *zip.File is
 // already in hand, shared with callers (sharedStrings among them)
 // that need to check an entry's presence themselves first.
@@ -157,7 +175,7 @@ func decodeZipFile(f *zip.File, v any, maxSize int64) error {
 	var r io.Reader = rc
 	var limited *io.LimitedReader
 	if maxSize > 0 {
-		limited = &io.LimitedReader{R: rc, N: maxSize + 1}
+		limited = &io.LimitedReader{R: rc, N: limitedReaderN(maxSize)}
 		r = limited
 	}
 	decodeErr := xml.NewDecoder(r).Decode(v)

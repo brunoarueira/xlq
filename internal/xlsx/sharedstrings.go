@@ -122,7 +122,7 @@ func sharedStrings(zr *zip.Reader, maxSize int64) ([]string, error) {
 	var r io.Reader = rc
 	var limited *io.LimitedReader
 	if maxSize > 0 {
-		limited = &io.LimitedReader{R: rc, N: maxSize + 1}
+		limited = &io.LimitedReader{R: rc, N: limitedReaderN(maxSize)}
 		r = limited
 	}
 
@@ -131,6 +131,15 @@ func sharedStrings(zr *zip.Reader, maxSize int64) ([]string, error) {
 	var strs []string
 	var materialized int64
 	dec := xml.NewDecoder(r)
+	// depth counts open elements, the root (<sst>) itself making it 1
+	// once entered - only a <si> seen at depth == 1 is a direct child
+	// of the root, a real top-level entry. Without this, a <si>-named
+	// element nested anywhere deeper - not a shape real producers are
+	// known to emit, but one a crafted file could still contain and
+	// still be well-formed XML - would be wrongly counted as its own
+	// entry, shifting every later index out of sync with what a
+	// cell's own <v> actually means.
+	depth := 0
 	for {
 		tok, tokErr := dec.Token()
 		if tokErr == io.EOF {
@@ -142,8 +151,16 @@ func sharedStrings(zr *zip.Reader, maxSize int64) ([]string, error) {
 			}
 			return nil, fmt.Errorf("xlsx: parse %s: %w", f.Name, tokErr)
 		}
+
 		start, ok := tok.(xml.StartElement)
-		if !ok || start.Name.Local != "si" {
+		if !ok {
+			if _, ok := tok.(xml.EndElement); ok {
+				depth--
+			}
+			continue
+		}
+		if depth != 1 || start.Name.Local != "si" {
+			depth++
 			continue
 		}
 

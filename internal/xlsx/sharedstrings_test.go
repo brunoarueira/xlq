@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
+	"math"
 	"strings"
 	"testing"
 
@@ -177,6 +178,61 @@ func TestSharedStringsRejectsManyTinyEntries(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "limit") {
 		t.Errorf("error = %q, want it to mention the limit", err)
+	}
+}
+
+// TestSharedStringsIgnoresNestedSI guards sharedStrings' own depth
+// tracking: a <si>-named element isn't only ever a direct child of
+// the root in a maliciously crafted (if still well-formed) file - an
+// <extLst> extension block (a genuine OOXML extensibility point that
+// can legitimately appear as a sibling of real <si> entries) wrapping
+// one here stands in for that. Without tracking depth, a naive "any
+// <si> anywhere" match would treat the nested one as its own entry,
+// shifting index 0 onto the wrong text.
+func TestSharedStringsIgnoresNestedSI(t *testing.T) {
+	xmlContent := []byte(`<?xml version="1.0" encoding="UTF-8"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><extLst><ext><si>nested, not a real entry</si></ext></extLst><si><t>real</t></si></sst>`)
+	zr := buildRawZip(t, "xl/sharedStrings.xml", xmlContent)
+
+	strs, err := sharedStrings(zr, 0)
+	if err != nil {
+		t.Fatalf("sharedStrings: %v", err)
+	}
+	if len(strs) != 1 {
+		t.Fatalf("len(strs) = %d, want 1 (the nested <si> must not count as its own entry)", len(strs))
+	}
+	if strs[0] != "real" {
+		t.Errorf("strs[0] = %q, want %q", strs[0], "real")
+	}
+}
+
+// TestLimitedReaderNNoOverflow guards limitedReaderN against the
+// one input where a plain maxSize+1 silently wraps negative:
+// math.MaxInt64, the largest representable value, where there's no
+// larger one to ask for anyway.
+func TestLimitedReaderNNoOverflow(t *testing.T) {
+	if got := limitedReaderN(math.MaxInt64); got <= 0 {
+		t.Errorf("limitedReaderN(MaxInt64) = %d, want a positive value (not an overflow)", got)
+	}
+	if got := limitedReaderN(100); got != 101 {
+		t.Errorf("limitedReaderN(100) = %d, want 101", got)
+	}
+}
+
+// TestSharedStringsMaxInt64DoesNotOverflow is the literal reported
+// bug, end to end: maxSize == math.MaxInt64 must still read a tiny,
+// valid part successfully, not reject it as oversized.
+func TestSharedStringsMaxInt64DoesNotOverflow(t *testing.T) {
+	path := build(t, func(f *excelize.File) {
+		must(t, f.SetCellValue("Sheet1", "A1", "plain"))
+	})
+	zr := openZipReader(t, path)
+
+	strs, err := sharedStrings(zr, math.MaxInt64)
+	if err != nil {
+		t.Fatalf("sharedStrings with maxSize=math.MaxInt64: %v", err)
+	}
+	if len(strs) != 1 || strs[0] != "plain" {
+		t.Errorf("strs = %v, want [\"plain\"]", strs)
 	}
 }
 
