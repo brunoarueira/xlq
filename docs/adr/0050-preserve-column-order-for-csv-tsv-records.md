@@ -116,10 +116,12 @@ real robustness.
   about `map[string]any`'s own key order.
 - Supersedes [ADR-0013](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0013-csv-tsv-output.md)'s
   own records-header rule for `--csv`/`--tsv` specifically - ADR-0013
-  stated that header as "the sorted union of every record's keys,
-  matching Table's own ordering." That's no longer true for a bare
-  `records` result, or one piped through `select` afterward; it's
-  still exactly true for anything else (`map`, `group_by`, an empty
-  or whole-workbook result, the grid/column/scalar cases ADR-0013
-  also covers) - this narrows that one rule, not every claim ADR-0013
+  stated that header as "the sorted union of every record's keys -
+  the same order `--table` and xlq's own JSON output already use, so
+  this doesn't introduce a third convention." That's no longer true
+  for a bare `records` result, or one piped through `select`
+  afterward; it's still exactly true for anything else (`map`,
+  `group_by`, an empty or whole-workbook result, the grid/column/
+  scalar cases ADR-0013 also covers) - this narrows that one rule,
+  not every claim ADR-0013
   makes about CSV/TSV output.
