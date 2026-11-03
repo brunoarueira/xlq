@@ -61,7 +61,7 @@ func Eval(expr filter.Expr, wb model.Workbook) (any, error) {
 // records' own original column order (the header row's own left-to-
 // right order, per ADR-0011/ADR-0021's record.headers), when and only
 // when expr's own result - right before toJSON flattens it to its
-// public map shape - is a record or []record (ADR-0049's own #175:
+// public map shape - is a record or []record (ADR-0050's own #175:
 // CSV/TSV output wants this; JSON/--table/--ndjson don't, and
 // continue sorting keys alphabetically via plain Eval, unaffected).
 // nil for every other result shape (a grid, a scalar, a workbook,

@@ -29,9 +29,13 @@ problem has earned" at the time, matching the same call ADR-0008
 already made for the whole-workbook object (keyed by sheet name).
 That reasoning still holds for JSON and `--table` output, where key
 order is either genuinely immaterial (JSON) or already deliberately
-kept consistent with JSON's own convention (`--table`, ADR-0013's own
-stated reason for sorting there too). It doesn't hold for `--csv`/
-`--tsv` specifically: a positional consumer has nothing else to go on,
+kept consistent with JSON's own convention instead (`--table`'s own
+doc comment, `internal/output/table.go`: "the same alphabetical order
+xlq's own JSON output already uses... so Table doesn't introduce a
+second, different ordering convention" - ADR-0013 then borrows that
+same pre-existing convention for CSV/TSV too, rather than the other
+way around). It doesn't hold for `--csv`/`--tsv` specifically: a
+positional consumer has nothing else to go on,
 and "the sheet's own left-to-right order" is both the more intuitive
 default and the one that needs zero column-order wrangling to load
 cleanly.
@@ -110,3 +114,12 @@ real robustness.
   unchanged - this is scoped to `--csv`/`--tsv` alone, per #175's own
   explicit framing, not a reversal of ADR-0011's broader reasoning
   about `map[string]any`'s own key order.
+- Supersedes [ADR-0013](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0013-csv-tsv-output.md)'s
+  own records-header rule for `--csv`/`--tsv` specifically - ADR-0013
+  stated that header as "the sorted union of every record's keys,
+  matching Table's own ordering." That's no longer true for a bare
+  `records` result, or one piped through `select` afterward; it's
+  still exactly true for anything else (`map`, `group_by`, an empty
+  or whole-workbook result, the grid/column/scalar cases ADR-0013
+  also covers) - this narrows that one rule, not every claim ADR-0013
+  makes about CSV/TSV output.

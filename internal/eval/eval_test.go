@@ -436,11 +436,20 @@ func TestEvalPreservingOrderSingleRecord(t *testing.T) {
 // with no well-defined single column order (a grid, a scalar, a
 // transformed array that's no longer []record) gets a nil hint, the
 // same as plain Eval already behaves - not a wrong or guessed order.
+// map(.) specifically guards a real nuance, not an obvious one: it's
+// an identity pass-through whose *output* still looks exactly like a
+// records array once flattened, but toJSON only promotes a []any of
+// map[string]any elements back to that shape *after* this check
+// already ran against map's own []any result type - so even this
+// pass-through case correctly falls back to nil, documented
+// explicitly in reference.md's own Output modes section rather than
+// left as an implicit consequence of the type switch alone.
 func TestEvalPreservingOrderNilForNonRecordShapes(t *testing.T) {
 	cases := []string{
 		".Sheet1",                         // a grid
 		".Sheet1.A1",                      // a scalar
 		".Sheet1 | records | map(.hello)", // no longer records at all
+		".Sheet1 | records | map(.)",      // identity - still fails to match []record
 	}
 	for _, input := range cases {
 		_, headers, err := evalPreservingOrderString(t, input)
