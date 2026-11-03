@@ -424,8 +424,18 @@ be combined with `-c`/`-r`.
 `--csv`/`--tsv` ([ADR-0013](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0013-csv-tsv-output.md))
 print comma/tab-separated text instead of JSON, with `encoding/csv`'s own
 quoting and escaping. A sheet grid or range flattens positionally, with no
-header row; `records` gets a header row (its sorted field names) plus one
-row per record - pipe through `records` first when a header is wanted.
+header row; `records` gets a header row plus one row per record - pipe
+through `records` first when a header is wanted. For a bare `records`
+result, or one piped through `select` afterward, the header row is the
+sheet's own real left-to-right column order
+([ADR-0050](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0050-preserve-column-order-for-csv-tsv-records.md)),
+not sorted; piping through anything else first - `map` (even `map(.)`,
+an identity pass-through that still looks like records afterward), `group_by`,
+... - falls back to the sorted-keys order instead, the same as `--table`
+and plain JSON output always use. This natural-order behavior is
+deliberately `--csv`/`--tsv`-only, since a destination table a CSV export
+gets loaded into typically expects columns in that same natural order,
+not an alphabetical one.
 The whole-workbook result is a clear error (no single tabular shape), not
 a guess. `--table`, `--csv`, `--tsv`, and `--ndjson` are mutually exclusive
 output modes, and each is also mutually exclusive with `-c`/`-r` (which

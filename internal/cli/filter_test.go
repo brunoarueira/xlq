@@ -596,6 +596,48 @@ func TestRootFilterCSVOnRecords(t *testing.T) {
 	}
 }
 
+// TestRootFilterCSVRecordsUseSheetColumnOrderNotSorted guards #175/
+// ADR-0050's own fix end to end, through the real CLI wiring
+// (EvalPreservingOrder -> headerOrder -> output.CSVOrdered), not just
+// the output.CSVOrdered/eval.EvalPreservingOrder unit tests in their
+// own packages: "Name" then "Likes" is the sheet's own real column
+// order, deliberately not alphabetical ("Likes" < "Name") - a
+// regression that silently fell back to sorting would be caught by
+// the output's own column order, not masked by a fixture that
+// happens to already be alphabetical.
+func TestRootFilterCSVRecordsUseSheetColumnOrderNotSorted(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "Name"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "B1", "Likes"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "A2", "Alice"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "B2", 150.0); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	out, err := run(t, "--csv", ".Sheet1 | records", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "Name,Likes\nAlice,150\n"; out != want {
+		t.Errorf("--csv output = %q, want %q", out, want)
+	}
+
+	out, err = run(t, "--tsv", ".Sheet1 | records", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "Name\tLikes\nAlice\t150\n"; out != want {
+		t.Errorf("--tsv output = %q, want %q", out, want)
+	}
+}
+
 func TestRootFilterTSVUsesTabDelimiter(t *testing.T) {
 	path := buildFixture(t, func(f *excelize.File) {
 		if err := f.SetCellValue("Sheet1", "A1", "a"); err != nil {

@@ -53,14 +53,48 @@ import (
 // "unknown expression type" case, since it's a clear, specific user
 // error (forgetting --in-place), not an internal inconsistency.
 func Eval(expr filter.Expr, wb model.Workbook) (any, error) {
+	result, _, err := EvalPreservingOrder(expr, wb)
+	return result, err
+}
+
+// EvalPreservingOrder is Eval, plus a second return value: the
+// records' own original column order (the header row's own left-to-
+// right order, per ADR-0011/ADR-0021's record.headers), when and only
+// when expr's own result - right before toJSON flattens it to its
+// public map shape - is a record or []record (ADR-0050's own #175:
+// CSV/TSV output wants this; JSON/--table/--ndjson don't, and
+// continue sorting keys alphabetically via plain Eval, unaffected).
+// nil for every other result shape (a grid, a scalar, a workbook,
+// group_by's own nested shape, ...), where no single column order is
+// even well-defined.
+//
+// headers is read from the first (or only) record, trusting that
+// every record from one sheetRecords call already shares the exact
+// same slice (sheetRecords' own doc comment) - select preserves that
+// invariant (selectOver keeps each surviving element, headers field
+// included, completely unchanged), so "records | select(...)" gets
+// an order hint too, not just bare "records" - but map/group_by's own
+// results generally aren't []record at all once a real transformation
+// runs, so they fall back to nil here exactly as they would reach
+// toJSON unchanged either way.
+func EvalPreservingOrder(expr filter.Expr, wb model.Workbook) (result any, headerOrder []string, err error) {
 	if _, ok := expr.(filter.Assign); ok {
-		return nil, fmt.Errorf("eval: an assignment filter (\"path = value\") only works with --in-place")
+		return nil, nil, fmt.Errorf("eval: an assignment filter (\"path = value\") only works with --in-place")
 	}
 	v, err := eval(expr, wb)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return toJSON(v)
+	switch val := v.(type) {
+	case record:
+		headerOrder = val.headers
+	case []record:
+		if len(val) > 0 {
+			headerOrder = val[0].headers
+		}
+	}
+	result, err = toJSON(v)
+	return result, headerOrder, err
 }
 
 // eval walks expr, threading a "current value" that may be a

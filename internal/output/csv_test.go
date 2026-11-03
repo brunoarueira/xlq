@@ -265,3 +265,80 @@ func mustCSV(t *testing.T, v any) string {
 	}
 	return got
 }
+
+// TestCSVOrderedUsesGivenOrderNotSorted guards #175's own fix:
+// headerOrder, when given, wins over the sorted-union default.
+// headerOrder here is "Name" before "Likes" - deliberately not
+// alphabetical ("Likes" < "Name") - so a bug that silently fell back
+// to sorting would be caught by the output's own column order, not
+// masked by headerOrder happening to already match the sorted one.
+func TestCSVOrderedUsesGivenOrderNotSorted(t *testing.T) {
+	records := []map[string]any{
+		{"Name": "Alice", "Likes": 150.0},
+	}
+	got, err := CSVOrdered(records, []string{"Name", "Likes"})
+	if err != nil {
+		t.Fatalf("CSVOrdered returned error: %v", err)
+	}
+	want := "Name,Likes\nAlice,150\n"
+	if got != want {
+		t.Errorf("CSVOrdered(%v) = %q, want %q", records, got, want)
+	}
+}
+
+// TestCSVOrderedNilMatchesPlainCSV confirms CSVOrdered(v, nil)
+// behaves exactly like CSV(v) - the "no hint available" case must
+// stay the existing, already-tested sorted behavior.
+func TestCSVOrderedNilMatchesPlainCSV(t *testing.T) {
+	records := []map[string]any{{"B": 1.0, "A": 2.0}}
+	plain := mustCSV(t, records)
+	ordered, err := CSVOrdered(records, nil)
+	if err != nil {
+		t.Fatalf("CSVOrdered returned error: %v", err)
+	}
+	if ordered != plain {
+		t.Errorf("CSVOrdered(v, nil) = %q, want %q (same as CSV(v))", ordered, plain)
+	}
+}
+
+// TestCSVOrderedSingleRecord confirms headerOrder also applies to the
+// map[string]any (single-record) path, not just []map[string]any.
+func TestCSVOrderedSingleRecord(t *testing.T) {
+	record := map[string]any{"Name": "Alice", "Likes": 150.0}
+	got, err := CSVOrdered(record, []string{"Name", "Likes"})
+	if err != nil {
+		t.Fatalf("CSVOrdered returned error: %v", err)
+	}
+	want := "Name,Likes\nAlice,150\n"
+	if got != want {
+		t.Errorf("CSVOrdered(%v) = %q, want %q", record, got, want)
+	}
+}
+
+func TestTSVOrderedUsesGivenOrder(t *testing.T) {
+	records := []map[string]any{{"Name": "Alice", "Likes": 150.0}}
+	got, err := TSVOrdered(records, []string{"Name", "Likes"})
+	if err != nil {
+		t.Fatalf("TSVOrdered returned error: %v", err)
+	}
+	want := "Name\tLikes\nAlice\t150\n"
+	if got != want {
+		t.Errorf("TSVOrdered(%v) = %q, want %q", records, got, want)
+	}
+}
+
+// TestCSVOrderedDefusesHeaderOrder confirms a header name coming
+// from headerOrder is defuseFormula'd (ADR-0045) exactly like a
+// sorted header already is - the formula-injection defense can't
+// have a gap just because the header came from a different source.
+func TestCSVOrderedDefusesHeaderOrder(t *testing.T) {
+	records := []map[string]any{{"=header": "value"}}
+	got, err := CSVOrdered(records, []string{"=header"})
+	if err != nil {
+		t.Fatalf("CSVOrdered returned error: %v", err)
+	}
+	want := "'=header\nvalue\n"
+	if got != want {
+		t.Errorf("CSVOrdered(%v) = %q, want %q", records, got, want)
+	}
+}
