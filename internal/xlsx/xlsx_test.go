@@ -675,6 +675,63 @@ func TestReadCachedFormulaStringResult(t *testing.T) {
 	}
 }
 
+// TestReadSharedFormulaMemberCell guards ADR-0048's own explicit
+// boundary: a shared formula's relative-reference reconstruction for
+// a non-master member cell is genuinely complex (excelize's own
+// getSharedFormula/convertSharedFormula/shiftCell), so readCell
+// always defers to excelize's GetCellFormula when a cell's own <f>
+// has t="shared", rather than risk a silently wrong reconstruction of
+// its own. excelize's write API always writes each shared-formula
+// cell's own full literal text (confirmed directly), unlike a real
+// spreadsheet application's drag-filled range, where only the
+// group's master cell carries text and every other member's <f> is
+// empty - this patches that shape in directly to exercise the real
+// case.
+func TestReadSharedFormulaMemberCell(t *testing.T) {
+	path := build(t, func(f *excelize.File) {
+		must(t, f.SetCellValue("Sheet1", "A1", 1.0))
+		must(t, f.SetCellValue("Sheet1", "A2", 2.0))
+		must(t, f.SetCellValue("Sheet1", "A3", 3.0))
+		sharedType := "shared"
+		ref := "B1:B3"
+		must(t, f.SetCellFormula("Sheet1", "B1", "A1*10", excelize.FormulaOpts{Type: &sharedType, Ref: &ref}))
+		must(t, f.SetCellFormula("Sheet1", "B2", "A2*10", excelize.FormulaOpts{Type: &sharedType, Ref: &ref}))
+		must(t, f.SetCellFormula("Sheet1", "B3", "A3*10", excelize.FormulaOpts{Type: &sharedType, Ref: &ref}))
+	})
+	patchXML(t, path, "xl/worksheets/sheet1.xml",
+		`<f t="shared" ref="B1:B3" si="2">A2*10</f>`,
+		`<f t="shared" si="2"></f>`,
+	)
+	patchXML(t, path, "xl/worksheets/sheet1.xml",
+		`<f t="shared" ref="B1:B3" si="2">A3*10</f>`,
+		`<f t="shared" si="2"></f>`,
+	)
+
+	wb, err := Read(path, 0)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	for i, want := range []struct {
+		formula string
+		value   float64
+	}{
+		{"=A1*10", 10},
+		{"=A2*10", 20},
+		{"=A3*10", 30},
+	} {
+		c, ok := cellAt(t, wb, "Sheet1", i, 1) // column B
+		if !ok {
+			t.Fatalf("cell B%d not found", i+1)
+		}
+		if c.Formula != want.formula {
+			t.Errorf("B%d Formula = %q, want %q", i+1, c.Formula, want.formula)
+		}
+		if v, ok := c.NumberValue(); !ok || v != want.value {
+			t.Errorf("B%d NumberValue() = (%v, %v), want (%v, true) - Kind = %v", i+1, v, ok, want.value, c.Kind)
+		}
+	}
+}
+
 func TestSheetNames(t *testing.T) {
 	path := build(t, func(f *excelize.File) {
 		if _, err := f.NewSheet("Data"); err != nil {

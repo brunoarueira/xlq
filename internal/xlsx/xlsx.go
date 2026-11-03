@@ -1,6 +1,17 @@
 // Package xlsx converts .xlsx files into xlq's internal model.Workbook
-// (see internal/model and docs/adr/0007-spreadsheet-data-model.md) using
-// excelize, so the rest of xlq never depends on excelize directly.
+// (see internal/model and docs/adr/0007-spreadsheet-data-model.md).
+//
+// Row/cell data is read via this package's own direct worksheet XML
+// reader (worksheet.go, sheetpath.go, sharedstrings.go -
+// docs/adr/0048-custom-xlsx-worksheet-read-path.md), not excelize's
+// Rows/Columns: excelize stays in use only for what that new reader
+// doesn't do - Read's own upfront OpenFile (the sheet list, workbook
+// properties, and size-limit enforcement, ADR-0031/ADR-0047),
+// CalcCellValue (an uncached formula's live result), GetCellFormula
+// (a shared formula's own relative-reference reconstruction, see
+// readCell), and GetStyle (resolving a style ID to its definition,
+// for isDateStyled) - so the rest of xlq still never depends on
+// excelize directly.
 //
 // Read itself returns as soon as it knows the sheet list: no sheet's
 // row data is read until something actually ranges over that Sheet's
@@ -10,28 +21,18 @@
 // Known limitation: a formula cell with no cached result yet (the
 // workbook has never been opened/recalculated by a spreadsheet
 // application, nor by excelize itself) is computed live via
-// CalcCellValue, but excelize's GetCellType reports only "this is a
-// formula" for such a cell, not its result's actual type. Its Kind is
-// then inferred from the computed text alone, so a result that is
-// itself numeric-looking text (e.g. `="123"`) or a boolean reads back
-// as a Number/String rather than the type it actually is. A workbook
-// that has been saved by Excel (or any tool that caches formula
-// results) is unaffected, since the cached result's real type is used.
-//
-// Fixed limitation (ADR-0046): a custom number format that renders
-// any value as blank (e.g. ";;;", a common "hide this cell's
-// contents" trick) used to be dropped when it was the last (or only)
-// populated cell in its row - excelize's row iterator trims trailing
-// cells by their *formatted*, not raw, value, so a blank-formatted
-// but genuinely present cell never reached this package at all.
-// Reading rows in raw mode (ADR-0046's own motivation, for an
-// unrelated performance reason) incidentally fixes this too: raw
-// mode's own trailing-cell trim is by the *raw* value instead,
-// confirmed directly against a single trailing hidden-format cell
-// with nothing after it in its row.
+// CalcCellValue, but this package's own cell-type classification only
+// knows "this is a formula" for such a cell, not its result's actual
+// type. Its Kind is then inferred from the computed text alone, so a
+// result that is itself numeric-looking text (e.g. `="123"`) or a
+// boolean reads back as a Number/String rather than the type it
+// actually is. A workbook that has been saved by Excel (or any tool
+// that caches formula results) is unaffected, since the cached
+// result's real type is used.
 package xlsx
 
 import (
+	"archive/zip"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -130,18 +131,28 @@ func SheetNames(path string, maxSize int64) ([]string, error) {
 }
 
 // lazySheet returns a Sheet whose Rows never reads anything until
-// actually ranged over, and opens its own fresh *excelize.File - closed
-// again once that one pass finishes - every time it is: there's no way
-// to keep Read's own already-open file around for later use, since
-// Read returns (and so, today, already closed its file) before any
-// lazy consumer ever gets a chance to range over Rows. See
+// actually ranged over, and opens its own fresh *excelize.File and a
+// fresh *zip.ReadCloser - both closed again once that one pass
+// finishes - every time it is: there's no way to keep Read's own
+// already-open file around for later use, since Read returns (and
+// so, today, already closed its file) before any lazy consumer ever
+// gets a chance to range over Rows. See
 // docs/adr/0018-streaming-xlsx-reader.md for why this, rather than
 // giving model.Workbook an explicit open/close lifetime of its own,
 // was chosen, and for the trade-off it accepts: Read's own upfront
-// open (for the sheet list and workbook properties) plus one more per
-// sheet actually ranged over, so a query touching N sheets opens the
-// file N+1 times in total, not N. maxSize (#51) is applied to this
-// fresh open the same way Read applies it to its own.
+// open (for the sheet list and workbook properties) plus one more
+// pair of opens per sheet actually ranged over. maxSize (#51) is
+// applied to both opens the same way Read applies it to its own.
+//
+// ADR-0048: row/cell data itself is read via streamWorksheetRows -
+// xlq's own direct worksheet XML reader - not excelize's Rows/
+// Columns, eliminating the per-cell GetCellFormula/GetCellType tax
+// #164 found dominates large-file reads. The *excelize.File stays
+// open alongside the *zip.Reader only for what this package still
+// delegates to it: CalcCellValue (an uncached formula's live result),
+// GetCellFormula (a shared formula's own, genuinely complex relative-
+// reference reconstruction - see readCell), and GetStyle (resolving a
+// style ID to its definition, for isDateStyled).
 func lazySheet(path, name string, date1904 bool, dateStyles map[int]bool, maxSize int64) model.Sheet {
 	return model.Sheet{
 		Name: name,
@@ -153,68 +164,131 @@ func lazySheet(path, name string, date1904 bool, dateStyles map[int]bool, maxSiz
 			}
 			defer func() { _ = f.Close() }()
 
-			rows, err := f.Rows(name)
+			zr, err := zip.OpenReader(path)
 			if err != nil {
-				yield(model.Row{}, fmt.Errorf("read sheet %q of %q: %w", name, path, err))
+				yield(model.Row{}, fmt.Errorf("open %q: %w", path, err))
 				return
 			}
-			defer func() { _ = rows.Close() }()
+			defer func() { _ = zr.Close() }()
 
-			// excelize's row iterator yields one iteration per row
-			// *number* (padding with an empty Columns() result for any
-			// row the sheet XML omits entirely, e.g. a wholly blank row
-			// 2 between rows 1 and 3), so this 0-based counter tracks
-			// the real row index correctly even across gaps.
-			for rowIndex := 0; rows.Next(); rowIndex++ {
-				cols, err := rows.Columns(excelize.Options{RawCellValue: true})
-				if err != nil {
-					yield(model.Row{}, fmt.Errorf("read row %d of sheet %q of %q: %w", rowIndex+1, name, path, err))
-					return
+			sheetPath, err := sheetXMLPath(&zr.Reader, name, maxSize)
+			if err != nil {
+				yield(model.Row{}, fmt.Errorf("resolve sheet %q of %q: %w", name, path, err))
+				return
+			}
+			strs, err := sharedStrings(&zr.Reader, maxSize)
+			if err != nil {
+				yield(model.Row{}, fmt.Errorf("read shared strings of %q: %w", path, err))
+				return
+			}
+			sheetFile := findZipEntry(&zr.Reader, sheetPath)
+			if sheetFile == nil {
+				yield(model.Row{}, fmt.Errorf("sheet %q of %q: worksheet part %q not found in archive", name, path, sheetPath))
+				return
+			}
+
+			streamWorksheetRows(sheetFile, maxSize, func(rowIndex int, rawCells []resolvedCell, rowErr error) bool {
+				if rowErr != nil {
+					return yield(model.Row{}, fmt.Errorf("read sheet %q of %q: %w", name, path, rowErr))
 				}
-
 				var cells []model.Cell
-				for colIndex, raw := range cols {
-					cell, ok, err := readCell(f, name, colIndex, rowIndex, raw, date1904, dateStyles)
+				for _, rc := range rawCells {
+					cell, ok, err := readCell(f, name, rowIndex, rc, strs, date1904, dateStyles)
 					if err != nil {
-						yield(model.Row{}, fmt.Errorf("%q: %w", path, err))
-						return
+						return yield(model.Row{}, fmt.Errorf("%q: %w", path, err))
 					}
 					if ok {
 						cells = append(cells, cell)
 					}
 				}
-				if len(cells) > 0 && !yield(model.Row{Index: rowIndex, Cells: cells}, nil) {
-					return
+				if len(cells) == 0 {
+					return true
 				}
-			}
-			if err := rows.Error(); err != nil {
-				yield(model.Row{}, fmt.Errorf("read sheet %q of %q: %w", name, path, err))
-			}
+				return yield(model.Row{Index: rowIndex, Cells: cells}, nil)
+			})
 		},
 	}
 }
 
-// readCell reads the cell at (colIndex, rowIndex) (both 0-based), given
-// raw, its already-fetched raw value from the row iterator (ADR-0046:
-// Rows.Columns is called with RawCellValue, not excelize's own default
-// formatted text - this package never needs a cell's display
-// formatting, only its real value). It reports ok=false for a cell
-// that is genuinely absent: no value and no formula.
-func readCell(f *excelize.File, sheet string, colIndex, rowIndex int, raw string, date1904 bool, dateStyles map[int]bool) (model.Cell, bool, error) {
-	cellRef, err := excelize.CoordinatesToCellName(colIndex+1, rowIndex+1)
+// resolveCellValue returns rc's resolved raw text value: strs[v] for
+// a shared string (t="s" - excelize's own getValueFrom, confirmed
+// directly in its source, is a pass-through for every other type
+// once raw mode is in effect, which this reader always is by
+// construction), rc.is's own resolved text for an inline string
+// (t="inlineStr" - xlsxIS and xlsxSI are the identical type in
+// excelize's own source, so reusing sharedStringItem.text() here is
+// exact, not approximate), or rc.v unchanged for everything else.
+func resolveCellValue(rc resolvedCell, strs []string) (string, error) {
+	switch rc.t {
+	case "s":
+		if !rc.hasV || rc.v == "" {
+			return "", nil
+		}
+		idx, err := strconv.Atoi(strings.TrimSpace(rc.v))
+		if err != nil {
+			return "", fmt.Errorf("shared string index %q: %w", rc.v, err)
+		}
+		if idx < 0 || idx >= len(strs) {
+			return "", fmt.Errorf("shared string index %d out of range (0-%d)", idx, len(strs)-1)
+		}
+		return strs[idx], nil
+	case "inlineStr":
+		if rc.is != nil {
+			return rc.is.text(), nil
+		}
+		return rc.v, nil
+	default:
+		return rc.v, nil
+	}
+}
+
+// readCell converts rc (rowIndex is 0-based) into a model.Cell. It
+// reports ok=false for a cell that is genuinely absent: no value and
+// no formula.
+//
+// cellRef (the "A1"-style reference excelize's own API needs) is
+// computed only when rc actually has a formula - the one case that
+// still needs excelize (GetCellFormula for a shared formula,
+// CalcCellValue for a live one) - rather than for every cell
+// unconditionally: confirmed directly via profiling that computing
+// it for every cell, including the overwhelming majority with no
+// formula at all, was a meaningful share of this reader's own
+// allocations at this call volume.
+func readCell(f *excelize.File, sheet string, rowIndex int, rc resolvedCell, strs []string, date1904 bool, dateStyles map[int]bool) (model.Cell, bool, error) {
+	raw, err := resolveCellValue(rc, strs)
 	if err != nil {
-		return model.Cell{}, false, err
+		cellRef, _ := excelize.CoordinatesToCellName(rc.col+1, rowIndex+1)
+		return model.Cell{}, false, fmt.Errorf("resolve value of %s!%s: %w", sheet, cellRef, err)
 	}
 
-	formula, err := f.GetCellFormula(sheet, cellRef)
-	if err != nil {
-		return model.Cell{}, false, fmt.Errorf("read formula of %s!%s: %w", sheet, cellRef, err)
-	}
-	// The stored formula never includes the leading "=" (that's purely a
-	// spreadsheet-UI convention); ADR-0007's Formula field does, matching
-	// how a formula bar displays it, so add it back.
-	if formula != "" && !strings.HasPrefix(formula, "=") {
-		formula = "=" + formula
+	var formula, cellRef string
+	if rc.hasF {
+		if cellRef, err = excelize.CoordinatesToCellName(rc.col+1, rowIndex+1); err != nil {
+			return model.Cell{}, false, err
+		}
+		if rc.formulaType == "shared" {
+			// A shared formula's own relative-reference reconstruction
+			// for anything but the group's master cell is genuinely
+			// complex (excelize's own getSharedFormula/
+			// convertSharedFormula/shiftCell, confirmed directly in its
+			// source) - and confirmed directly that excelize resolves
+			// *every* cell in a shared-formula group this way,
+			// including the master itself, not only member cells with
+			// empty <f> content. Deferring to excelize here, rather
+			// than risk a silently wrong reconstruction, is the same
+			// boundary ADR-0048 already draws around CalcCellValue.
+			if formula, err = f.GetCellFormula(sheet, cellRef); err != nil {
+				return model.Cell{}, false, fmt.Errorf("read shared formula of %s!%s: %w", sheet, cellRef, err)
+			}
+		} else {
+			formula = rc.formulaText
+		}
+		// The stored formula never includes the leading "=" (that's
+		// purely a spreadsheet-UI convention); ADR-0007's Formula field
+		// does, matching how a formula bar displays it, so add it back.
+		if formula != "" && !strings.HasPrefix(formula, "=") {
+			formula = "=" + formula
+		}
 	}
 
 	if raw == "" && formula == "" {
@@ -225,14 +299,10 @@ func readCell(f *excelize.File, sheet string, colIndex, rowIndex int, raw string
 	switch {
 	case raw != "":
 		// A real value is already present - either a plain cell, or an
-		// already-calculated formula's cached result. In both cases
-		// excelize's cell type reliably reflects the value's actual
-		// type, so use it.
-		cellType, err := f.GetCellType(sheet, cellRef)
-		if err != nil {
-			return model.Cell{}, false, fmt.Errorf("read type of %s!%s: %w", sheet, cellRef, err)
-		}
-		if cell, err = cellFromTyped(f, sheet, cellRef, cellType, raw, date1904, dateStyles); err != nil {
+		// already-calculated formula's cached result. In both cases the
+		// cell's own raw type attribute reliably reflects the value's
+		// actual type, so use it.
+		if cell, err = cellFromRawType(f, rc.t, raw, rc.styleID, date1904, dateStyles); err != nil {
 			return model.Cell{}, false, err
 		}
 	case formula != "":
@@ -250,11 +320,11 @@ func readCell(f *excelize.File, sheet string, colIndex, rowIndex int, raw string
 			// an unsupported function - surfaces here as a Go error
 			// rather than as display text. Treat it as a String cell
 			// holding that message, matching how a cell whose *cached*
-			// result is an error type is handled in cellFromTyped, rather
+			// result is an error type is handled in cellFromRawType, rather
 			// than failing the whole read over one bad cell.
 			cell = model.NewStringCell(calcErr.Error())
 		case computed != "":
-			if cell, err = cellFromComputedText(f, sheet, cellRef, computed, date1904, dateStyles); err != nil {
+			if cell, err = cellFromComputedText(f, rc.styleID, computed, date1904, dateStyles); err != nil {
 				return model.Cell{}, false, err
 			}
 		}
@@ -264,37 +334,44 @@ func readCell(f *excelize.File, sheet string, colIndex, rowIndex int, raw string
 	if formula != "" {
 		cell = cell.WithFormula(formula)
 	}
-	return cell.At(colIndex), true, nil
+	return cell.At(rc.col), true, nil
 }
 
-// cellFromTyped converts a cell whose excelize CellType reliably describes
-// its current value: either a plain (non-formula) cell, or a formula whose
-// cached result is already present.
-func cellFromTyped(f *excelize.File, sheet, cellRef string, cellType excelize.CellType, raw string, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
-	switch cellType {
-	case excelize.CellTypeBool:
+// cellFromRawType converts a cell whose own raw t attribute reliably
+// describes its current value: either a plain (non-formula) cell, or
+// a formula whose cached result is already present. t is classified
+// via the same fixed table excelize's own cellTypes uses (confirmed
+// directly in its source): "b"/"d"/"n"/"e"/"s"/"str"/"inlineStr", any
+// other value (including "", absent) defaulting to a plain number -
+// excelize's own map lookup falls back to its zero value, CellTypeUnset,
+// for exactly the same reason.
+func cellFromRawType(f *excelize.File, t, raw string, styleID int, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
+	switch t {
+	case "b":
 		return model.NewBoolCell(raw == "1" || strings.EqualFold(raw, "TRUE")), nil
-	case excelize.CellTypeSharedString, excelize.CellTypeInlineString, excelize.CellTypeError:
+	case "s", "str", "e", "inlineStr":
+		// "s" (shared string) and "inlineStr" are already resolved to
+		// their text by resolveCellValue; "str" specifically means "a
+		// formula's cached result is text" (not merely "has a
+		// formula"); "e" is a cached spreadsheet error, e.g. "#DIV/0!".
+		// All four are a plain String cell.
 		return model.NewStringCell(raw), nil
-	case excelize.CellTypeFormula:
-		// This specifically means "a formula's cached result is text"
-		// (OOXML's t="str"), not merely "this cell has a formula".
-		return model.NewStringCell(raw), nil
-	case excelize.CellTypeDate:
+	case "d":
 		// The rare ISO-8601-native date type: unlike a plain date-styled
 		// number, its raw value is date text (e.g. "2026-09-25T00:00:00"),
 		// not a numeric serial.
-		if t, ok := parseISODate(raw); ok {
-			return model.NewDateCell(t), nil
+		if parsed, ok := parseISODate(raw); ok {
+			return model.NewDateCell(parsed), nil
 		}
 		// Not a recognized ISO layout variant; fall back to the raw text
 		// rather than lose the cell.
 		return model.NewStringCell(raw), nil
 	default:
-		// CellTypeUnset: a plain stored number, or a cached formula
-		// result that's a number. A date is distinguished from a plain
-		// number by the cell's style, not by cellType.
-		return numericOrDateCell(f, sheet, cellRef, raw, date1904, dateStyles)
+		// "n", "", or any unrecognized value: a plain stored number, or
+		// a cached formula result that's a number. A date is
+		// distinguished from a plain number by the cell's style, not by
+		// its type attribute.
+		return numericOrDateCell(f, styleID, raw, date1904, dateStyles)
 	}
 }
 
@@ -321,8 +398,8 @@ func parseISODate(text string) (time.Time, bool) {
 // number (a currency style, a thousands separator, a percentage, ...)
 // still parses since raw is never run through excelize's own display
 // formatting (ADR-0046).
-func numericOrDateCell(f *excelize.File, sheet, cellRef, raw string, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
-	isDate, err := isDateStyled(f, sheet, cellRef, dateStyles)
+func numericOrDateCell(f *excelize.File, styleID int, raw string, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
+	isDate, err := isDateStyled(f, styleID, dateStyles)
 	if err != nil {
 		return model.Cell{}, err
 	}
@@ -350,8 +427,8 @@ func numericOrDateCell(f *excelize.File, sheet, cellRef, raw string, date1904 bo
 // numericOrDateCell, plus recognizing a literal "TRUE"/"FALSE" result as a
 // Bool - CellTypeBool can't be trusted here the way it can for a cell with
 // a real cached value.
-func cellFromComputedText(f *excelize.File, sheet, cellRef, text string, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
-	cell, err := numericOrDateCell(f, sheet, cellRef, text, date1904, dateStyles)
+func cellFromComputedText(f *excelize.File, styleID int, text string, date1904 bool, dateStyles map[int]bool) (model.Cell, error) {
+	cell, err := numericOrDateCell(f, styleID, text, date1904, dateStyles)
 	if err != nil {
 		return model.Cell{}, err
 	}
@@ -390,13 +467,19 @@ var (
 	escapedLiteral   = regexp.MustCompile(`\\.`)
 )
 
-// isDateStyled reports whether the cell at cellRef has a date/time number
-// format, per its style's built-in format ID or custom format code.
-func isDateStyled(f *excelize.File, sheet, cellRef string, cache map[int]bool) (bool, error) {
-	styleID, err := f.GetCellStyle(sheet, cellRef)
-	if err != nil {
-		return false, fmt.Errorf("read style of %s!%s: %w", sheet, cellRef, err)
-	}
+// isDateStyled reports whether styleID has a date/time number format,
+// per its built-in format ID or custom format code. styleID comes
+// from the cell's own s attribute, captured directly by
+// streamWorksheetRows - unlike the excelize-Rows-based reader this
+// replaces, this no longer calls GetCellStyle: confirmed directly in
+// excelize's own source that it also calls workSheetReader, the same
+// per-worksheet materialization cost GetCellFormula/GetCellType have
+// (ADR-0048) - keeping it would have undermined the whole point of
+// this change, since it would have remained the one caller still
+// forcing that materialization to happen at all. GetStyle(styleID)
+// itself stays on excelize: confirmed independent, resolving via
+// stylesReader, workbook-wide, not workSheetReader.
+func isDateStyled(f *excelize.File, styleID int, cache map[int]bool) (bool, error) {
 	if isDate, ok := cache[styleID]; ok {
 		return isDate, nil
 	}
