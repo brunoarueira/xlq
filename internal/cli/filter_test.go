@@ -646,3 +646,63 @@ func TestRootFilterCSVRejectedWithCompactOutput(t *testing.T) {
 		t.Error("Execute with --csv -c: want error, got nil")
 	}
 }
+
+func TestRootFilterNDJSONOnRecords(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "Name"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+		if err := f.SetCellValue("Sheet1", "A2", "Alice"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+
+	// Unlike --csv, no header line - each line already names its own
+	// fields.
+	out, err := run(t, "--ndjson", ".Sheet1 | records", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "{\"Name\":\"Alice\"}\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestRootFilterNDJSONWholeWorkbookIsError(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "a"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+	if _, err := run(t, "--ndjson", ".", path); err == nil {
+		t.Error("Execute --ndjson on the whole workbook: want error, got nil")
+	}
+}
+
+func TestRootFilterNDJSONAndCSVMutuallyExclusive(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--ndjson", "--csv", ".Sheet1", path); err == nil {
+		t.Error("Execute with --ndjson --csv: want error, got nil")
+	}
+}
+
+func TestRootFilterNDJSONRejectedWithTable(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--ndjson", "--table", ".Sheet1", path); err == nil {
+		t.Error("Execute with --ndjson --table: want error, got nil")
+	}
+}
+
+func TestRootFilterNDJSONRejectedWithCompactOutput(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--ndjson", "-c", ".Sheet1", path); err == nil {
+		t.Error("Execute with --ndjson -c: want error, got nil")
+	}
+}
+
+func TestRootFilterNDJSONRejectedWithInPlace(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--ndjson", "-i", `.Sheet1.A1 = "x"`, path); err == nil {
+		t.Error("Execute with --ndjson -i: want error, got nil")
+	}
+}

@@ -44,6 +44,38 @@ func TestConfigAppliesAsDefault(t *testing.T) {
 	}
 }
 
+// TestConfigNDJSONAppliesAsDefaultAndIsOverridable confirms ndjson
+// (ADR-0049) was correctly wired into the same config mechanism and
+// mutual-exclusion group table/csv/tsv already use, not just added to
+// outputOptions/validate() without the config-merge side.
+func TestConfigNDJSONAppliesAsDefaultAndIsOverridable(t *testing.T) {
+	path := buildFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue("Sheet1", "A1", "x"); err != nil {
+			t.Fatalf("SetCellValue: %v", err)
+		}
+	})
+	cfgPath := writeTestConfig(t, "ndjson: true\n")
+
+	out, err := run(t, "--config", cfgPath, ".Sheet1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "[\"x\"]\n"; out != want {
+		t.Errorf("output = %q, want %q (NDJSON output, meaning config's ndjson:true applied)", out, want)
+	}
+
+	// An explicit --table overrides config's ndjson:true for the
+	// whole group, not just leaves it unset alongside --table in a
+	// way that would fail validate()'s mutual-exclusion check.
+	out, err = run(t, "--config", cfgPath, "--table", ".Sheet1", path)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "x\n"; out != want {
+		t.Errorf("output = %q, want %q (--table should override config's ndjson:true)", out, want)
+	}
+}
+
 func TestConfigExplicitFlagOverridesConfig(t *testing.T) {
 	path := buildFixture(t, func(f *excelize.File) {
 		if err := f.SetCellValue("Sheet1", "A1", "x"); err != nil {

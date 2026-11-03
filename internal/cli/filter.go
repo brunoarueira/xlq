@@ -27,48 +27,49 @@ type outputOptions struct {
 	// rawOutput prints a string result bare, without JSON quoting,
 	// jq's -r/--raw-output. Any other result type is unaffected.
 	rawOutput bool
-	// table, csv, and tsv each select a different, mutually exclusive
-	// output mode (output.Table/CSV/TSV) instead of JSON. Also mutually
-	// exclusive with compactJSON/rawOutput, which only ever meant
-	// something for JSON output - any of these combinations is a CLI
-	// error, not a silent override (see validate).
-	table bool
-	csv   bool
-	tsv   bool
+	// table, csv, tsv, and ndjson each select a different, mutually
+	// exclusive output mode (output.Table/CSV/TSV/NDJSON) instead of
+	// JSON. Also mutually exclusive with compactJSON/rawOutput, which
+	// only ever meant something for JSON output - any of these
+	// combinations is a CLI error, not a silent override (see validate).
+	table  bool
+	csv    bool
+	tsv    bool
+	ndjson bool
 }
 
 // validate rejects a combination of output modes that don't compose:
-// table/csv/tsv are mutually exclusive with each other and with
-// compactJSON/rawOutput, which only ever meant something for JSON.
-// fileCount additionally rejects table/csv/tsv for more than one file
-// (docs/adr/0017-multiple-input-files.md): both already have a case
-// for a plain []any ("a single row or column," one line per element),
-// and a multi-file results array is structurally identical to that -
-// without this check, --table would silently flatten each file's
-// entire result into one mangled cell instead of erroring, the same
-// way ADR-0013 already rejects a whole workbook's CSV output rather
-// than guess at a flattening. This checks o's fields directly, which
-// already hold each flag's effective, config-merged value by the time
-// RunE reads them - not just what was explicitly typed - so a config
-// table/csv/tsv default (ADR-0015) hits this the same way an explicit
-// flag would; --table=false (etc.) is the escape hatch for one
-// invocation, via the same Changed-based skip mergeConfigDefaults
-// already uses.
+// table/csv/tsv/ndjson are mutually exclusive with each other and
+// with compactJSON/rawOutput, which only ever meant something for
+// JSON. fileCount additionally rejects all four for more than one
+// file (docs/adr/0017-multiple-input-files.md): each already has a
+// case for a plain []any ("a single row or column," one line per
+// element), and a multi-file results array is structurally identical
+// to that - without this check, --table would silently flatten each
+// file's entire result into one mangled cell instead of erroring, the
+// same way ADR-0013 already rejects a whole workbook's CSV output
+// rather than guess at a flattening. This checks o's fields directly,
+// which already hold each flag's effective, config-merged value by
+// the time RunE reads them - not just what was explicitly typed - so
+// a config table/csv/tsv/ndjson default (ADR-0015) hits this the same
+// way an explicit flag would; --table=false (etc.) is the escape
+// hatch for one invocation, via the same Changed-based skip
+// mergeConfigDefaults already uses.
 func (o outputOptions) validate(fileCount int) error {
 	modes := 0
-	for _, set := range []bool{o.table, o.csv, o.tsv} {
+	for _, set := range []bool{o.table, o.csv, o.tsv, o.ndjson} {
 		if set {
 			modes++
 		}
 	}
 	if modes > 1 {
-		return fmt.Errorf("--table, --csv, and --tsv are mutually exclusive output modes")
+		return fmt.Errorf("--table, --csv, --tsv, and --ndjson are mutually exclusive output modes")
 	}
 	if modes == 1 && (o.compactJSON || o.rawOutput) {
-		return fmt.Errorf("--table/--csv/--tsv cannot be combined with --compact-output/--raw-output, which only apply to JSON output")
+		return fmt.Errorf("--table/--csv/--tsv/--ndjson cannot be combined with --compact-output/--raw-output, which only apply to JSON output")
 	}
 	if modes == 1 && fileCount > 1 {
-		return fmt.Errorf("--table/--csv/--tsv don't support multiple files - no single tabular shape for %d independent results; use JSON, or run xlq once per file", fileCount)
+		return fmt.Errorf("--table/--csv/--tsv/--ndjson don't support multiple files - no single tabular shape for %d independent results; use JSON, or run xlq once per file", fileCount)
 	}
 	return nil
 }
@@ -181,6 +182,13 @@ func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format inpu
 			return err
 		case opts.tsv:
 			text, err := output.TSV(result)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), text)
+			return err
+		case opts.ndjson:
+			text, err := output.NDJSON(result)
 			if err != nil {
 				return err
 			}

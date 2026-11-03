@@ -36,6 +36,7 @@ raw-output: true
 table: true
 csv: true
 tsv: true
+ndjson: true
 input-format: ods
 delimiter: ";"
 `)
@@ -51,6 +52,7 @@ delimiter: ";"
 		Table:         true,
 		CSV:           true,
 		TSV:           true,
+		NDJSON:        true,
 		InputFormat:   "ods",
 		Delimiter:     ";",
 	}

@@ -87,6 +87,7 @@ func NewRootCommand() *cobra.Command {
 			"  xlq -r '.Sheet1.A1' report.xlsx\n" +
 			"  xlq --table '.Sheet1' report.xlsx\n" +
 			"  xlq --csv '.Sheet1 | records' report.xlsx\n" +
+			"  xlq --ndjson '.Sheet1 | records' report.xlsx\n" +
 			"  xlq --input-format csv '.Sheet1' report.txt\n" +
 			"  xlq --delimiter ';' '.Sheet1' report.csv\n" +
 			"  xlq '.Sheet1.A1' old.xlsx new.xlsx\n" +
@@ -109,6 +110,7 @@ func NewRootCommand() *cobra.Command {
 			table, _ := cmd.Flags().GetBool("table")
 			csvOut, _ := cmd.Flags().GetBool("csv")
 			tsvOut, _ := cmd.Flags().GetBool("tsv")
+			ndjsonOut, _ := cmd.Flags().GetBool("ndjson")
 			inPlace, _ := cmd.Flags().GetBool("in-place")
 			format, err := inputFormat(cmd)
 			if err != nil {
@@ -121,8 +123,8 @@ func NewRootCommand() *cobra.Command {
 			timeout := readTimeout(cmd)
 			maxSize := maxFileSize(cmd)
 			if inPlace {
-				if compactData || compactJSON || rawOutput || table || csvOut || tsvOut {
-					return fmt.Errorf("--in-place cannot be combined with --compact/--compact-output/--raw-output/--table/--csv/--tsv - an in-place edit prints nothing")
+				if compactData || compactJSON || rawOutput || table || csvOut || tsvOut || ndjsonOut {
+					return fmt.Errorf("--in-place cannot be combined with --compact/--compact-output/--raw-output/--table/--csv/--tsv/--ndjson - an in-place edit prints nothing")
 				}
 				if len(args) != 2 {
 					return fmt.Errorf("--in-place requires exactly one file, got %d", len(args)-1)
@@ -136,6 +138,7 @@ func NewRootCommand() *cobra.Command {
 				table:       table,
 				csv:         csvOut,
 				tsv:         tsvOut,
+				ndjson:      ndjsonOut,
 			})
 		},
 	}
@@ -145,6 +148,7 @@ func NewRootCommand() *cobra.Command {
 	root.Flags().Bool("table", false, "print a human-readable, column-aligned table instead of JSON")
 	root.Flags().Bool("csv", false, "print comma-separated values instead of JSON (see "+docsURL+"reference.html#output-modes for how a result flattens; design rationale: "+adrURL+"0013-csv-tsv-output.md)")
 	root.Flags().Bool("tsv", false, "print tab-separated values instead of JSON (see "+docsURL+"reference.html#output-modes for how a result flattens; design rationale: "+adrURL+"0013-csv-tsv-output.md)")
+	root.Flags().Bool("ndjson", false, "print newline-delimited JSON (one compact object per line, no enclosing array) instead of JSON (see "+docsURL+"reference.html#output-modes for how a result flattens; design rationale: "+adrURL+"0049-ndjson-output-mode.md)")
 	root.Flags().BoolP("in-place", "i", false, `edit the .xlsx file in place: <filter> must be an assignment, e.g. '.Sheet1.A1 = "value"' (see `+docsURL+`reference.html#in-place-editing--i; design rationale: `+adrURL+`0014-in-place-editing.md); prints nothing on success`)
 	root.PersistentFlags().String("input-format", "", "input format: xlsx, csv, tsv, or ods (default: detected from the file extension)")
 	root.PersistentFlags().String("delimiter", "", "field delimiter override for csv/tsv input, exactly one character (default: comma for csv, tab for tsv)")
