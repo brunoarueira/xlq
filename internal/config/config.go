@@ -31,6 +31,7 @@ type Config struct {
 	Table         bool   `yaml:"table"`
 	CSV           bool   `yaml:"csv"`
 	TSV           bool   `yaml:"tsv"`
+	NDJSON        bool   `yaml:"ndjson"`
 	InputFormat   string `yaml:"input-format"`
 	Delimiter     string `yaml:"delimiter"`
 }

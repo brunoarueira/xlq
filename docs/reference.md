@@ -411,6 +411,7 @@ xlq -r '.Sheet1.A1' path/to/book.xlsx      # a string result, unquoted
 xlq --table '.Sheet1 | records' path/to/book.xlsx  # aligned table, not JSON
 xlq --csv '.Sheet1 | records' path/to/book.xlsx    # with a header row
 xlq --tsv '.Sheet1' path/to/book.xlsx              # positional, no header
+xlq --ndjson '.Sheet1 | records' path/to/book.xlsx # one JSON value per line
 ```
 
 `--table` prints a human-readable, column-aligned table instead of JSON -
@@ -426,10 +427,20 @@ quoting and escaping. A sheet grid or range flattens positionally, with no
 header row; `records` gets a header row (its sorted field names) plus one
 row per record - pipe through `records` first when a header is wanted.
 The whole-workbook result is a clear error (no single tabular shape), not
-a guess. `--table`, `--csv`, and `--tsv` are mutually exclusive output
-modes, and each is also mutually exclusive with `-c`/`-r` (which only ever
-meant something for JSON) - but `-c` and `-r` themselves still compose
-freely with each other.
+a guess. `--table`, `--csv`, `--tsv`, and `--ndjson` are mutually exclusive
+output modes, and each is also mutually exclusive with `-c`/`-r` (which
+only ever meant something for JSON) - but `-c` and `-r` themselves still
+compose freely with each other.
+
+`--ndjson` ([ADR-0049](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0049-ndjson-output-mode.md))
+prints newline-delimited JSON instead of JSON: one compact JSON value per
+line, with no enclosing array or commas between lines - the shape tools
+like `bq load --source_format=NEWLINE_DELIMITED_JSON` expect, unlike `-c`,
+which still wraps a result in a single-line *array*. `records` gets one
+line per record (no separate header line - each line already names its
+own fields); a sheet grid or range gets one line per row, each a JSON
+array of that row's values. The whole-workbook result is the same clear
+error `--csv`/`--tsv` give.
 
 `--csv`/`--tsv`/`--table` also defuse spreadsheet formula injection
 ([ADR-0045](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0045-defuse-csv-formula-injection.md)):
@@ -440,7 +451,9 @@ convention spreadsheet applications use internally, so reopening the
 output can't run it as a formula - unless that text is already valid
 JSON on its own (e.g. `-1`, whether it came from a genuine number or
 from a string cell whose literal content just looks like one), which
-is left exactly as-is. JSON output is unaffected either way.
+is left exactly as-is. JSON and `--ndjson` output are both unaffected
+either way - neither is something a spreadsheet application would ever
+reopen and misread as CSV cells.
 
 ## In-place editing (`-i`)
 
@@ -470,15 +483,15 @@ xlq '.Sheet1 | records' old.xlsx new.xlsx
 ```
 
 A single file's result is completely unaffected by this - still printed
-bare, never wrapped in a one-element array. `--table`/`--csv`/`--tsv` and
-`-i` don't support more than one file (no single tabular shape to flatten
+bare, never wrapped in a one-element array. `--table`/`--csv`/`--tsv`/`--ndjson`
+and `-i` don't support more than one file (no single tabular shape to flatten
 N results into, and an in-place edit of more than one file is out of
 scope) - this includes a config-file default (`table: true`, etc.): it
 hits the same rejection a typed `--table` would, since there's no way to
 tell them apart by the time this check runs, so `--table=false` (or
-`--csv=false`/`--tsv=false`) is how to get plain JSON for one multi-file
-invocation despite that default. A read/parse error names which file (by
-position and path) failed.
+`--csv=false`/`--tsv=false`/`--ndjson=false`) is how to get plain JSON for
+one multi-file invocation despite that default. A read/parse error names
+which file (by position and path) failed.
 
 `--input-format`/`--delimiter` (typed or from a config default) apply to
 *every* file uniformly, not per-file - mixing formats across files (e.g.
@@ -541,9 +554,11 @@ xlq completion bash > $(brew --prefix)/etc/bash_completion.d/xlq
 ## Config file
 
 ([ADR-0015](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0015-config-file-for-default-flags.md))
-a YAML file can set defaults for the eight flags listed below - every
-input/output flag that existed when this mechanism was built, though not
-`--timeout`/`--max-size` (added later, in
+a YAML file can set defaults for the nine flags listed below - every
+input/output flag that existed when this mechanism was built, plus
+`--ndjson` ([ADR-0049](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0049-ndjson-output-mode.md),
+added later but into the same `table`/`csv`/`tsv` mutual-exclusion group,
+not a new one), though not `--timeout`/`--max-size` (added later, in
 [ADR-0030](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0030-recover-and-timeout-the-read-path.md)/[ADR-0031](https://github.com/brunoarueira/xlq/blob/main/docs/adr/0031-memory-ceiling-for-untrusted-files.md),
 neither of which extended the config schema) or, of course,
 `-i`/`--in-place`, which can never be config-defaulted at all - so a flag
@@ -562,16 +577,16 @@ input-format: csv
 ```
 
 Keys match each flag's own long name exactly (`compact`, `compact-output`,
-`raw-output`, `table`, `csv`, `tsv`, `input-format`, `delimiter`) - an
-unrecognized key is a hard error, to catch a typo rather than silently
-ignore it. An explicitly-passed flag always wins over its config value.
-`compact-output`, `raw-output`, `table`, `csv`, and `tsv` don't override
-one at a time, though: since at most one of `table`/`csv`/`tsv` can ever
-be active together with either JSON option, an explicitly-active flag
-among these five suppresses config's values for *all five*, not just the
-one with the same name - an explicit `--csv` fully overrides a configured
-`table: true`, not just leaves it unset alongside `--csv` in a way that
-would fail. `-i` additionally suppresses every one of config's *values*
+`raw-output`, `table`, `csv`, `tsv`, `ndjson`, `input-format`,
+`delimiter`) - an unrecognized key is a hard error, to catch a typo
+rather than silently ignore it. An explicitly-passed flag always wins
+over its config value. `compact-output`, `raw-output`, `table`, `csv`,
+`tsv`, and `ndjson` don't override one at a time, though: since at most
+one of `table`/`csv`/`tsv`/`ndjson` can ever be active together with
+either JSON option, an explicitly-active flag among these six suppresses
+config's values for *all six*, not just the one with the same name - an
+explicit `--csv` fully overrides a configured `table: true`, not just
+leaves it unset alongside `--csv` in a way that would fail. `-i` additionally suppresses every one of config's *values*
 outright, so none of them can reach - or break - an in-place edit. The
 file itself is still loaded and must be valid either way: a malformed
 file, or one with an unrecognized key, is an error regardless of `-i`.

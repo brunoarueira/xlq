@@ -73,7 +73,7 @@ func mergeConfigDefaults(cmd *cobra.Command, _ []string) error {
 	mergeString(cmd, "input-format", cfg.InputFormat)
 	mergeString(cmd, "delimiter", cfg.Delimiter)
 
-	// compact-output, raw-output, table, csv, and tsv aren't
+	// compact-output, raw-output, table, csv, tsv, and ndjson aren't
 	// independent: they're outputOptions.validate()'s own mutually-
 	// exclusive set, so an explicitly *active* flag among them must
 	// suppress every one of config's values for the whole group, not
@@ -83,12 +83,13 @@ func mergeConfigDefaults(cmd *cobra.Command, _ []string) error {
 	// actual value (GetBool), not Changed, for the same reason as the
 	// -i check above: an explicit but no-op "--table=false" must not
 	// suppress a config csv:true default.
-	if !anyTrue(cmd, "compact-output", "raw-output", "table", "csv", "tsv") {
+	if !anyTrue(cmd, "compact-output", "raw-output", "table", "csv", "tsv", "ndjson") {
 		mergeBool(cmd, "compact-output", cfg.CompactOutput)
 		mergeBool(cmd, "raw-output", cfg.RawOutput)
 		mergeBool(cmd, "table", cfg.Table)
 		mergeBool(cmd, "csv", cfg.CSV)
 		mergeBool(cmd, "tsv", cfg.TSV)
+		mergeBool(cmd, "ndjson", cfg.NDJSON)
 	}
 	// compact composes freely with every format (validate() never
 	// objects to it), so it merges independently of the group above.

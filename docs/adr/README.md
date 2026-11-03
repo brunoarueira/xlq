@@ -54,6 +54,7 @@ xlq, using the format described in
 | [0046](0046-raw-mode-row-columns-for-xlsx-reads.md) | Read xlsx rows in raw mode, not formatted, to cut large-file read time |
 | [0047](0047-raise-xlsx-shared-strings-xml-size-limit.md) | Raise excelize's per-part XML limit, keeping it below --max-size |
 | [0048](0048-custom-xlsx-worksheet-read-path.md) | A custom worksheet read path, narrowing ADR-0004's reliance on excelize |
+| [0049](0049-ndjson-output-mode.md) | NDJSON output mode: `--ndjson` |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is
