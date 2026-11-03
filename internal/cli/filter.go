@@ -14,6 +14,14 @@ import (
 	"github.com/brunoarueira/xlq/internal/output"
 )
 
+// evalResult bundles eval.EvalPreservingOrder's two return values
+// into withRecovery's own single-value generic contract (func()
+// (T, error)).
+type evalResult struct {
+	value   any
+	headers []string
+}
+
 // outputOptions controls how runFilter prints a result, independent of
 // filter evaluation itself.
 type outputOptions struct {
@@ -101,6 +109,12 @@ func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format inpu
 	}
 
 	results := make([]any, len(paths))
+	// Set inside the loop below, only ever meaningfully for a single
+	// file - opts.validate already rejected --csv/--tsv for more than
+	// one path, so this is only ever read by those two output modes
+	// (#175: the records' own left-to-right column order, nil when
+	// unavailable or irrelevant, see eval.EvalPreservingOrder).
+	var headerOrder []string
 	for i, path := range paths {
 		// Each wrapped separately, not as one combined step: xlsx
 		// reading is lazy (docs/adr/0018-streaming-xlsx-reader.md) -
@@ -132,8 +146,15 @@ func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format inpu
 			return err
 		}
 
-		r, err := withRecovery("evaluating", timeoutRemaining(timeout, deadline), func() (any, error) {
-			return eval.Eval(expr, wb)
+		// EvalPreservingOrder, not plain Eval, unconditionally: it's
+		// Eval plus one extra, optional return value (#175's own
+		// headerOrder, used only by the --csv/--tsv branches below -
+		// nil and ignored for every other mode), never a different
+		// result - a single evaluation call stays the only one needed
+		// regardless of which output mode this invocation picked.
+		evaluated, err := withRecovery("evaluating", timeoutRemaining(timeout, deadline), func() (evalResult, error) {
+			value, headers, err := eval.EvalPreservingOrder(expr, wb)
+			return evalResult{value: value, headers: headers}, err
 		})
 		if err != nil {
 			if len(paths) > 1 {
@@ -141,6 +162,11 @@ func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format inpu
 			}
 			return err
 		}
+		r := evaluated.value
+		// opts.validate already rejected --csv/--tsv for more than one
+		// path, so only the single-file case ever reads this - no
+		// per-file tracking needed, just the last (and only) one set.
+		headerOrder = evaluated.headers
 
 		if opts.compactData {
 			compacted, cerr := withRecovery("compacting", 0, func() (any, error) {
@@ -174,14 +200,14 @@ func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format inpu
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), output.Table(result))
 			return err
 		case opts.csv:
-			text, err := output.CSV(result)
+			text, err := output.CSVOrdered(result, headerOrder)
 			if err != nil {
 				return err
 			}
 			_, err = fmt.Fprint(cmd.OutOrStdout(), text)
 			return err
 		case opts.tsv:
-			text, err := output.TSV(result)
+			text, err := output.TSVOrdered(result, headerOrder)
 			if err != nil {
 				return err
 			}

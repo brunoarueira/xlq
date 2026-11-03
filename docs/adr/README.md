@@ -55,6 +55,7 @@ xlq, using the format described in
 | [0047](0047-raise-xlsx-shared-strings-xml-size-limit.md) | Raise excelize's per-part XML limit, keeping it below --max-size |
 | [0048](0048-custom-xlsx-worksheet-read-path.md) | A custom worksheet read path, narrowing ADR-0004's reliance on excelize |
 | [0049](0049-ndjson-output-mode.md) | NDJSON output mode: `--ndjson` |
+| [0050](0050-preserve-column-order-for-csv-tsv-records.md) | Preserve a sheet's own column order for `--csv`/`--tsv` records output |
 
 To add a new one, copy the format of an existing ADR, number it
 sequentially, and set its status to `Accepted` once the decision is

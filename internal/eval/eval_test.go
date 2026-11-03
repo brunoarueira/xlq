@@ -378,6 +378,99 @@ func TestEvalRecords(t *testing.T) {
 	}
 }
 
+// evalPreservingOrderString is evalString, for EvalPreservingOrder.
+func evalPreservingOrderString(t *testing.T, input string) (any, []string, error) {
+	t.Helper()
+	expr, err := filter.Parse(input)
+	if err != nil {
+		t.Fatalf("filter.Parse(%q): %v", input, err)
+	}
+	return EvalPreservingOrder(expr, testWorkbook())
+}
+
+// TestEvalPreservingOrderRecords guards #175's own fix: bare records
+// gets the sheet's real left-to-right header order back, not nil
+// (which --csv/--tsv would then fall back to sorting alphabetically).
+func TestEvalPreservingOrderRecords(t *testing.T) {
+	_, headers, err := evalPreservingOrderString(t, ".Sheet1 | records")
+	if err != nil {
+		t.Fatalf("EvalPreservingOrder: %v", err)
+	}
+	want := []string{"hello", "42", "C"}
+	if !reflect.DeepEqual(headers, want) {
+		t.Errorf("headers = %#v, want %#v", headers, want)
+	}
+}
+
+// TestEvalPreservingOrderRecordsThroughSelect confirms the order hint
+// survives "records | select(...)" too, not just bare records -
+// select preserves each surviving record's own headers field
+// unchanged (selectOver's own generic implementation), so this isn't
+// a separate case to implement, just one worth locking in directly.
+func TestEvalPreservingOrderRecordsThroughSelect(t *testing.T) {
+	_, headers, err := evalPreservingOrderString(t, ".Sheet1 | records | select(.hello == true)")
+	if err != nil {
+		t.Fatalf("EvalPreservingOrder: %v", err)
+	}
+	want := []string{"hello", "42", "C"}
+	if !reflect.DeepEqual(headers, want) {
+		t.Errorf("headers = %#v, want %#v", headers, want)
+	}
+}
+
+// TestEvalPreservingOrderSingleRecord confirms an indexed single
+// record (".Sheet1 | records | .[0]", a record not []record) also
+// gets its own order hint.
+func TestEvalPreservingOrderSingleRecord(t *testing.T) {
+	_, headers, err := evalPreservingOrderString(t, ".Sheet1 | records | .[0]")
+	if err != nil {
+		t.Fatalf("EvalPreservingOrder: %v", err)
+	}
+	want := []string{"hello", "42", "C"}
+	if !reflect.DeepEqual(headers, want) {
+		t.Errorf("headers = %#v, want %#v", headers, want)
+	}
+}
+
+// TestEvalPreservingOrderNilForNonRecordShapes confirms every shape
+// with no well-defined single column order (a grid, a scalar, a
+// transformed array that's no longer []record) gets a nil hint, the
+// same as plain Eval already behaves - not a wrong or guessed order.
+func TestEvalPreservingOrderNilForNonRecordShapes(t *testing.T) {
+	cases := []string{
+		".Sheet1",                         // a grid
+		".Sheet1.A1",                      // a scalar
+		".Sheet1 | records | map(.hello)", // no longer records at all
+	}
+	for _, input := range cases {
+		_, headers, err := evalPreservingOrderString(t, input)
+		if err != nil {
+			t.Fatalf("EvalPreservingOrder(%q): %v", input, err)
+		}
+		if headers != nil {
+			t.Errorf("EvalPreservingOrder(%q) headers = %#v, want nil", input, headers)
+		}
+	}
+}
+
+// TestEvalPreservingOrderMatchesEval confirms EvalPreservingOrder's
+// own first return value is always identical to plain Eval's - it's
+// strictly additive, never a different result.
+func TestEvalPreservingOrderMatchesEval(t *testing.T) {
+	input := ".Sheet1 | records"
+	want, err := evalString(t, input)
+	if err != nil {
+		t.Fatalf("Eval(%q): %v", input, err)
+	}
+	got, _, err := evalPreservingOrderString(t, input)
+	if err != nil {
+		t.Fatalf("EvalPreservingOrder(%q): %v", input, err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("EvalPreservingOrder(%q) result = %#v, want %#v (same as Eval)", input, got, want)
+	}
+}
+
 // tonumberWorkbook is a small, dedicated fixture for the "tonumber"
 // builtin (#37): one of every input shape tonumber needs to handle.
 func tonumberWorkbook() model.Workbook {

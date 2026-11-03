@@ -24,9 +24,12 @@ import (
 //   - [][]any (a sheet grid, or a range): one row per grid row, in
 //     column order. No header row - the grid has no column names of
 //     its own; pipe through records first for one.
-//   - []map[string]any (a records array, ADR-0011): a header row (the
-//     sorted union of every record's keys, matching Table's own
-//     ordering), then one row per record.
+//   - []map[string]any (a records array, ADR-0011): a header row, then
+//     one row per record. The header order is the sorted union of
+//     every record's keys, unless the caller used CSVOrdered/TSVOrdered
+//     with the records' own real column order instead (#175,
+//     docs/adr/0050-preserve-column-order-for-csv-tsv-records.md) -
+//     CSV/TSV alone, not Table or JSON, which still always sort.
 //   - map[string]any: a single record (ADR-0011, every value a
 //     scalar) is treated as a one-record array - a header row, then
 //     one data row - rather than a separate key/value shape. The
@@ -45,16 +48,33 @@ import (
 // (ADR-0045), so reopening the output in a spreadsheet application
 // can't run it as a formula.
 func CSV(v any) (string, error) {
-	return delimited(v, ',')
+	return delimited(v, ',', nil)
+}
+
+// CSVOrdered is CSV, with a records result's header row in
+// headerOrder instead of sorted - the sheet's own real left-to-right
+// column order, from eval.EvalPreservingOrder (#175). nil behaves
+// exactly like plain CSV. headerOrder is trusted as-is, not unioned
+// or validated against the records' own actual keys: its one caller
+// (internal/cli) only ever passes what EvalPreservingOrder returned
+// for the exact same result, which is always either nil or an exact
+// match.
+func CSVOrdered(v any, headerOrder []string) (string, error) {
+	return delimited(v, ',', headerOrder)
 }
 
 // TSV is CSV, tab-delimited instead of comma-delimited.
 func TSV(v any) (string, error) {
-	return delimited(v, '\t')
+	return delimited(v, '\t', nil)
 }
 
-func delimited(v any, delim rune) (string, error) {
-	rows, err := delimitedRows(v)
+// TSVOrdered is CSVOrdered, tab-delimited instead of comma-delimited.
+func TSVOrdered(v any, headerOrder []string) (string, error) {
+	return delimited(v, '\t', headerOrder)
+}
+
+func delimited(v any, delim rune, headerOrder []string) (string, error) {
+	rows, err := delimitedRows(v, headerOrder)
 	if err != nil {
 		return "", err
 	}
@@ -74,17 +94,17 @@ func delimited(v any, delim rune) (string, error) {
 	return buf.String(), nil
 }
 
-func delimitedRows(v any) ([][]string, error) {
+func delimitedRows(v any, headerOrder []string) ([][]string, error) {
 	switch val := v.(type) {
 	case map[string]any:
 		if isWorkbookShaped(val) {
 			return nil, fmt.Errorf("output: a whole workbook has no single tabular shape for csv/tsv output; query a specific sheet, range, or records result instead")
 		}
-		return recordRows([]map[string]any{val}), nil
+		return recordRows([]map[string]any{val}, headerOrder), nil
 	case [][]any:
 		return gridRows(val), nil
 	case []map[string]any:
-		return recordRows(val), nil
+		return recordRows(val, headerOrder), nil
 	case []any:
 		return columnRows(val), nil
 	default:
@@ -104,15 +124,20 @@ func gridRows(grid [][]any) [][]string {
 	return rows
 }
 
-// recordRows returns a header row (the sorted union of every record's
-// keys) followed by one row per record - or no rows at all for an
-// empty records slice, including a single "empty record" (len(m)==0),
-// the same degenerate case Table's mapTable already treats this way.
-func recordRows(records []map[string]any) [][]string {
+// recordRows returns a header row followed by one row per record - or
+// no rows at all for an empty records slice, including a single
+// "empty record" (len(m)==0), the same degenerate case Table's
+// mapTable already treats this way. The header row is headerOrder
+// verbatim when non-nil (#175); otherwise the sorted union of every
+// record's keys, as before.
+func recordRows(records []map[string]any, headerOrder []string) [][]string {
 	if len(records) == 0 {
 		return nil
 	}
-	headers := sortedUnionKeys(records)
+	headers := headerOrder
+	if headers == nil {
+		headers = sortedUnionKeys(records)
+	}
 	if len(headers) == 0 {
 		return nil
 	}
