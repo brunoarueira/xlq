@@ -700,6 +700,13 @@ func TestRootFilterNDJSONRejectedWithCompactOutput(t *testing.T) {
 	}
 }
 
+func TestRootFilterNDJSONRejectedWithRawOutput(t *testing.T) {
+	path := buildFixture(t, func(*excelize.File) {})
+	if _, err := run(t, "--ndjson", "-r", ".Sheet1.A1", path); err == nil {
+		t.Error("Execute with --ndjson -r: want error, got nil")
+	}
+}
+
 func TestRootFilterNDJSONRejectedWithInPlace(t *testing.T) {
 	path := buildFixture(t, func(*excelize.File) {})
 	if _, err := run(t, "--ndjson", "-i", `.Sheet1.A1 = "x"`, path); err == nil {

@@ -78,8 +78,8 @@ func (o outputOptions) validate(fileCount int) error {
 // each of paths independently (per docs/adr/0008-filter-grammar-v1.md
 // for evaluation, docs/adr/0017-multiple-input-files.md for more than
 // one path), printing the result as JSON by default, or in whichever
-// mode opts selects instead (a table, CSV, or TSV; or for a string
-// result under opts.rawOutput, bare text). format and delim pick and
+// mode opts selects instead (a table, CSV, TSV, or NDJSON; or for a
+// string result under opts.rawOutput, bare text). format and delim pick and
 // configure every path's reader (internal/input) uniformly; an empty
 // format detects one from each path's own extension, and delim(0)
 // keeps each format's own default field delimiter.
@@ -166,8 +166,8 @@ func runFilter(cmd *cobra.Command, filterSrc string, paths []string, format inpu
 	// evaluating above, there's no file I/O left to hang on, so this
 	// is wrapped for panic recovery alone (timeout 0, i.e. disabled):
 	// a crafted-but-already-evaluated result reaching an unexpected
-	// shape in output.Table/CSV/TSV shouldn't crash the whole process
-	// any more than a panic during reading or evaluating would.
+	// shape in output.Table/CSV/TSV/NDJSON shouldn't crash the whole
+	// process any more than a panic during reading or evaluating would.
 	return withRecoveryErr("formatting output", 0, func() error {
 		switch {
 		case opts.table:

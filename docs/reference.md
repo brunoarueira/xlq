@@ -411,7 +411,7 @@ xlq -r '.Sheet1.A1' path/to/book.xlsx      # a string result, unquoted
 xlq --table '.Sheet1 | records' path/to/book.xlsx  # aligned table, not JSON
 xlq --csv '.Sheet1 | records' path/to/book.xlsx    # with a header row
 xlq --tsv '.Sheet1' path/to/book.xlsx              # positional, no header
-xlq --ndjson '.Sheet1 | records' path/to/book.xlsx # one JSON object per line
+xlq --ndjson '.Sheet1 | records' path/to/book.xlsx # one JSON value per line
 ```
 
 `--table` prints a human-readable, column-aligned table instead of JSON -
@@ -483,15 +483,15 @@ xlq '.Sheet1 | records' old.xlsx new.xlsx
 ```
 
 A single file's result is completely unaffected by this - still printed
-bare, never wrapped in a one-element array. `--table`/`--csv`/`--tsv` and
-`-i` don't support more than one file (no single tabular shape to flatten
+bare, never wrapped in a one-element array. `--table`/`--csv`/`--tsv`/`--ndjson`
+and `-i` don't support more than one file (no single tabular shape to flatten
 N results into, and an in-place edit of more than one file is out of
 scope) - this includes a config-file default (`table: true`, etc.): it
 hits the same rejection a typed `--table` would, since there's no way to
 tell them apart by the time this check runs, so `--table=false` (or
-`--csv=false`/`--tsv=false`) is how to get plain JSON for one multi-file
-invocation despite that default. A read/parse error names which file (by
-position and path) failed.
+`--csv=false`/`--tsv=false`/`--ndjson=false`) is how to get plain JSON for
+one multi-file invocation despite that default. A read/parse error names
+which file (by position and path) failed.
 
 `--input-format`/`--delimiter` (typed or from a config default) apply to
 *every* file uniformly, not per-file - mixing formats across files (e.g.
