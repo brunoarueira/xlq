@@ -4,7 +4,7 @@ go 1.26.10
 
 require (
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.10
+	github.com/spf13/pflag v1.1.0
 	github.com/xuri/excelize/v2 v2.11.1-0.20261003002531-6258dcebc4e2
 	gopkg.in/yaml.v3 v3.0.1
 )
